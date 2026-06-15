@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "blackvision-27f1c"
+  },
+  "targets": {
+    "blackvision-27f1c": {
+      "hosting": {
+        "studiosbook": [
+          "studiosbook"
+        ]
+      }
+    }
+  }
+}

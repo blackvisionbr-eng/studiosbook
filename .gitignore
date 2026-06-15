@@ -1,0 +1,25 @@
+# Dependencies
+node_modules
+
+# Build
+dist
+.firebase
+
+# Environment
+.env
+.env.*
+*.local
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.railway
+
+# Editor
+.vscode
+.idea
+.DS_Store
+*.swp
+
+# Legacy Base44 local state
+.app.json*
+.types/

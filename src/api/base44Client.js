@@ -1,0 +1,196 @@
+import { initializeApp } from "firebase/app";
+import {
+  getAuth,
+  getRedirectResult,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithRedirect,
+  signOut,
+} from "firebase/auth";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  getFirestore,
+  updateDoc,
+} from "firebase/firestore";
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "blackvision-27f1c.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "blackvision-27f1c",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "blackvision-27f1c.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "574358182772",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:574358182772:web:9796070587004f3f33aa21",
+};
+
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "https://api.studiosbook.com.br").replace(/\/$/, "");
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+getRedirectResult(auth).catch((error) => {
+  console.error("Firebase redirect login error", error);
+});
+
+let authReadyResolved = false;
+const authReady = new Promise((resolve) => {
+  onAuthStateChanged(auth, (user) => {
+    authReadyResolved = true;
+    resolve(user);
+  });
+});
+
+async function currentUser() {
+  if (!authReadyResolved) await authReady;
+  return auth.currentUser;
+}
+
+async function requireUser() {
+  const user = await currentUser();
+  if (!user) throw new Error("Login obrigatório.");
+  return user;
+}
+
+function toBaseUser(user) {
+  return {
+    id: user.uid,
+    uid: user.uid,
+    email: user.email || "",
+    full_name: user.displayName || user.email || "Profissional",
+    photo_url: user.photoURL || "",
+  };
+}
+
+function entityPath(uid, entityName) {
+  return ["users", uid, entityName];
+}
+
+function serializeDoc(snapshot) {
+  const data = snapshot.data() || {};
+  return { id: snapshot.id, ...data };
+}
+
+function sortRows(rows, sort) {
+  if (!sort) return rows;
+  const descending = String(sort).startsWith("-");
+  const field = descending ? String(sort).slice(1) : String(sort);
+  return [...rows].sort((a, b) => {
+    const left = a?.[field] ?? "";
+    const right = b?.[field] ?? "";
+    const result = String(left).localeCompare(String(right));
+    return descending ? -result : result;
+  });
+}
+
+function matchesFilter(row, filter = {}) {
+  return Object.entries(filter).every(([key, value]) => row?.[key] === value);
+}
+
+function createEntity(entityName) {
+  return {
+    async list(sort, limitCount = 500) {
+      const user = await requireUser();
+      const ref = collection(db, ...entityPath(user.uid, entityName));
+      const snapshots = await getDocs(ref);
+      const rows = snapshots.docs.map(serializeDoc);
+      return sortRows(rows, sort).slice(0, limitCount || rows.length);
+    },
+
+    async filter(filter = {}, sort, limitCount = 500) {
+      const rows = await this.list(sort, 5000);
+      return rows.filter((row) => matchesFilter(row, filter)).slice(0, limitCount || rows.length);
+    },
+
+    async create(data) {
+      const user = await requireUser();
+      const now = new Date().toISOString();
+      const payload = {
+        ...data,
+        created_by: user.email || user.uid,
+        created_date: data?.created_date || now,
+        updated_date: now,
+      };
+      const ref = await addDoc(collection(db, ...entityPath(user.uid, entityName)), payload);
+      return { id: ref.id, ...payload };
+    },
+
+    async update(id, data) {
+      const user = await requireUser();
+      const now = new Date().toISOString();
+      const payload = {
+        ...data,
+        updated_date: now,
+      };
+      await updateDoc(doc(db, ...entityPath(user.uid, entityName), id), payload);
+      return { id, ...payload };
+    },
+
+    async delete(id) {
+      const user = await requireUser();
+      await deleteDoc(doc(db, ...entityPath(user.uid, entityName), id));
+      return { success: true };
+    },
+  };
+}
+
+async function invokeFunction(name, data = {}) {
+  if (!apiBaseUrl) {
+    throw new Error("Backend Railway não configurado. Defina VITE_API_BASE_URL.");
+  }
+
+  const user = await requireUser();
+  const token = await user.getIdToken();
+  const response = await fetch(`${apiBaseUrl}/functions/${name}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data || {}),
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = new Error(payload?.error || "Erro no backend.");
+    error.data = payload;
+    throw error;
+  }
+
+  return payload;
+}
+
+export const base44 = {
+  auth: {
+    async isAuthenticated() {
+      return Boolean(await currentUser());
+    },
+    async me() {
+      const user = await requireUser();
+      return toBaseUser(user);
+    },
+    async loginWithProvider(providerName = "google") {
+      if (providerName !== "google") throw new Error("Provedor não suportado.");
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      await signInWithRedirect(auth, provider);
+    },
+    async logout(returnUrl = window.location.origin) {
+      await signOut(auth);
+      window.location.href = returnUrl;
+    },
+  },
+  entities: {
+    Client: createEntity("Client"),
+    ServiceRecord: createEntity("ServiceRecord"),
+    Appointment: createEntity("Appointment"),
+    StudioProfile: createEntity("StudioProfile"),
+    BackupSnapshot: createEntity("BackupSnapshot"),
+    BillingSubscription: createEntity("BillingSubscription"),
+  },
+  functions: {
+    invoke: invokeFunction,
+  },
+};
