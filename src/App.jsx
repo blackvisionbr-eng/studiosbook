@@ -30,8 +30,10 @@ import {
   MessageCircle,
   Paintbrush,
   Plus,
+  RefreshCw,
   Save,
   Search,
+  Server,
   Settings,
   Share2,
   ShieldCheck,
@@ -42,7 +44,9 @@ import {
   Smartphone,
   Trash2,
   TrendingUp,
+  UserCheck,
   UserPlus,
+  UserX,
   Users,
   WandSparkles,
   X,
@@ -63,6 +67,7 @@ const SUPPORT_EMAIL = "getblackvision.br@gmail.com";
 const SUPPORT_PHONE = "73981068594";
 const WHATSAPP_DEFAULT = "";
 const INSTALL_DISMISS_KEY = "studiobook_install_dismissed_until";
+const PLATFORM_ADMIN_EMAILS = ["sobrinhonewton@gmail.com", "getblackvision.br@gmail.com"];
 
 const PROFESSIONAL_CATEGORIES = [
   {
@@ -154,6 +159,8 @@ const tabs = [
   { id: "privacy", label: "Privacidade", icon: FileText },
   { id: "settings", label: "Configurações", icon: Settings },
 ];
+
+const adminTab = { id: "admin", label: "Admin", icon: Server };
 
 const emptyClient = {
   full_name: "",
@@ -368,6 +375,22 @@ function supportWhatsAppLink(message) {
   return `https://wa.me/${cleanPhone(SUPPORT_PHONE)}?text=${encodeURIComponent(message)}`;
 }
 
+function isPlatformAdmin(user) {
+  return PLATFORM_ADMIN_EMAILS.includes(String(user?.email || "").toLowerCase());
+}
+
+function authErrorMessage(error) {
+  const code = error?.code || "";
+  const raw = error?.message || "";
+  if (code.includes("configuration-not-found") || raw.includes("CONFIGURATION_NOT_FOUND")) {
+    return "Firebase Authentication ainda não foi inicializado. No Firebase Console, abra Authentication, clique em Get started, habilite Google e adicione studiosbook.com.br nos domínios autorizados.";
+  }
+  if (code.includes("unauthorized-domain")) {
+    return "Domínio não autorizado no Firebase Auth. Adicione studiosbook.com.br e www.studiosbook.com.br em Authentication > Settings > Authorized domains.";
+  }
+  return raw || "Não foi possível entrar. Verifique a configuração do Firebase Authentication.";
+}
+
 function whatsappLink(client, message) {
   const phone = cleanPhone(client?.whatsapp);
   if (!phone) return `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
@@ -484,6 +507,14 @@ function exportAppointmentsCsv(appointments) {
 function exportFullBackupJson(payload) {
   downloadBlob(
     `studiobook-backup-completo-${todayISO()}.json`,
+    JSON.stringify(payload, null, 2),
+    "application/json;charset=utf-8"
+  );
+}
+
+function exportAdminJson(payload) {
+  downloadBlob(
+    `studiobook-admin-${todayISO()}.json`,
     JSON.stringify(payload, null, 2),
     "application/json;charset=utf-8"
   );
@@ -798,6 +829,8 @@ export default function App() {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
   const [isIosInstall, setIsIosInstall] = useState(false);
+  const [adminData, setAdminData] = useState(null);
+  const [adminError, setAdminError] = useState("");
 
   const showFeedback = (message, type = "success") => {
     setFeedbackType(type);
@@ -814,6 +847,8 @@ export default function App() {
     try {
       const authenticated = await base44.auth.isAuthenticated();
       if (!authenticated) {
+        const redirectError = base44.auth.getLastRedirectError?.();
+        if (redirectError) showFeedback(authErrorMessage(redirectError), "error");
         setUser(null);
         return;
       }
@@ -911,6 +946,12 @@ export default function App() {
   useEffect(() => {
     if (user) loadData();
   }, [user]);
+
+  const platformAdmin = isPlatformAdmin(user);
+
+  useEffect(() => {
+    if (!platformAdmin && activeTab === "admin") setActiveTab("dashboard");
+  }, [activeTab, platformAdmin]);
 
   useEffect(() => {
     if (!user || typeof window === "undefined") return;
@@ -1069,8 +1110,16 @@ export default function App() {
     };
   }, [clients, reports.revenue, returnItems, todayAppointments]);
 
-  const handleLogin = () => {
-    base44.auth.loginWithProvider("google", window.location.href);
+  const handleLogin = async () => {
+    setActionLoading("login");
+    try {
+      await base44.auth.loginWithProvider("google", window.location.href);
+    } catch (error) {
+      console.error(error);
+      showFeedback(authErrorMessage(error), "error");
+    } finally {
+      setActionLoading("");
+    }
   };
 
   const handleLogout = () => {
@@ -1297,6 +1346,82 @@ export default function App() {
       setActionLoading("");
     }
   };
+
+  const loadAdminOverview = async () => {
+    if (!platformAdmin) return;
+    setActionLoading("admin-overview");
+    setAdminError("");
+    try {
+      const result = await base44.functions.invoke("admin-overview", {});
+      setAdminData(result);
+    } catch (error) {
+      console.error(error);
+      setAdminError(getErrorMessage(error));
+      showFeedback(`Erro no painel admin: ${getErrorMessage(error)}`, "error");
+    } finally {
+      setActionLoading("");
+    }
+  };
+
+  const exportAdminData = async () => {
+    setActionLoading("admin-export");
+    try {
+      const result = await base44.functions.invoke("admin-export", {});
+      exportAdminJson(result);
+      showFeedback("Exportação admin baixada.");
+    } catch (error) {
+      console.error(error);
+      showFeedback(`Erro ao exportar dados admin: ${getErrorMessage(error)}`, "error");
+    } finally {
+      setActionLoading("");
+    }
+  };
+
+  const updateAdminSubscriptionStatus = async (adminUser, status) => {
+    setActionLoading(`admin-subscription-${adminUser.uid}`);
+    try {
+      await base44.functions.invoke("admin-update-subscription", {
+        uid: adminUser.uid,
+        user_email: adminUser.email,
+        subscription_id: adminUser.subscription?.id || "",
+        patch: {
+          status,
+          last_payment_status: status,
+          notes: `Status alterado manualmente pelo painel admin em ${formatDateTime(new Date().toISOString())}.`,
+        },
+      });
+      await loadAdminOverview();
+      showFeedback("Assinatura atualizada pelo painel admin.");
+    } catch (error) {
+      console.error(error);
+      showFeedback(`Erro ao atualizar assinatura: ${getErrorMessage(error)}`, "error");
+    } finally {
+      setActionLoading("");
+    }
+  };
+
+  const updateAdminUserAccess = async (adminUser, disabled) => {
+    setActionLoading(`admin-access-${adminUser.uid}`);
+    try {
+      await base44.functions.invoke("admin-set-user-access", {
+        uid: adminUser.uid,
+        disabled,
+      });
+      await loadAdminOverview();
+      showFeedback(disabled ? "Acesso do usuário bloqueado." : "Acesso do usuário liberado.");
+    } catch (error) {
+      console.error(error);
+      showFeedback(`Erro ao alterar acesso: ${getErrorMessage(error)}`, "error");
+    } finally {
+      setActionLoading("");
+    }
+  };
+
+  useEffect(() => {
+    if (platformAdmin && activeTab === "admin" && !adminData && !adminError) {
+      loadAdminOverview();
+    }
+  }, [activeTab, platformAdmin, adminData, adminError]);
 
   const installApp = async () => {
     if (!installPrompt) return;
@@ -1530,7 +1655,12 @@ export default function App() {
   if (!user) {
     return (
       <>
-        <LoginScreen onLogin={handleLogin} />
+        <LoginScreen
+          onLogin={handleLogin}
+          feedback={feedback}
+          feedbackType={feedbackType}
+          actionLoading={actionLoading}
+        />
         {installPromptNode}
       </>
     );
@@ -1566,6 +1696,7 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onLogout={handleLogout}
+        platformAdmin={platformAdmin}
       />
 
       <main className="mx-auto max-w-7xl px-4 pb-28 pt-5 sm:px-6 lg:px-8">
@@ -1713,6 +1844,18 @@ export default function App() {
                 removeProfileService={removeProfileService}
                 onSave={saveStudioProfile}
                 actionLoading={actionLoading}
+              />
+            )}
+
+            {activeTab === "admin" && platformAdmin && (
+              <AdminView
+                data={adminData}
+                error={adminError}
+                actionLoading={actionLoading}
+                onRefresh={loadAdminOverview}
+                onExport={exportAdminData}
+                onUpdateSubscription={updateAdminSubscriptionStatus}
+                onUpdateAccess={updateAdminUserAccess}
               />
             )}
           </>
@@ -2037,7 +2180,7 @@ function ServiceCatalogEditor({ services, categories, onUpdate, onRemove }) {
   );
 }
 
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
   return (
     <div className="min-h-screen bg-[#f6f1ef] px-5 py-10 text-zinc-950">
       <div className="mx-auto grid min-h-[calc(100vh-5rem)] max-w-6xl items-center gap-10 lg:grid-cols-[0.9fr_1.1fr]">
@@ -2052,8 +2195,23 @@ function LoginScreen({ onLogin }) {
           <p className="mt-5 max-w-xl text-lg leading-8 text-zinc-600">
             Controle premium para clientes, agenda privada, procedimentos, retornos e relacionamento via WhatsApp.
           </p>
-          <Button onClick={onLogin} className="mt-8 h-12 rounded-full bg-zinc-950 px-7 text-white hover:bg-zinc-800">
-            Entrar com Google
+          {feedback && (
+            <div
+              className={`mt-6 max-w-xl rounded-2xl border px-4 py-3 text-sm font-bold leading-6 shadow-sm ${
+                feedbackType === "error"
+                  ? "border-red-200 bg-red-50 text-red-800"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-800"
+              }`}
+            >
+              {feedback}
+            </div>
+          )}
+          <Button
+            onClick={onLogin}
+            disabled={actionLoading === "login"}
+            className="mt-8 h-12 rounded-full bg-zinc-950 px-7 text-white hover:bg-zinc-800"
+          >
+            {actionLoading === "login" ? "Abrindo login..." : "Entrar com Google"}
           </Button>
         </div>
         <div className="rounded-[2rem] border border-white bg-white/86 p-6 shadow-2xl backdrop-blur">
@@ -2076,7 +2234,9 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function AppHeader({ user, profile, activeTab, setActiveTab, onLogout }) {
+function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, platformAdmin }) {
+  const visibleTabs = platformAdmin ? [...tabs, adminTab] : tabs;
+
   return (
     <header className="sticky top-0 z-40 border-b border-white/70 bg-white/80 backdrop-blur-xl">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
@@ -2097,7 +2257,7 @@ function AppHeader({ user, profile, activeTab, setActiveTab, onLogout }) {
         </div>
       </div>
       <nav className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 pb-4 sm:px-6 lg:px-8">
-        {tabs.map((tab) => {
+        {visibleTabs.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
           return (
@@ -2117,6 +2277,219 @@ function AppHeader({ user, profile, activeTab, setActiveTab, onLogout }) {
         })}
       </nav>
     </header>
+  );
+}
+
+function AdminView({
+  data,
+  error,
+  actionLoading,
+  onRefresh,
+  onExport,
+  onUpdateSubscription,
+  onUpdateAccess,
+}) {
+  const metrics = data?.metrics || {};
+  const users = data?.users || [];
+  const backendReady = data?.admin_ready !== false;
+  const mercadoPagoReady = data?.mercado_pago_ready !== false;
+
+  return (
+    <div className="grid gap-6">
+      <section className="overflow-hidden rounded-[2rem] bg-zinc-950 text-white shadow-2xl">
+        <div className="grid gap-6 p-6 sm:p-8 lg:grid-cols-[1.1fr_0.9fr]">
+          <div>
+            <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.2em] text-rose-100">
+              <Server className="h-4 w-4" />
+              Painel admin BlackVision
+            </p>
+            <h2 className="mt-5 text-4xl font-black leading-tight tracking-tight sm:text-5xl">
+              Controle completo do {PRODUCT_NAME}.
+            </h2>
+            <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
+              Gestão de usuários, studios, assinaturas, status técnico, exportação e suporte operacional.
+            </p>
+          </div>
+          <div className="rounded-[1.75rem] border border-white/10 bg-white/8 p-5 backdrop-blur">
+            <p className="text-sm font-bold text-white/60">Saúde do sistema</p>
+            <div className="mt-5 grid gap-3">
+              <AdminHealthLine label="Backend Railway" ok={Boolean(data) && !error} />
+              <AdminHealthLine label="Firebase Admin" ok={backendReady} />
+              <AdminHealthLine label="Mercado Pago" ok={mercadoPagoReady} />
+            </div>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Button
+                onClick={onRefresh}
+                disabled={actionLoading === "admin-overview"}
+                className="rounded-full bg-white text-zinc-950 hover:bg-rose-50"
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                {actionLoading === "admin-overview" ? "Atualizando..." : "Atualizar"}
+              </Button>
+              <Button
+                onClick={onExport}
+                disabled={!data || actionLoading === "admin-export"}
+                variant="ghost"
+                className="rounded-full border border-white/15 text-white hover:bg-white/10"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Exportar
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {error && (
+        <Panel className="border-red-100 bg-red-50">
+          <div className="flex gap-3 text-red-800">
+            <AlertTriangle className="mt-1 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-black">Admin indisponível</p>
+              <p className="mt-1 text-sm leading-6">{error}</p>
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {data?.admin_ready === false && (
+        <Panel className="border-amber-100 bg-amber-50">
+          <PanelHeader
+            title="Configuração pendente no Railway"
+            subtitle={data.admin_error || "Configure a credencial Firebase Admin para liberar gestão completa."}
+          />
+          <div className="mt-5 grid gap-3 text-sm text-amber-900">
+            <p className="font-bold">Variáveis aceitas pelo backend:</p>
+            <code className="rounded-2xl bg-white/70 p-4 text-xs leading-6">
+              FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY
+            </code>
+          </div>
+        </Panel>
+      )}
+
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <StatCard label="Usuários" value={metrics.users || 0} helper="Contas e workspaces" icon={Users} tone="dark" />
+        <StatCard label="Clientes" value={metrics.clients || 0} helper="Total da base" icon={UserPlus} tone="rose" />
+        <StatCard label="Atendimentos" value={metrics.records || 0} helper="Procedimentos salvos" icon={ShieldCheck} tone="green" />
+        <StatCard label="Agenda" value={metrics.appointments || 0} helper="Horários criados" icon={CalendarDays} tone="violet" />
+        <StatCard label="Assinaturas" value={metrics.active_subscriptions || 0} helper="Autorizadas" icon={CreditCard} tone="gold" />
+      </section>
+
+      <Panel>
+        <PanelHeader
+          title="Studios e contas"
+          subtitle="Controle operacional por profissional. Use com cuidado: alterações aqui impactam produção."
+          action={
+            <a
+              href={supportWhatsAppLink("Preciso de suporte no painel admin do StudioBook.")}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-10 items-center justify-center rounded-full bg-emerald-500 px-4 text-sm font-black text-white hover:bg-emerald-600"
+            >
+              <MessageCircle className="mr-2 h-4 w-4" />
+              Suporte
+            </a>
+          }
+        />
+        <div className="mt-5 grid gap-4">
+          {!data && !error ? (
+            <EmptyState
+              text="Atualize o painel para carregar dados administrativos."
+              action={
+                <Button onClick={onRefresh} className="mt-4 rounded-full bg-zinc-950 text-white">
+                  Carregar painel
+                </Button>
+              }
+            />
+          ) : users.length === 0 ? (
+            <EmptyState text="Nenhum usuário encontrado ainda." />
+          ) : (
+            users.map((adminUser) => (
+              <AdminUserCard
+                key={adminUser.uid}
+                adminUser={adminUser}
+                actionLoading={actionLoading}
+                onUpdateSubscription={onUpdateSubscription}
+                onUpdateAccess={onUpdateAccess}
+              />
+            ))
+          )}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function AdminHealthLine({ label, ok }) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-2xl bg-white/8 px-4 py-3">
+      <span className="text-sm font-bold text-white/75">{label}</span>
+      <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-black ${ok ? "bg-emerald-400/16 text-emerald-100" : "bg-amber-400/16 text-amber-100"}`}>
+        {ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+        {ok ? "OK" : "Atenção"}
+      </span>
+    </div>
+  );
+}
+
+function AdminUserCard({ adminUser, actionLoading, onUpdateSubscription, onUpdateAccess }) {
+  const subscriptionStatus = adminUser.subscription?.status || "not_started";
+  const loadingSubscription = actionLoading === `admin-subscription-${adminUser.uid}`;
+  const loadingAccess = actionLoading === `admin-access-${adminUser.uid}`;
+
+  return (
+    <div className="grid min-w-0 gap-4 rounded-[1.5rem] border border-zinc-100 bg-zinc-50 p-4 lg:grid-cols-[1.2fr_1fr_auto] lg:items-center">
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <p className="min-w-0 break-words text-base font-black text-zinc-950">
+            {adminUser.business_name || adminUser.displayName || adminUser.email || "Conta sem nome"}
+          </p>
+          <Badge tone={adminUser.disabled ? "red" : "green"}>{adminUser.disabled ? "Bloqueado" : "Ativo"}</Badge>
+          <Badge tone={billingStatusTone(subscriptionStatus)}>{billingStatusLabel(subscriptionStatus)}</Badge>
+        </div>
+        <p className="mt-2 break-words text-xs font-bold text-zinc-500">{adminUser.email || adminUser.uid}</p>
+        <p className="mt-1 text-xs text-zinc-500">Último login: {formatDateTime(adminUser.lastSignInTime)}</p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <AdminMiniStat label="Clientes" value={adminUser.counts?.Client || 0} />
+        <AdminMiniStat label="Atend." value={adminUser.counts?.ServiceRecord || 0} />
+        <AdminMiniStat label="Agenda" value={adminUser.counts?.Appointment || 0} />
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
+        <Button
+          type="button"
+          disabled={loadingSubscription}
+          onClick={() =>
+            onUpdateSubscription(adminUser, subscriptionStatus === "authorized" ? "paused" : "authorized")
+          }
+          className="rounded-full bg-zinc-950 text-white"
+        >
+          <CreditCard className="mr-2 h-4 w-4" />
+          {subscriptionStatus === "authorized" ? "Pausar" : "Autorizar"}
+        </Button>
+        <Button
+          type="button"
+          disabled={loadingAccess}
+          variant="ghost"
+          onClick={() => onUpdateAccess(adminUser, !adminUser.disabled)}
+          className="rounded-full bg-white"
+        >
+          {adminUser.disabled ? <UserCheck className="mr-2 h-4 w-4" /> : <UserX className="mr-2 h-4 w-4" />}
+          {adminUser.disabled ? "Liberar" : "Bloquear"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function AdminMiniStat({ label, value }) {
+  return (
+    <div className="rounded-2xl bg-white px-3 py-3">
+      <p className="text-lg font-black text-zinc-950">{value}</p>
+      <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">{label}</p>
+    </div>
   );
 }
 

@@ -4,6 +4,7 @@ import {
   getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
+  signInWithPopup,
   signInWithRedirect,
   signOut,
 } from "firebase/auth";
@@ -26,13 +27,19 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:574358182772:web:9796070587004f3f33aa21",
 };
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "https://api.studiosbook.com.br").replace(/\/$/, "");
+const apiBaseUrls = (import.meta.env.VITE_API_BASE_URLS || import.meta.env.VITE_API_BASE_URL || "https://api.studiosbook.com.br,https://studiosbook-api-production.up.railway.app")
+  .split(",")
+  .map((url) => url.trim().replace(/\/$/, ""))
+  .filter(Boolean);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-getRedirectResult(auth).catch((error) => {
+let lastRedirectError = null;
+const redirectResultReady = getRedirectResult(auth).catch((error) => {
+  lastRedirectError = error;
   console.error("Firebase redirect login error", error);
+  return null;
 });
 
 let authReadyResolved = false;
@@ -137,35 +144,50 @@ function createEntity(entityName) {
 }
 
 async function invokeFunction(name, data = {}) {
-  if (!apiBaseUrl) {
+  if (!apiBaseUrls.length) {
     throw new Error("Backend Railway não configurado. Defina VITE_API_BASE_URL.");
   }
 
   const user = await requireUser();
   const token = await user.getIdToken();
-  const response = await fetch(`${apiBaseUrl}/functions/${name}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data || {}),
-  });
-  const payload = await response.json().catch(() => ({}));
 
-  if (!response.ok) {
-    const error = new Error(payload?.error || "Erro no backend.");
-    error.data = payload;
-    throw error;
+  let lastError;
+  for (const apiBaseUrl of apiBaseUrls) {
+    try {
+      const response = await fetch(`${apiBaseUrl}/functions/${name}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data || {}),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const error = new Error(payload?.error || "Erro no backend.");
+        error.data = payload;
+        throw error;
+      }
+
+      return payload;
+    } catch (error) {
+      lastError = error;
+      if (error?.data) throw error;
+    }
   }
 
-  return payload;
+  throw lastError || new Error("Backend Railway indisponível.");
 }
 
 export const base44 = {
   auth: {
     async isAuthenticated() {
+      await redirectResultReady;
       return Boolean(await currentUser());
+    },
+    getLastRedirectError() {
+      return lastRedirectError;
     },
     async me() {
       const user = await requireUser();
@@ -175,7 +197,17 @@ export const base44 = {
       if (providerName !== "google") throw new Error("Provedor não suportado.");
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
-      await signInWithRedirect(auth, provider);
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (error) {
+        const fallbackCodes = new Set([
+          "auth/popup-blocked",
+          "auth/operation-not-supported-in-this-environment",
+          "auth/web-storage-unsupported",
+        ]);
+        if (!fallbackCodes.has(error?.code)) throw error;
+        await signInWithRedirect(auth, provider);
+      }
     },
     async logout(returnUrl = window.location.origin) {
       await signOut(auth);

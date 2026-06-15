@@ -52,7 +52,16 @@ O backend não deve usar o domínio raiz. Use este subdomínio:
 api.studiosbook.com.br
 ```
 
-No Railway, adicione o domínio customizado no serviço `studiosbook-api` e copie o CNAME informado pelo Railway.
+Serviço Railway atual: `studiosbook-api`
+
+URL pública atual:
+
+```txt
+https://studiosbook-api-production.up.railway.app
+```
+
+No Railway, adicione o domínio customizado `api.studiosbook.com.br` no serviço `studiosbook-api` e copie o CNAME informado pelo Railway.
+Até o domínio customizado ficar pronto, o frontend possui fallback automático para a URL pública do Railway.
 No serviço, mantenha:
 
 ```txt
