@@ -101,8 +101,17 @@ No Firebase Console:
    - `www.studiosbook.com.br`
    - `studiosbook.web.app`
    - `blackvision-27f1c.web.app`
-6. Em Google Cloud/OAuth, se aparecer `redirect_uri_mismatch`, autorizar:
+6. Em Google Cloud/OAuth, se aparecer `redirect_uri_mismatch`, abrir o OAuth Client abaixo:
+   - Client ID: `574358182772-8253mh8lasfvvo9cu19gsor1ko4q2hjb.apps.googleusercontent.com`
+   - Link direto: `https://console.cloud.google.com/apis/credentials/oauthclient/574358182772-8253mh8lasfvvo9cu19gsor1ko4q2hjb.apps.googleusercontent.com?project=blackvision-27f1c`
+7. Em `Authorized JavaScript origins`, adicionar:
+   - `https://studiosbook.com.br`
+   - `https://www.studiosbook.com.br`
+   - `https://studiosbook.web.app`
+8. Em `Authorized redirect URIs`, adicionar:
    - `https://studiosbook.com.br/__/auth/handler`
+   - `https://www.studiosbook.com.br/__/auth/handler`
+   - `https://studiosbook.web.app/__/auth/handler`
 
 O frontend usa `studiosbook.com.br` como `authDomain` para evitar que clientes vejam `blackvision-27f1c.firebaseapp.com` na tela de login do Google.
 
