@@ -1,6 +1,12 @@
 # StudioBook - domínio oficial
 
 Domínio oficial: `studiosbook.com.br`
+Domínio com www: `www.studiosbook.com.br`
+
+Status em 15/06/2026:
+
+- `studiosbook.com.br`: ativo no Firebase Hosting.
+- `www.studiosbook.com.br`: adicionado no Firebase Hosting e aguardando criação do CNAME no DNS do Registro.br.
 
 ## Firebase Hosting
 
@@ -8,7 +14,7 @@ O domínio customizado deve ser adicionado no Firebase Console:
 
 1. Abrir `https://console.firebase.google.com/project/blackvision-27f1c/hosting/sites/studiosbook`
 2. Entrar em `Add custom domain`
-3. Informar `studiosbook.com.br`
+3. Informar `studiosbook.com.br` e `www.studiosbook.com.br`
 4. Seguir os registros TXT/A indicados pelo Firebase
 5. Depois da propagação, concluir a verificação SSL
 
@@ -20,7 +26,23 @@ O Firebase pode variar os registros por projeto. Em geral, o fluxo informa:
 | --- | --- | --- |
 | TXT | @ | valor de verificação do Firebase |
 | A | @ | IPs informados pelo Firebase |
-| CNAME | www | destino informado pelo Firebase |
+| CNAME | www | studiosbook.web.app |
+
+Registro confirmado pelo Firebase para liberar o `www`:
+
+```txt
+Tipo: CNAME
+Nome/Host: www
+Valor/Destino: studiosbook.web.app
+TTL: padrão do provedor
+```
+
+Os nameservers atuais do domínio são do Registro.br:
+
+```txt
+d.sec.dns.br
+e.sec.dns.br
+```
 
 ## Backend Railway
 
