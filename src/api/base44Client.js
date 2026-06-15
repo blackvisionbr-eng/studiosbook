@@ -20,7 +20,7 @@ import {
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "blackvision-27f1c.firebaseapp.com",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "studiosbook.com.br",
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "blackvision-27f1c",
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "blackvision-27f1c.firebasestorage.app",
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "574358182772",
