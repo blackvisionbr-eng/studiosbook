@@ -385,6 +385,9 @@ function authErrorMessage(error) {
   if (code.includes("configuration-not-found") || raw.includes("CONFIGURATION_NOT_FOUND")) {
     return "Firebase Authentication ainda não foi inicializado. No Firebase Console, abra Authentication, clique em Get started, habilite Google e adicione studiosbook.com.br nos domínios autorizados.";
   }
+  if (code.includes("operation-not-allowed") || raw.includes("OPERATION_NOT_ALLOWED")) {
+    return "Login com Google ainda não está habilitado no Firebase. Abra Authentication > Sign-in method > Google, ative o provedor e salve com o e-mail de suporte getblackvision.br@gmail.com.";
+  }
   if (code.includes("unauthorized-domain")) {
     return "Domínio não autorizado no Firebase Auth. Adicione studiosbook.com.br e www.studiosbook.com.br em Authentication > Settings > Authorized domains.";
   }

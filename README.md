@@ -88,13 +88,15 @@ Depois de registrar o domínio customizado no Railway, aponte `api.studiosbook.c
 ## Firebase Auth
 
 Se o botão `Entrar com Google` retornar `CONFIGURATION_NOT_FOUND`, o Firebase Authentication ainda não foi inicializado.
+Se retornar `auth/operation-not-allowed`, o provedor Google existe no código, mas está desativado no Firebase.
 
 No Firebase Console:
 
 1. Abrir `https://console.firebase.google.com/project/blackvision-27f1c/authentication/providers`
 2. Clicar em `Get started`
 3. Habilitar o provedor `Google`
-4. Em `Authentication > Settings > Authorized domains`, adicionar:
+4. Usar `getblackvision.br@gmail.com` como e-mail de suporte do projeto
+5. Em `Authentication > Settings > Authorized domains`, adicionar:
    - `studiosbook.com.br`
    - `www.studiosbook.com.br`
    - `studiosbook.web.app`
