@@ -8,8 +8,8 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const app = express();
 const MP_API = "https://api.mercadopago.com";
-const PRODUCT_NAME = "StudioBook";
-const PLAN_NAME = "StudioBook Intermediário";
+const PRODUCT_NAME = "StudiosBook";
+const PLAN_NAME = "StudiosBook Intermediário";
 const MONTHLY_AMOUNT = 19.9;
 const TRIAL_DAYS = 7;
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "blackvision-27f1c";
@@ -203,7 +203,7 @@ function requirePlatformAdmin(req, res, next) {
   requireFirebaseUser(req, res, () => {
     const email = String(req.user?.email || "").toLowerCase();
     if (!ADMIN_EMAILS.has(email)) {
-      return res.status(403).json({ error: "Acesso restrito ao administrador do StudioBook." });
+      return res.status(403).json({ error: "Acesso restrito ao administrador do StudiosBook." });
     }
     return next();
   });
@@ -296,7 +296,7 @@ async function listAuthUsers() {
 app.get("/", (_req, res) => {
   res.json({
     ok: true,
-    service: "StudioBook API",
+    service: "StudiosBook API",
     company: "BlackVision",
     public_app_url: PUBLIC_APP_URL,
     allowed_origins: [...allowedOrigins],
@@ -305,7 +305,7 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "StudioBook API", ...adminStatusPayload() });
+  res.json({ ok: true, service: "StudiosBook API", ...adminStatusPayload() });
 });
 
 app.post("/functions/create-subscription-checkout", requireFirebaseUser, async (req, res) => {
@@ -322,13 +322,13 @@ app.post("/functions/create-subscription-checkout", requireFirebaseUser, async (
     const now = new Date();
     const trialEnd = addDays(now, TRIAL_DAYS);
     const appOrigin = safeOrigin(req.body?.app_url || PUBLIC_APP_URL);
-    const externalReference = `studiobook:${req.user.uid}:${Date.now()}`;
+    const externalReference = `studiosbook:${req.user.uid}:${Date.now()}`;
     const planId = process.env.MERCADO_PAGO_PLAN_ID;
 
     const mpPayload = {
       payer_email: req.user.email,
       external_reference: externalReference,
-      back_url: `${appOrigin}/?checkout=studiobook`,
+      back_url: `${appOrigin}/?checkout=studiosbook`,
       status: "pending",
     };
 
@@ -453,7 +453,7 @@ app.post("/functions/sync-subscription-status", requireFirebaseUser, async (req,
 });
 
 app.get("/functions/mercado-pago-webhook", (_req, res) => {
-  res.json({ ok: true, service: "StudioBook Mercado Pago webhook" });
+  res.json({ ok: true, service: "StudiosBook Mercado Pago webhook" });
 });
 
 app.post("/functions/mercado-pago-webhook", async (req, res) => {
@@ -461,7 +461,7 @@ app.post("/functions/mercado-pago-webhook", async (req, res) => {
   res.json({
     ok: true,
     received: true,
-    note: "Evento recebido. A sincronização visual acontece pelo botão Atualizar status dentro do StudioBook.",
+    note: "Evento recebido. A sincronização visual acontece pelo botão Atualizar status dentro do StudiosBook.",
   });
 });
 
@@ -615,5 +615,5 @@ app.post("/functions/admin-set-user-access", requirePlatformAdmin, async (req, r
 
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log(`StudioBook API running on port ${port}`);
+  console.log(`StudiosBook API running on port ${port}`);
 });

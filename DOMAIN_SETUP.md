@@ -1,4 +1,4 @@
-# StudioBook - domínio oficial
+# StudiosBook - domínio oficial
 
 Domínio oficial: `studiosbook.com.br`
 Domínio com www: `www.studiosbook.com.br`

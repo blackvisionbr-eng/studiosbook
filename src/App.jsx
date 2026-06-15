@@ -59,14 +59,14 @@ const StudioProfile = base44.entities.StudioProfile;
 const BackupSnapshot = base44.entities.BackupSnapshot;
 const BillingSubscription = base44.entities.BillingSubscription;
 
-const PRODUCT_NAME = "StudioBook";
+const PRODUCT_NAME = "StudiosBook";
 const PRODUCT_COMPANY = "BlackVision";
 const PRODUCT_PRICE = "R$ 19,90/mês";
 const OFFICIAL_APP_URL = "https://studiosbook.com.br";
 const SUPPORT_EMAIL = "getblackvision.br@gmail.com";
 const SUPPORT_PHONE = "73981068594";
 const WHATSAPP_DEFAULT = "";
-const INSTALL_DISMISS_KEY = "studiobook_install_dismissed_until";
+const INSTALL_DISMISS_KEY = "studiosbook_install_dismissed_until";
 const PLATFORM_ADMIN_EMAILS = ["sobrinhonewton@gmail.com", "getblackvision.br@gmail.com"];
 
 const PROFESSIONAL_CATEGORIES = [
@@ -489,7 +489,7 @@ function exportClientsCsv(clients) {
     ],
     clients
   );
-  downloadBlob(`studiobook-clientes-${todayISO()}.csv`, csv, "text/csv;charset=utf-8");
+  downloadBlob(`studiosbook-clientes-${todayISO()}.csv`, csv, "text/csv;charset=utf-8");
 }
 
 function exportAppointmentsCsv(appointments) {
@@ -504,12 +504,12 @@ function exportAppointmentsCsv(appointments) {
     ],
     appointments
   );
-  downloadBlob(`studiobook-agenda-${todayISO()}.csv`, csv, "text/csv;charset=utf-8");
+  downloadBlob(`studiosbook-agenda-${todayISO()}.csv`, csv, "text/csv;charset=utf-8");
 }
 
 function exportFullBackupJson(payload) {
   downloadBlob(
-    `studiobook-backup-completo-${todayISO()}.json`,
+    `studiosbook-backup-completo-${todayISO()}.json`,
     JSON.stringify(payload, null, 2),
     "application/json;charset=utf-8"
   );
@@ -517,7 +517,7 @@ function exportFullBackupJson(payload) {
 
 function exportAdminJson(payload) {
   downloadBlob(
-    `studiobook-admin-${todayISO()}.json`,
+    `studiosbook-admin-${todayISO()}.json`,
     JSON.stringify(payload, null, 2),
     "application/json;charset=utf-8"
   );
@@ -561,7 +561,7 @@ function exportMonthlySafetyPdf({ profile, clients, records, appointments, backu
   y += 18;
   doc.setFont("helvetica", "normal");
   const info = [
-    "Os dados principais ficam salvos na nuvem do StudioBook por conta autenticada.",
+    "Os dados principais ficam salvos na nuvem do StudiosBook por conta autenticada.",
     "O modo segurança permite baixar CSV/JSON/PDF para uma cópia local.",
     "Use o backup mensal antes de fechar o mês ou antes de migrar a agenda completa.",
   ];
@@ -574,7 +574,7 @@ function exportMonthlySafetyPdf({ profile, clients, records, appointments, backu
   doc.setTextColor(113, 113, 122);
   doc.setFontSize(8);
   doc.text(`Gerado pelo ${PRODUCT_NAME} by ${PRODUCT_COMPANY}.`, 16, 285);
-  doc.save(`studiobook-modo-seguranca-${month}.pdf`);
+  doc.save(`studiosbook-modo-seguranca-${month}.pdf`);
 }
 
 function safeFileName(value) {
@@ -959,7 +959,7 @@ export default function App() {
   useEffect(() => {
     if (!user || typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get("checkout") === "studiobook" || params.has("preapproval_id")) {
+    if (params.get("checkout") === "studiosbook" || params.has("preapproval_id")) {
       setActiveTab("billing");
       window.history.replaceState({}, "", window.location.pathname);
     }
@@ -2391,7 +2391,7 @@ function AdminView({
           subtitle="Controle operacional por profissional. Use com cuidado: alterações aqui impactam produção."
           action={
             <a
-              href={supportWhatsAppLink("Preciso de suporte no painel admin do StudioBook.")}
+              href={supportWhatsAppLink("Preciso de suporte no painel admin do StudiosBook.")}
               target="_blank"
               rel="noreferrer"
               className="inline-flex h-10 items-center justify-center rounded-full bg-emerald-500 px-4 text-sm font-black text-white hover:bg-emerald-600"
@@ -3382,7 +3382,7 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
   const statusTone = billingStatusTone(status);
   const trialEnd = billingSubscription?.trial_end_date;
   const trialDaysLeft = trialEnd ? Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86400000)) : 7;
-  const supportHref = supportWhatsAppLink("Oi, preciso de suporte para ativar minha assinatura do StudioBook.");
+  const supportHref = supportWhatsAppLink("Oi, preciso de suporte para ativar minha assinatura do StudiosBook.");
 
   return (
     <div className="grid gap-6">
@@ -3392,7 +3392,7 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
           <div>
             <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.2em] text-rose-100">
               <CreditCard className="h-4 w-4" />
-              Assinatura StudioBook
+              Assinatura StudiosBook
             </p>
             <h2 className="mt-5 max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl">
               7 dias grátis. Depois {PRODUCT_PRICE}.
@@ -3434,7 +3434,7 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
             </div>
             <div className="mt-5 grid gap-3">
               <MiniMetric label="Profissional" value={user?.email || "-"} />
-              <MiniMetric label="Plano" value={billingSubscription?.plan_name || "StudioBook Intermediário"} />
+              <MiniMetric label="Plano" value={billingSubscription?.plan_name || "StudiosBook Intermediário"} />
               <MiniMetric label="Teste grátis" value={trialEnd ? `${trialDaysLeft} dia(s) restantes` : "7 dias"} />
               <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
             </div>
@@ -3446,7 +3446,7 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
         <Panel>
           <PanelHeader
             title="Resumo comercial"
-            subtitle="Condição clara para vender o StudioBook sem ruído."
+            subtitle="Condição clara para vender o StudiosBook sem ruído."
           />
           <div className="mt-5 grid gap-4">
             {[
@@ -3468,7 +3468,7 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
         <Panel>
           <PanelHeader
             title="Detalhes da assinatura"
-            subtitle="Dados usados para conciliação entre StudioBook e Mercado Pago."
+            subtitle="Dados usados para conciliação entre StudiosBook e Mercado Pago."
           />
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             <InfoCard title="Início do teste" value={formatDateTime(billingSubscription?.trial_start_date)} />
@@ -3527,8 +3527,8 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
 function PrivacyPolicyView() {
   const supportMailHref = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
     `Privacidade e LGPD - ${PRODUCT_NAME}`
-  )}&body=${encodeURIComponent("Oi, preciso falar sobre privacidade, dados ou LGPD no StudioBook.")}`;
-  const supportWhatsappHref = supportWhatsAppLink("Oi, preciso falar sobre privacidade, dados ou LGPD no StudioBook.");
+  )}&body=${encodeURIComponent("Oi, preciso falar sobre privacidade, dados ou LGPD no StudiosBook.")}`;
+  const supportWhatsappHref = supportWhatsAppLink("Oi, preciso falar sobre privacidade, dados ou LGPD no StudiosBook.");
 
   return (
     <div className="grid gap-6">
@@ -3686,8 +3686,8 @@ function SecurityView({
   const currentMonth = todayISO().slice(0, 7);
   const supportHref = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
     `Suporte ${PRODUCT_NAME}`
-  )}&body=${encodeURIComponent("Oi, preciso de suporte no StudioBook.")}`;
-  const supportWhatsappHref = supportWhatsAppLink("Oi, preciso de suporte no StudioBook.");
+  )}&body=${encodeURIComponent("Oi, preciso de suporte no StudiosBook.")}`;
+  const supportWhatsappHref = supportWhatsAppLink("Oi, preciso de suporte no StudiosBook.");
 
   return (
     <div className="grid gap-6">
@@ -3800,7 +3800,7 @@ function SecurityView({
               subtitle="Etapa beta paga, com segurança operacional sem grande mudança visual."
             />
             <div className="mt-5 rounded-[1.5rem] bg-zinc-950 p-5 text-white">
-              <p className="text-sm font-bold text-white/55">StudioBook Beta</p>
+              <p className="text-sm font-bold text-white/55">StudiosBook Beta</p>
               <p className="mt-2 text-4xl font-black">{PRODUCT_PRICE}</p>
               <p className="mt-3 text-sm leading-6 text-white/65">
                 Inclui agenda, clientes, atendimentos, retorno por WhatsApp, exportação, PDF mensal e backup em nuvem.

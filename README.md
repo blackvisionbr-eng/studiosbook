@@ -1,4 +1,4 @@
-# StudioBook
+# StudiosBook
 
 Sistema privado para agenda, clientes, atendimentos, retornos, backups e assinatura mensal para profissionais da beleza.
 
@@ -51,7 +51,7 @@ https://studiosbook.web.app
 ```bash
 cd railway-backend
 npx @railway/cli link --project ac1e0e53-ce4d-49df-a61c-3d766cfc74e1 --environment production --service studiosbook-api
-npx @railway/cli up --detach --message "Deploy StudioBook API"
+npx @railway/cli up --detach --message "Deploy StudiosBook API"
 ```
 
 Variáveis obrigatórias no Railway:

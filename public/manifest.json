@@ -1,6 +1,6 @@
 {
-  "name": "StudioBook",
-  "short_name": "StudioBook",
+  "name": "StudiosBook",
+  "short_name": "StudiosBook",
   "description": "Sistema privado para agenda, clientes, retornos, backup e ficha técnica de profissionais da beleza.",
   "start_url": "/",
   "scope": "/",
