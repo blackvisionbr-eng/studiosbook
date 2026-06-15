@@ -1116,7 +1116,14 @@ export default function App() {
   const handleLogin = async () => {
     setActionLoading("login");
     try {
-      await base44.auth.loginWithProvider("google", window.location.href);
+      const loggedUser = await base44.auth.loginWithProvider("google", window.location.href);
+      if (loggedUser) {
+        setUser(loggedUser);
+        return;
+      }
+      if (await base44.auth.isAuthenticated()) {
+        setUser(await base44.auth.me());
+      }
     } catch (error) {
       console.error(error);
       showFeedback(authErrorMessage(error), "error");

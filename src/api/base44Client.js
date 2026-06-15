@@ -4,7 +4,6 @@ import {
   getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
-  signInWithPopup,
   signInWithRedirect,
   signOut,
 } from "firebase/auth";
@@ -197,17 +196,7 @@ export const base44 = {
       if (providerName !== "google") throw new Error("Provedor não suportado.");
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
-      try {
-        await signInWithPopup(auth, provider);
-      } catch (error) {
-        const fallbackCodes = new Set([
-          "auth/popup-blocked",
-          "auth/operation-not-supported-in-this-environment",
-          "auth/web-storage-unsupported",
-        ]);
-        if (!fallbackCodes.has(error?.code)) throw error;
-        await signInWithRedirect(auth, provider);
-      }
+      await signInWithRedirect(auth, provider);
     },
     async logout(returnUrl = window.location.origin) {
       await signOut(auth);
