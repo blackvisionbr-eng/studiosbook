@@ -24,13 +24,19 @@ O Firebase pode variar os registros por projeto. Em geral, o fluxo informa:
 
 ## Backend Railway
 
-O backend não deve usar o domínio raiz. Use um subdomínio, por exemplo:
+O backend não deve usar o domínio raiz. Use este subdomínio:
 
 ```txt
 api.studiosbook.com.br
 ```
 
 No Railway, adicione o domínio customizado no serviço `studiosbook-api` e copie o CNAME informado pelo Railway.
+No serviço, mantenha:
+
+```txt
+PUBLIC_APP_URL=https://studiosbook.com.br
+FRONTEND_ORIGINS=https://studiosbook.com.br,https://www.studiosbook.com.br,https://studiosbook.web.app
+```
 
 ## Cuidados
 

@@ -11,13 +11,20 @@ const MONTHLY_AMOUNT = 19.9;
 const TRIAL_DAYS = 7;
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "blackvision-27f1c";
 const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || "https://studiosbook.com.br";
+const EXTRA_FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const allowedOrigins = new Set(
   [
     PUBLIC_APP_URL,
+    "https://studiosbook.com.br",
+    "https://www.studiosbook.com.br",
     "https://studiosbook.web.app",
     "https://blackvision-27f1c.web.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    ...EXTRA_FRONTEND_ORIGINS,
   ].filter(Boolean)
 );
 
@@ -96,6 +103,8 @@ app.get("/", (_req, res) => {
     ok: true,
     service: "StudioBook API",
     company: "BlackVision",
+    public_app_url: PUBLIC_APP_URL,
+    allowed_origins: [...allowedOrigins],
   });
 });
 

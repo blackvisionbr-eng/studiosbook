@@ -56,6 +56,7 @@ Variáveis obrigatórias no Railway:
 
 ```txt
 PUBLIC_APP_URL=https://studiosbook.com.br
+FRONTEND_ORIGINS=https://studiosbook.com.br,https://www.studiosbook.com.br,https://studiosbook.web.app
 FIREBASE_PROJECT_ID=blackvision-27f1c
 MERCADO_PAGO_ACCESS_TOKEN=token_do_mercado_pago
 ```
