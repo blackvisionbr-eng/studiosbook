@@ -43,5 +43,6 @@
 
   body {
     @apply bg-background text-foreground antialiased;
+    font-family: "DM Sans", Inter, Arial, sans-serif;
   }
 }

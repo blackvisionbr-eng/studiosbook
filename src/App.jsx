@@ -44,7 +44,6 @@ import {
   Star,
   Scissors,
   Send,
-  Smartphone,
   Trash2,
   TrendingUp,
   UserCheck,
@@ -821,6 +820,33 @@ function EmptyState({ text, action }) {
     <div className="rounded-[1.5rem] border border-dashed border-zinc-200 bg-zinc-50/80 p-6 text-center">
       <p className="text-sm font-semibold text-zinc-500">{text}</p>
       {action}
+    </div>
+  );
+}
+
+function BrandLockup({ size = "compact", tone = "dark", heading = false, subtitle = "" }) {
+  const sizes = {
+    compact: { mark: "h-9 w-9", text: "text-xl", gap: "gap-2.5" },
+    header: { mark: "h-10 w-10", text: "text-xl sm:text-2xl", gap: "gap-3" },
+    hero: { mark: "h-16 w-16 sm:h-20 sm:w-20", text: "text-4xl sm:text-6xl", gap: "gap-4 sm:gap-5" },
+  };
+  const current = sizes[size] || sizes.compact;
+  const TextTag = heading ? "h1" : "span";
+  const markSrc = tone === "light" ? "/brand/studiosbook-mark-reversed.svg" : "/brand/studiosbook-mark.svg";
+
+  return (
+    <div className={`inline-flex min-w-0 items-center ${current.gap}`} aria-label={PRODUCT_NAME}>
+      <img src={markSrc} alt="" className={`${current.mark} shrink-0`} />
+      <div className="min-w-0">
+        <TextTag className={`${current.text} block whitespace-nowrap font-bold leading-none tracking-normal ${tone === "light" ? "text-[#fff9fa]" : "text-[#171417]"}`}>
+          Studios<span className={`font-medium ${tone === "light" ? "text-[#f2b7c7]" : "text-[#a84d68]"}`}>Book</span>
+        </TextTag>
+        {subtitle && (
+          <span className={`mt-1 block text-xs font-semibold tracking-normal ${tone === "light" ? "text-white/55" : "text-zinc-500"}`}>
+            {subtitle}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -1971,8 +1997,8 @@ function InstallAppPrompt({ show, canInstall, isIosInstall, onInstall, onDismiss
     <div className="fixed inset-x-0 bottom-4 z-50 px-4">
       <div className="mx-auto max-w-md rounded-[1.5rem] border border-white/80 bg-zinc-950 p-4 text-white shadow-2xl">
         <div className="flex items-start gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-zinc-950">
-            <Smartphone className="h-5 w-5" />
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#402239]">
+            <img src="/brand/studiosbook-mark-reversed.svg" alt="" className="h-7 w-7" />
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
@@ -2041,7 +2067,8 @@ function OnboardingScreen({
   return (
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-8 rounded-[2rem] bg-zinc-950 p-6 text-white shadow-2xl sm:p-8">
-        <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.2em] text-rose-100">
+        <BrandLockup size="compact" tone="light" subtitle="Gestão para profissionais da beleza" />
+        <p className="mt-6 flex w-fit items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.2em] text-rose-100">
           <Sparkles className="h-4 w-4" />
           Primeiro acesso
         </p>
@@ -2283,13 +2310,11 @@ function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
     <div className="min-h-screen bg-[#f6f1ef] px-5 py-10 text-zinc-950">
       <div className="mx-auto grid min-h-[calc(100vh-5rem)] max-w-6xl items-center gap-10 lg:grid-cols-[0.9fr_1.1fr]">
         <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-black text-rose-800 shadow-sm">
+          <BrandLockup size="hero" heading subtitle="Gestão inteligente para profissionais da beleza" />
+          <div className="mt-7 flex w-fit items-center gap-2 rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-black text-rose-800 shadow-sm">
             <Lock className="h-4 w-4" />
             Agenda privada
           </div>
-          <h1 className="mt-6 text-5xl font-black leading-[0.95] tracking-tight sm:text-7xl">
-            {PRODUCT_NAME}
-          </h1>
           <p className="mt-5 max-w-xl text-lg leading-8 text-zinc-600">
             Controle premium para clientes, agenda privada, procedimentos, retornos e relacionamento via WhatsApp.
           </p>
@@ -2307,7 +2332,7 @@ function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
           <Button
             onClick={onLogin}
             disabled={actionLoading === "login"}
-            className="mt-8 h-12 rounded-full bg-zinc-950 px-7 text-white hover:bg-zinc-800"
+            className="mt-8 h-12 rounded-full bg-[#402239] px-7 text-white hover:bg-[#553047]"
           >
             {actionLoading === "login" ? "Abrindo login..." : "Entrar com Google"}
           </Button>
@@ -2341,12 +2366,7 @@ function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, platformA
   return (
     <header className="sticky top-0 z-40 border-b border-white/70 bg-white/80 backdrop-blur-xl">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
-        <div>
-          <p className="text-xs font-black uppercase tracking-[0.24em] text-rose-700">
-            {PRODUCT_NAME}
-          </p>
-          <h1 className="text-lg font-black tracking-tight sm:text-2xl">Central de operação</h1>
-        </div>
+        <BrandLockup size="header" subtitle="Central de operação" />
         <div className="flex items-center gap-3">
           <div className="hidden text-right sm:block">
             <p className="text-sm font-bold text-zinc-800">{profile?.business_name || PRODUCT_NAME}</p>
@@ -3558,10 +3578,7 @@ function BillingAccessScreen({
     <div className="min-h-screen bg-[#f6f1ef] text-zinc-950">
       <header className="border-b border-white/70 bg-white/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-rose-700">{PRODUCT_NAME}</p>
-            <p className="mt-1 text-sm font-bold text-zinc-500">Regularização de acesso</p>
-          </div>
+          <BrandLockup size="header" subtitle="Regularização de acesso" />
           <Button variant="ghost" onClick={onLogout} className="rounded-full">
             <LogOut className="mr-2 h-4 w-4" />
             Sair
@@ -4520,7 +4537,12 @@ function InfoLine({ label, value }) {
 function LoadingScreen() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#f6f1ef]">
-      <LoadingBlock />
+      <div className="grid justify-items-center gap-5">
+        <img src="/brand/studiosbook-mark.svg" alt="StudiosBook" className="h-16 w-16 animate-pulse" />
+        <div className="h-1 w-20 overflow-hidden rounded-full bg-[#eadde3]">
+          <div className="h-full w-1/2 animate-pulse rounded-full bg-[#a84d68]" />
+        </div>
+      </div>
     </div>
   );
 }

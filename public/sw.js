@@ -1,5 +1,12 @@
-const CACHE_NAME = "studiosbook-v3";
-const APP_SHELL = ["/", "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png"];
+const CACHE_NAME = "studiosbook-v4";
+const APP_SHELL = [
+  "/",
+  "/manifest.json",
+  "/brand/studiosbook-mark.svg",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/icons/icon-maskable-512.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
