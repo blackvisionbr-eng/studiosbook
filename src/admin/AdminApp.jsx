@@ -149,18 +149,14 @@ export default function AdminApp() {
   };
 
   const updateSubscription = async (account) => {
-    const current = account.subscription?.status || "not_started";
-    const status = current === "authorized" ? "paused" : "authorized";
-    if (!window.confirm(`${status === "authorized" ? "Autorizar" : "Pausar"} a assinatura desta conta?`)) return;
+    if (!window.confirm("Consultar e aplicar o status confirmado diretamente pelo Mercado Pago?")) return;
     setLoading(`subscription-${account.uid}`);
     try {
       await invokeAdmin("admin-update-subscription", {
         uid: account.uid,
-        user_email: account.email,
-        patch: { status, last_payment_status: status },
       });
       await loadOverview();
-      showNotice("Assinatura atualizada.");
+      showNotice("Cobrança sincronizada com o Mercado Pago.");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -372,7 +368,7 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess 
                 <Mini label="Agenda" value={account.counts?.Appointment || 0} />
               </div>
               <div className="grid grid-cols-2 gap-2 xl:grid-cols-1">
-                <Button type="button" disabled={loading === `subscription-${account.uid}`} onClick={() => onSubscription(account)} className="h-10 rounded-lg bg-zinc-950 px-3 text-white"><CreditCard className="mr-2 h-4 w-4" />{status === "authorized" ? "Pausar" : "Autorizar"}</Button>
+                <Button type="button" disabled={loading === `subscription-${account.uid}`} onClick={() => onSubscription(account)} className="h-10 rounded-lg bg-zinc-950 px-3 text-white"><RefreshCw className={`mr-2 h-4 w-4 ${loading === `subscription-${account.uid}` ? "animate-spin" : ""}`} />Sincronizar</Button>
                 <Button type="button" disabled={loading === `access-${account.uid}`} onClick={() => onAccess(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3">{account.disabled ? <UserCheck className="mr-2 h-4 w-4" /> : <UserX className="mr-2 h-4 w-4" />}{account.disabled ? "Liberar" : "Bloquear"}</Button>
               </div>
             </article>

@@ -1006,6 +1006,25 @@ export default function App() {
     if (params.get("checkout") === "studiosbook" || params.has("preapproval_id")) {
       setActiveTab("billing");
       window.history.replaceState({}, "", window.location.pathname);
+      setActionLoading("billing-refresh");
+      base44.functions
+        .invoke("sync-billing-status", {})
+        .then((result) => {
+          setBillingSubscription(result?.subscription || null);
+          setBillingAccess(result?.access || null);
+          setPixPayment(result?.payment || result?.latest_payment || null);
+          const confirmed = ["authorized", "active"].includes(result?.subscription?.status);
+          showFeedback(
+            confirmed
+              ? "Assinatura confirmada pelo Mercado Pago."
+              : "Assinatura ainda pendente. O acesso será atualizado após a confirmação do Mercado Pago."
+          );
+        })
+        .catch((error) => {
+          console.error("Billing return sync error", error);
+          showFeedback("Não foi possível confirmar o pagamento agora. Use Atualizar status.", "error");
+        })
+        .finally(() => setActionLoading(""));
     }
   }, [user]);
 

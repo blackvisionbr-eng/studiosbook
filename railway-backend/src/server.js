@@ -1060,47 +1060,29 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, async (re
 
   try {
     const uid = String(req.body?.uid || "").trim();
-    const patch = req.body?.patch || {};
     if (!/^[A-Za-z0-9:_-]{1,128}$/.test(uid)) {
       return res.status(400).json({ error: "UID inválido." });
     }
 
-    const allowedFields = [
-      "status",
-      "notes",
-      "trial_end_date",
-      "current_period_end",
-      "next_payment_date",
-      "last_payment_status",
-    ];
-    const payload = Object.fromEntries(
-      Object.entries(patch)
-        .filter(([key]) => allowedFields.includes(key))
-        .map(([key, value]) => [key, value])
-    );
-    const validStatuses = new Set(["authorized", "active", "paused", "pending", "expired", "cancelled"]);
-    if (payload.status && !validStatuses.has(payload.status)) {
-      return res.status(400).json({ error: "Status de assinatura inválido." });
+    const current = await currentSubscription(uid);
+    const preapprovalId = current.data?.mercado_pago_preapproval_id || "";
+    if (!preapprovalId) {
+      return res.status(409).json({ error: "Esta conta ainda não possui uma assinatura no Mercado Pago." });
     }
-    payload.admin_updated = true;
-    const result = await persistBillingState(
-      uid,
-      {
-        user_email: req.body?.user_email || "",
-        plan_name: PLAN_NAME,
-        monthly_amount: MONTHLY_AMOUNT,
-        currency_id: "BRL",
-        ...payload,
-      },
-      { email: req.body?.user_email || "" }
-    );
+
+    const previousStatus = current.data?.status || "";
+    const result = await syncSubscription(uid, preapprovalId);
 
     await safeAdminAudit(req, "admin.subscription.updated", {
       target_uid: uid,
-      metadata: { fields: Object.keys(payload), status: payload.status || "" },
+      metadata: {
+        source: "mercado_pago",
+        previous_status: previousStatus,
+        confirmed_status: result.subscription?.status || "",
+      },
     });
 
-    res.json({ success: true, ...result });
+    res.json({ success: true, source: "mercado_pago", ...result });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Erro ao atualizar assinatura.", request_id: req.requestId });
