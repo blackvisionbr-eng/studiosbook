@@ -7,14 +7,16 @@
     "start": "node src/server.js",
     "test": "node --test",
     "smoke:production": "node scripts/production-smoke.js",
-    "smoke:admin": "node scripts/admin-smoke.js"
+    "smoke:admin": "node scripts/admin-smoke.js",
+    "bootstrap:admin": "node scripts/bootstrap-admin.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.5.2",
     "firebase-admin": "^14.0.0",
-    "jose": "^5.10.0"
+    "helmet": "^8.2.0"
   },
   "engines": {
     "node": ">=20"

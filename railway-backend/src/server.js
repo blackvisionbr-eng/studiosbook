@@ -6,7 +6,8 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getFirestore } from "firebase-admin/firestore";
 import cors from "cors";
 import express from "express";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
 import {
   PIX_ACCESS_DAYS,
   TRIAL_DAYS,
@@ -31,14 +32,6 @@ const PUBLIC_API_URL =
   process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
 const MERCADO_PAGO_WEBHOOK_URL =
   process.env.MERCADO_PAGO_WEBHOOK_URL || `${PUBLIC_API_URL}/functions/mercado-pago-webhook`;
-const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "getblackvision.br@gmail.com";
-const SUPPORT_PHONE = process.env.SUPPORT_PHONE || "73981068594";
-const ADMIN_EMAILS = new Set(
-  (process.env.ADMIN_EMAILS || "sobrinhonewton@gmail.com,getblackvision.br@gmail.com")
-    .split(",")
-    .map((email) => email.trim().toLowerCase())
-    .filter(Boolean)
-);
 const EXTRA_FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -56,14 +49,9 @@ const allowedOrigins = new Set(
   ].filter(Boolean)
 );
 
-const jwks = createRemoteJWKSet(
-  new URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com")
-);
-
 let adminAuth = null;
 let adminDb = null;
 let firebaseAdminReady = false;
-let firebaseAdminError = "";
 
 function parseServiceAccountJson(value) {
   if (!value) return null;
@@ -112,8 +100,6 @@ function initializeFirebaseAdmin() {
     if (!getApps().length) {
       const serviceAccount = serviceAccountFromEnv();
       if (!serviceAccount) {
-        firebaseAdminError =
-          "Credencial Firebase Admin não configurada. Configure FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.";
         return;
       }
       initializeApp({
@@ -125,13 +111,20 @@ function initializeFirebaseAdmin() {
     adminDb = getFirestore();
     firebaseAdminReady = true;
   } catch (error) {
-    firebaseAdminError = error?.message || "Erro ao iniciar Firebase Admin.";
     console.error("Firebase Admin init error", error);
   }
 }
 
 initializeFirebaseAdmin();
 
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "same-site" },
+  })
+);
 app.use(
   cors({
     origin(origin, callback) {
@@ -140,7 +133,35 @@ app.use(
     },
   })
 );
-app.use(express.json({ limit: "1mb" }));
+app.use((req, res, next) => {
+  req.requestId = String(req.headers["x-request-id"] || randomUUID()).slice(0, 128);
+  res.setHeader("X-Request-ID", req.requestId);
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 300,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    skip: (req) => req.path === "/functions/mercado-pago-webhook",
+    message: { error: "Muitas solicitações. Aguarde alguns minutos." },
+  })
+);
+app.use(express.json({ limit: "256kb" }));
+
+const adminRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 120,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Limite administrativo temporariamente atingido." },
+});
+app.use((req, res, next) => {
+  if (req.path.startsWith("/functions/admin-")) return adminRateLimit(req, res, next);
+  return next();
+});
 
 function safeOrigin(value) {
   try {
@@ -180,16 +201,8 @@ async function readMercadoPagoResponse(response) {
 function adminStatusPayload() {
   return {
     admin_ready: firebaseAdminReady,
-    firebase_project_id: FIREBASE_PROJECT_ID,
-    missing_admin_credential: !firebaseAdminReady,
-    admin_error: firebaseAdminReady ? "" : firebaseAdminError,
     mercado_pago_ready: Boolean(apiAccessToken()),
     webhook_ready: Boolean(webhookSecret()),
-    webhook_url: MERCADO_PAGO_WEBHOOK_URL,
-    support: {
-      email: SUPPORT_EMAIL,
-      phone: SUPPORT_PHONE,
-    },
   };
 }
 
@@ -199,15 +212,17 @@ async function requireFirebaseUser(req, res, next) {
     const token = header.startsWith("Bearer ") ? header.slice(7) : "";
     if (!token) return res.status(401).json({ error: "Login obrigatório." });
 
-    const { payload } = await jwtVerify(token, jwks, {
-      issuer: `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`,
-      audience: FIREBASE_PROJECT_ID,
-    });
+    if (!firebaseAdminReady || !adminAuth) {
+      return res.status(503).json({ error: "Serviço de autenticação temporariamente indisponível." });
+    }
+    const payload = await adminAuth.verifyIdToken(token, true);
 
     req.user = {
-      uid: payload.user_id || payload.sub,
+      uid: payload.uid || payload.user_id || payload.sub,
       email: payload.email || "",
       name: payload.name || payload.email || "Profissional",
+      emailVerified: payload.email_verified === true,
+      platformAdmin: payload.platform_admin === true,
     };
     return next();
   } catch (error) {
@@ -218,8 +233,7 @@ async function requireFirebaseUser(req, res, next) {
 
 function requirePlatformAdmin(req, res, next) {
   requireFirebaseUser(req, res, () => {
-    const email = String(req.user?.email || "").toLowerCase();
-    if (!ADMIN_EMAILS.has(email)) {
+    if (!req.user?.platformAdmin || !req.user?.emailVerified) {
       return res.status(403).json({ error: "Acesso restrito ao administrador do StudiosBook." });
     }
     return next();
@@ -228,12 +242,40 @@ function requirePlatformAdmin(req, res, next) {
 
 function requireFirebaseAdminSdk(res) {
   if (firebaseAdminReady && adminDb && adminAuth) return true;
-  res.status(503).json({
-    error: "Painel admin indisponível. Configure a credencial Firebase Admin no Railway.",
-    setup_required: true,
-    ...adminStatusPayload(),
-  });
+  res.status(503).json({ error: "Serviço administrativo temporariamente indisponível." });
   return false;
+}
+
+async function isPlatformAdminUid(uid) {
+  if (!uid || !adminAuth) return false;
+  const user = await adminAuth.getUser(uid);
+  return user.customClaims?.platform_admin === true;
+}
+
+async function recordAdminAudit(req, action, details = {}) {
+  if (!adminDb || !req.user?.uid) return;
+  const forwarded = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
+  const ipHash = createHash("sha256")
+    .update(`${forwarded}:${process.env.AUDIT_HASH_SALT || FIREBASE_PROJECT_ID}`)
+    .digest("hex");
+  await adminDb.collection("AdminAuditLog").add({
+    action,
+    admin_uid: req.user.uid,
+    admin_email: req.user.email || "",
+    target_uid: String(details.target_uid || ""),
+    metadata: toJsonSafe(details.metadata || {}),
+    request_id: req.requestId || "",
+    ip_hash: ipHash,
+    created_at: FieldValue.serverTimestamp(),
+  });
+}
+
+async function safeAdminAudit(req, action, details = {}) {
+  try {
+    await recordAdminAudit(req, action, details);
+  } catch (error) {
+    console.error("Admin audit write failed", { requestId: req.requestId, action, error: error?.message });
+  }
 }
 
 function toJsonSafe(value) {
@@ -341,7 +383,7 @@ async function ensureBillingAccount(uid, email = "") {
       last_sync_date: new Date().toISOString(),
       notes: existing.notes || "Teste gratuito iniciado na data de criação da conta.",
     },
-    { email: accountEmail, forceAccess: ADMIN_EMAILS.has(accountEmail.toLowerCase()) }
+    { email: accountEmail, forceAccess: authUser.customClaims?.platform_admin === true }
   );
 
   return {
@@ -504,7 +546,7 @@ async function applyPixPayment(uid, payment) {
 
   const billing = await persistBillingState(uid, patch, {
     email: account.subscription?.user_email || payment?.payer?.email || "",
-    forceAccess: ADMIN_EMAILS.has(String(account.subscription?.user_email || "").toLowerCase()),
+    forceAccess: await isPlatformAdminUid(uid),
   });
   return { ...billing, payment: { id: paymentId, ...record } };
 }
@@ -535,9 +577,7 @@ async function applySubscription(uid, subscription) {
     },
     {
       email: subscription?.payer_email || account.subscription?.user_email || "",
-      forceAccess: ADMIN_EMAILS.has(
-        String(subscription?.payer_email || account.subscription?.user_email || "").toLowerCase()
-      ),
+      forceAccess: await isPlatformAdminUid(uid),
     }
   );
 }
@@ -568,15 +608,12 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "StudiosBook API",
-    company: "BlackVision",
-    public_app_url: PUBLIC_APP_URL,
-    allowed_origins: [...allowedOrigins],
-    ...adminStatusPayload(),
+    version: "1",
   });
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "StudiosBook API", ...adminStatusPayload() });
+  res.json({ ok: true, service: "StudiosBook API" });
 });
 
 app.post("/functions/ensure-billing-account", requireFirebaseUser, async (req, res) => {
@@ -586,7 +623,7 @@ app.post("/functions/ensure-billing-account", requireFirebaseUser, async (req, r
     res.json({ success: true, ...billing });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Erro ao iniciar período gratuito.", detail: error?.message || "" });
+    res.status(500).json({ error: "Erro ao iniciar período gratuito.", request_id: req.requestId });
   }
 });
 
@@ -623,7 +660,7 @@ app.post("/functions/create-subscription-checkout", requireFirebaseUser, async (
       return res.status(502).json({
         error: "Mercado Pago recusou a criação do checkout.",
         mercado_pago_status: response.status,
-        mercado_pago_response: data,
+        request_id: req.requestId,
       });
     }
 
@@ -641,7 +678,7 @@ app.post("/functions/create-subscription-checkout", requireFirebaseUser, async (
         last_sync_date: now.toISOString(),
         notes: "Checkout recorrente criado. O teste gratuito continua vinculado à data de cadastro.",
       },
-      { email: req.user.email, forceAccess: ADMIN_EMAILS.has(req.user.email.toLowerCase()) }
+      { email: req.user.email, forceAccess: req.user.platformAdmin === true }
     );
 
     return res.json({
@@ -653,9 +690,9 @@ app.post("/functions/create-subscription-checkout", requireFirebaseUser, async (
     });
   } catch (error) {
     console.error(error);
-    return res.status(error?.missingSecret ? 500 : 500).json({
-      error: error?.message || "Erro interno ao criar assinatura.",
-      missing_secret: error?.missingSecret || undefined,
+    return res.status(500).json({
+      error: "Erro interno ao criar assinatura.",
+      request_id: req.requestId,
     });
   }
 });
@@ -711,7 +748,7 @@ app.post("/functions/create-pix-payment", requireFirebaseUser, async (req, res) 
       return res.status(502).json({
         error: "Mercado Pago recusou a criação do Pix.",
         mercado_pago_status: response.status,
-        mercado_pago_response: data,
+        request_id: req.requestId,
       });
     }
 
@@ -719,10 +756,7 @@ app.post("/functions/create-pix-payment", requireFirebaseUser, async (req, res) 
     return res.json({ success: true, ...billing });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({
-      error: error?.message || "Erro interno ao gerar Pix.",
-      missing_secret: error?.missingSecret || undefined,
-    });
+    return res.status(500).json({ error: "Erro interno ao gerar Pix.", request_id: req.requestId });
   }
 });
 
@@ -740,9 +774,8 @@ app.post("/functions/sync-subscription-status", requireFirebaseUser, async (req,
   } catch (error) {
     console.error(error);
     res.status(error?.status || 500).json({
-      error: error?.message || "Erro interno ao sincronizar assinatura.",
-      mercado_pago_response: error?.providerResponse,
-      missing_secret: error?.missingSecret || undefined,
+      error: "Erro interno ao sincronizar assinatura.",
+      request_id: req.requestId,
     });
   }
 });
@@ -763,9 +796,8 @@ app.post("/functions/sync-billing-status", requireFirebaseUser, async (req, res)
   } catch (error) {
     console.error(error);
     res.status(error?.status || 500).json({
-      error: error?.message || "Erro ao sincronizar cobrança.",
-      mercado_pago_response: error?.providerResponse,
-      missing_secret: error?.missingSecret || undefined,
+      error: "Erro ao sincronizar cobrança.",
+      request_id: req.requestId,
     });
   }
 });
@@ -861,7 +893,20 @@ app.post("/functions/mercado-pago-webhook", async (req, res) => {
   }
 });
 
-app.post("/functions/admin-overview", requirePlatformAdmin, async (_req, res) => {
+app.post("/functions/admin-session", requirePlatformAdmin, async (req, res) => {
+  if (!requireFirebaseAdminSdk(res)) return;
+  await safeAdminAudit(req, "admin.session.validated");
+  res.json({
+    success: true,
+    admin: {
+      uid: req.user.uid,
+      email: req.user.email,
+      role: "platform_admin",
+    },
+  });
+});
+
+app.post("/functions/admin-overview", requirePlatformAdmin, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
 
   try {
@@ -938,28 +983,33 @@ app.post("/functions/admin-overview", requirePlatformAdmin, async (_req, res) =>
       .filter((payment) => payment.status === "approved")
       .reduce((total, payment) => total + Number(payment.amount || 0), 0);
 
+    await safeAdminAudit(req, "admin.overview.viewed", {
+      metadata: { user_count: metrics.users },
+    });
+
     res.json({
       success: true,
       generated_at: new Date().toISOString(),
       metrics,
       users,
       recent_payments: recentPayments,
-      auth_error: authError,
+      auth_degraded: Boolean(authError),
       ...adminStatusPayload(),
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Erro ao carregar painel admin.", detail: error?.message || "" });
+    res.status(500).json({ error: "Erro ao carregar painel admin.", request_id: req.requestId });
   }
 });
 
-app.post("/functions/admin-payment-diagnostics", requirePlatformAdmin, async (_req, res) => {
+app.post("/functions/admin-payment-diagnostics", requirePlatformAdmin, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
     const { response, data } = await mercadoPagoRequest("/v1/payment_methods");
     const pix = Array.isArray(data) ? data.find((method) => method.id === "pix") : null;
     const webhookEvents = await adminDb.collection("MercadoPagoWebhookEvent").limit(50).get();
     const eventRows = webhookEvents.docs.map((doc) => doc.data());
+    await safeAdminAudit(req, "admin.payments.diagnostics");
     res.json({
       success: response.ok,
       mercado_pago_api: response.ok ? "online" : "error",
@@ -976,13 +1026,13 @@ app.post("/functions/admin-payment-diagnostics", requirePlatformAdmin, async (_r
   } catch (error) {
     console.error(error);
     res.status(500).json({
-      error: error?.message || "Erro no diagnóstico de pagamentos.",
-      missing_secret: error?.missingSecret || undefined,
+      error: "Erro no diagnóstico de pagamentos.",
+      request_id: req.requestId,
     });
   }
 });
 
-app.post("/functions/admin-export", requirePlatformAdmin, async (_req, res) => {
+app.post("/functions/admin-export", requirePlatformAdmin, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
 
   try {
@@ -990,6 +1040,9 @@ app.post("/functions/admin-export", requirePlatformAdmin, async (_req, res) => {
     const authUsers = await listAuthUsers().catch(() => []);
     const allIds = [...new Set([...workspaceIds, ...authUsers.map((user) => user.uid)])];
     const workspaces = await Promise.all(allIds.map((uid) => loadWorkspace(uid, true)));
+    await safeAdminAudit(req, "admin.data.exported", {
+      metadata: { workspace_count: workspaces.length, auth_user_count: authUsers.length },
+    });
     res.json({
       success: true,
       exported_at: new Date().toISOString(),
@@ -998,7 +1051,7 @@ app.post("/functions/admin-export", requirePlatformAdmin, async (_req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Erro ao exportar dados administrativos.", detail: error?.message || "" });
+    res.status(500).json({ error: "Erro ao exportar dados administrativos.", request_id: req.requestId });
   }
 });
 
@@ -1008,7 +1061,9 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, async (re
   try {
     const uid = String(req.body?.uid || "").trim();
     const patch = req.body?.patch || {};
-    if (!uid) return res.status(400).json({ error: "UID não informado." });
+    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(uid)) {
+      return res.status(400).json({ error: "UID inválido." });
+    }
 
     const allowedFields = [
       "status",
@@ -1023,6 +1078,10 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, async (re
         .filter(([key]) => allowedFields.includes(key))
         .map(([key, value]) => [key, value])
     );
+    const validStatuses = new Set(["authorized", "active", "paused", "pending", "expired", "cancelled"]);
+    if (payload.status && !validStatuses.has(payload.status)) {
+      return res.status(400).json({ error: "Status de assinatura inválido." });
+    }
     payload.admin_updated = true;
     const result = await persistBillingState(
       uid,
@@ -1036,10 +1095,15 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, async (re
       { email: req.body?.user_email || "" }
     );
 
+    await safeAdminAudit(req, "admin.subscription.updated", {
+      target_uid: uid,
+      metadata: { fields: Object.keys(payload), status: payload.status || "" },
+    });
+
     res.json({ success: true, ...result });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Erro ao atualizar assinatura.", detail: error?.message || "" });
+    res.status(500).json({ error: "Erro ao atualizar assinatura.", request_id: req.requestId });
   }
 });
 
@@ -1049,16 +1113,27 @@ app.post("/functions/admin-set-user-access", requirePlatformAdmin, async (req, r
   try {
     const uid = String(req.body?.uid || "").trim();
     const disabled = Boolean(req.body?.disabled);
-    if (!uid) return res.status(400).json({ error: "UID não informado." });
+    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(uid)) {
+      return res.status(400).json({ error: "UID inválido." });
+    }
     if (uid === req.user.uid && disabled) {
       return res.status(400).json({ error: "Você não pode desativar o próprio acesso admin." });
     }
 
+    const targetUser = await adminAuth.getUser(uid);
+    if (disabled && targetUser.customClaims?.platform_admin === true) {
+      return res.status(400).json({ error: "Contas administrativas não podem ser bloqueadas por este painel." });
+    }
     const user = await adminAuth.updateUser(uid, { disabled });
+    if (disabled) await adminAuth.revokeRefreshTokens(uid);
+    await safeAdminAudit(req, "admin.user.access_changed", {
+      target_uid: uid,
+      metadata: { disabled },
+    });
     res.json({ success: true, uid: user.uid, disabled: user.disabled });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Erro ao alterar acesso do usuário.", detail: error?.message || "" });
+    res.status(500).json({ error: "Erro ao alterar acesso do usuário.", request_id: req.requestId });
   }
 });
 

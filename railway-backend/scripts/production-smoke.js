@@ -54,10 +54,9 @@ const duplicateBody = await duplicateResponse.json();
 
 const result = {
   backend_health: healthResponse.ok && health.ok,
-  firebase_admin: health.admin_ready === true,
   mercado_pago_token: paymentMethodsResponse.ok,
   pix_available: pix?.status === "active",
-  webhook_secret: health.webhook_ready === true,
+  webhook_secret_configured: Boolean(webhookSecret),
   invalid_signature_rejected: invalidResponse.status === 401,
   valid_signature_accepted: validResponse.ok && validBody.received === true,
   duplicate_event_detected: duplicateResponse.ok && duplicateBody.duplicate === true,

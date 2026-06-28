@@ -11,10 +11,7 @@ service cloud.firestore {
     }
 
     function isPlatformAdmin() {
-      return signedIn() && request.auth.token.email in [
-        'sobrinhonewton@gmail.com',
-        'getblackvision.br@gmail.com'
-      ];
+      return signedIn() && request.auth.token.platform_admin == true;
     }
 
     function hasActiveAccess(userId) {
@@ -39,6 +36,10 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if ownsUserScope(userId);
       allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

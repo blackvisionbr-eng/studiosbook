@@ -38,10 +38,8 @@ const projectId = process.env.FIREBASE_PROJECT_ID || "blackvision-27f1c";
 const apiUrl =
   process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
 const apiKey = process.env.FIREBASE_WEB_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs";
-const adminEmail = String(process.env.ADMIN_EMAILS || "getblackvision.br@gmail.com")
-  .split(",")
-  .map((email) => email.trim())
-  .find((email) => email === "getblackvision.br@gmail.com") || "getblackvision.br@gmail.com";
+const adminEmail = String(process.env.ADMIN_SMOKE_EMAIL || "").trim().toLowerCase();
+if (!adminEmail) throw new Error("Defina ADMIN_SMOKE_EMAIL para executar o teste administrativo.");
 
 if (!getApps().length) {
   initializeApp({ credential: cert(serviceAccount()), projectId });
@@ -49,6 +47,9 @@ if (!getApps().length) {
 
 const auth = getAuth();
 const adminUser = await auth.getUserByEmail(adminEmail);
+if (adminUser.customClaims?.platform_admin !== true) {
+  throw new Error("A conta de teste não possui a claim platform_admin.");
+}
 const customToken = await auth.createCustomToken(adminUser.uid);
 const signInResponse = await fetch(
   `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(apiKey)}`,

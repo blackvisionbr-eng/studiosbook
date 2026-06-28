@@ -36,7 +36,6 @@ import {
   RefreshCw,
   Save,
   Search,
-  Server,
   Settings,
   Share2,
   ShieldCheck,
@@ -48,7 +47,6 @@ import {
   TrendingUp,
   UserCheck,
   UserPlus,
-  UserX,
   Users,
   WandSparkles,
   X,
@@ -69,7 +67,6 @@ const SUPPORT_EMAIL = "getblackvision.br@gmail.com";
 const SUPPORT_PHONE = "73981068594";
 const WHATSAPP_DEFAULT = "";
 const INSTALL_DISMISS_KEY = "studiosbook_install_dismissed_until";
-const PLATFORM_ADMIN_EMAILS = ["sobrinhonewton@gmail.com", "getblackvision.br@gmail.com"];
 
 const PROFESSIONAL_CATEGORIES = [
   {
@@ -162,7 +159,6 @@ const tabs = [
   { id: "settings", label: "Configurações", icon: Settings },
 ];
 
-const adminTab = { id: "admin", label: "Admin", icon: Server };
 
 const emptyClient = {
   full_name: "",
@@ -377,10 +373,6 @@ function supportWhatsAppLink(message) {
   return `https://wa.me/${cleanPhone(SUPPORT_PHONE)}?text=${encodeURIComponent(message)}`;
 }
 
-function isPlatformAdmin(user) {
-  return PLATFORM_ADMIN_EMAILS.includes(String(user?.email || "").toLowerCase());
-}
-
 function authErrorMessage(error) {
   const code = error?.code || "";
   const raw = error?.message || "";
@@ -527,14 +519,6 @@ function exportAppointmentsCsv(appointments) {
 function exportFullBackupJson(payload) {
   downloadBlob(
     `studiosbook-backup-completo-${todayISO()}.json`,
-    JSON.stringify(payload, null, 2),
-    "application/json;charset=utf-8"
-  );
-}
-
-function exportAdminJson(payload) {
-  downloadBlob(
-    `studiosbook-admin-${todayISO()}.json`,
     JSON.stringify(payload, null, 2),
     "application/json;charset=utf-8"
   );
@@ -878,9 +862,6 @@ export default function App() {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
   const [isIosInstall, setIsIosInstall] = useState(false);
-  const [adminData, setAdminData] = useState(null);
-  const [adminError, setAdminError] = useState("");
-  const [paymentDiagnostics, setPaymentDiagnostics] = useState(null);
   const [billingClock, setBillingClock] = useState(Date.now());
 
   const showFeedback = (message, type = "success") => {
@@ -1011,12 +992,7 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const platformAdmin = isPlatformAdmin(user);
-  const billingLocked = !platformAdmin && !hasBillingAccessNow(billingSubscription, billingAccess, billingClock);
-
-  useEffect(() => {
-    if (!platformAdmin && activeTab === "admin") setActiveTab("dashboard");
-  }, [activeTab, platformAdmin]);
+  const billingLocked = !hasBillingAccessNow(billingSubscription, billingAccess, billingClock);
 
   useEffect(() => {
     if (billingLocked && !["billing", "security", "privacy"].includes(activeTab)) {
@@ -1433,96 +1409,6 @@ export default function App() {
     }
   };
 
-  const loadPaymentDiagnostics = async () => {
-    setActionLoading("admin-payment-diagnostics");
-    try {
-      const result = await base44.functions.invoke("admin-payment-diagnostics", {});
-      setPaymentDiagnostics(result);
-      showFeedback("Diagnóstico de pagamentos concluído.");
-    } catch (error) {
-      console.error(error);
-      showFeedback(`Erro no diagnóstico: ${getErrorMessage(error)}`, "error");
-    } finally {
-      setActionLoading("");
-    }
-  };
-
-  const loadAdminOverview = async () => {
-    if (!platformAdmin) return;
-    setActionLoading("admin-overview");
-    setAdminError("");
-    try {
-      const result = await base44.functions.invoke("admin-overview", {});
-      setAdminData(result);
-    } catch (error) {
-      console.error(error);
-      setAdminError(getErrorMessage(error));
-      showFeedback(`Erro no painel admin: ${getErrorMessage(error)}`, "error");
-    } finally {
-      setActionLoading("");
-    }
-  };
-
-  const exportAdminData = async () => {
-    setActionLoading("admin-export");
-    try {
-      const result = await base44.functions.invoke("admin-export", {});
-      exportAdminJson(result);
-      showFeedback("Exportação admin baixada.");
-    } catch (error) {
-      console.error(error);
-      showFeedback(`Erro ao exportar dados admin: ${getErrorMessage(error)}`, "error");
-    } finally {
-      setActionLoading("");
-    }
-  };
-
-  const updateAdminSubscriptionStatus = async (adminUser, status) => {
-    setActionLoading(`admin-subscription-${adminUser.uid}`);
-    try {
-      await base44.functions.invoke("admin-update-subscription", {
-        uid: adminUser.uid,
-        user_email: adminUser.email,
-        subscription_id: adminUser.subscription?.id || "",
-        patch: {
-          status,
-          last_payment_status: status,
-          notes: `Status alterado manualmente pelo painel admin em ${formatDateTime(new Date().toISOString())}.`,
-        },
-      });
-      await loadAdminOverview();
-      showFeedback("Assinatura atualizada pelo painel admin.");
-    } catch (error) {
-      console.error(error);
-      showFeedback(`Erro ao atualizar assinatura: ${getErrorMessage(error)}`, "error");
-    } finally {
-      setActionLoading("");
-    }
-  };
-
-  const updateAdminUserAccess = async (adminUser, disabled) => {
-    setActionLoading(`admin-access-${adminUser.uid}`);
-    try {
-      await base44.functions.invoke("admin-set-user-access", {
-        uid: adminUser.uid,
-        disabled,
-      });
-      await loadAdminOverview();
-      showFeedback(disabled ? "Acesso do usuário bloqueado." : "Acesso do usuário liberado.");
-    } catch (error) {
-      console.error(error);
-      showFeedback(`Erro ao alterar acesso: ${getErrorMessage(error)}`, "error");
-    } finally {
-      setActionLoading("");
-    }
-  };
-
-  useEffect(() => {
-    if (platformAdmin && activeTab === "admin" && !adminData && !adminError) {
-      loadAdminOverview();
-    }
-  }, [activeTab, platformAdmin, adminData, adminError]);
-
   const installApp = async () => {
     if (!installPrompt) return;
     installPrompt.prompt();
@@ -1814,7 +1700,6 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onLogout={handleLogout}
-        platformAdmin={platformAdmin}
         billingLocked={billingLocked}
       />
 
@@ -1969,19 +1854,6 @@ export default function App() {
               />
             )}
 
-            {activeTab === "admin" && platformAdmin && (
-              <AdminView
-                data={adminData}
-                error={adminError}
-                actionLoading={actionLoading}
-                onRefresh={loadAdminOverview}
-                onExport={exportAdminData}
-                onUpdateSubscription={updateAdminSubscriptionStatus}
-                onUpdateAccess={updateAdminUserAccess}
-                paymentDiagnostics={paymentDiagnostics}
-                onPaymentDiagnostics={loadPaymentDiagnostics}
-              />
-            )}
           </>
         )}
       </main>
@@ -2357,11 +2229,10 @@ function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
   );
 }
 
-function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, platformAdmin, billingLocked }) {
+function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, billingLocked }) {
   const accountTabs = billingLocked
     ? tabs.filter((tab) => ["billing", "security", "privacy"].includes(tab.id))
     : tabs;
-  const visibleTabs = platformAdmin ? [...accountTabs, adminTab] : accountTabs;
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/70 bg-white/80 backdrop-blur-xl">
@@ -2378,7 +2249,7 @@ function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, platformA
         </div>
       </div>
       <nav className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 pb-4 sm:px-6 lg:px-8">
-        {visibleTabs.map((tab) => {
+        {accountTabs.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
           return (
@@ -2398,292 +2269,6 @@ function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, platformA
         })}
       </nav>
     </header>
-  );
-}
-
-function AdminView({
-  data,
-  error,
-  actionLoading,
-  onRefresh,
-  onExport,
-  onUpdateSubscription,
-  onUpdateAccess,
-  paymentDiagnostics,
-  onPaymentDiagnostics,
-}) {
-  const metrics = data?.metrics || {};
-  const users = data?.users || [];
-  const recentPayments = data?.recent_payments || [];
-  const backendReady = data?.admin_ready !== false;
-  const mercadoPagoReady = data?.mercado_pago_ready !== false;
-  const webhookReady = data?.webhook_ready !== false;
-
-  return (
-    <div className="grid gap-6">
-      <section className="overflow-hidden rounded-[2rem] bg-zinc-950 text-white shadow-2xl">
-        <div className="grid gap-6 p-6 sm:p-8 lg:grid-cols-[1.1fr_0.9fr]">
-          <div>
-            <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.2em] text-rose-100">
-              <Server className="h-4 w-4" />
-              Painel admin BlackVision
-            </p>
-            <h2 className="mt-5 text-4xl font-black leading-tight tracking-tight sm:text-5xl">
-              Controle completo do {PRODUCT_NAME}.
-            </h2>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
-              Gestão de usuários, studios, assinaturas, status técnico, exportação e suporte operacional.
-            </p>
-          </div>
-          <div className="rounded-[1.75rem] border border-white/10 bg-white/8 p-5 backdrop-blur">
-            <p className="text-sm font-bold text-white/60">Saúde do sistema</p>
-            <div className="mt-5 grid gap-3">
-              <AdminHealthLine label="Backend Railway" ok={Boolean(data) && !error} />
-              <AdminHealthLine label="Firebase Admin" ok={backendReady} />
-              <AdminHealthLine label="Mercado Pago" ok={mercadoPagoReady} />
-              <AdminHealthLine label="Webhook seguro" ok={webhookReady} />
-            </div>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Button
-                onClick={onRefresh}
-                disabled={actionLoading === "admin-overview"}
-                className="rounded-full bg-white text-zinc-950 hover:bg-rose-50"
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                {actionLoading === "admin-overview" ? "Atualizando..." : "Atualizar"}
-              </Button>
-              <Button
-                onClick={onExport}
-                disabled={!data || actionLoading === "admin-export"}
-                variant="ghost"
-                className="rounded-full border border-white/15 text-white hover:bg-white/10"
-              >
-                <Download className="mr-2 h-4 w-4" />
-                Exportar
-              </Button>
-              <Button
-                onClick={onPaymentDiagnostics}
-                disabled={actionLoading === "admin-payment-diagnostics"}
-                variant="ghost"
-                className="rounded-full border border-white/15 text-white hover:bg-white/10"
-              >
-                <Activity className="mr-2 h-4 w-4" />
-                {actionLoading === "admin-payment-diagnostics" ? "Testando..." : "Testar pagamentos"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {error && (
-        <Panel className="border-red-100 bg-red-50">
-          <div className="flex gap-3 text-red-800">
-            <AlertTriangle className="mt-1 h-5 w-5 shrink-0" />
-            <div>
-              <p className="font-black">Admin indisponível</p>
-              <p className="mt-1 text-sm leading-6">{error}</p>
-            </div>
-          </div>
-        </Panel>
-      )}
-
-      {data?.admin_ready === false && (
-        <Panel className="border-amber-100 bg-amber-50">
-          <PanelHeader
-            title="Configuração pendente no Railway"
-            subtitle={data.admin_error || "Configure a credencial Firebase Admin para liberar gestão completa."}
-          />
-          <div className="mt-5 grid gap-3 text-sm text-amber-900">
-            <p className="font-bold">Variáveis aceitas pelo backend:</p>
-            <code className="rounded-2xl bg-white/70 p-4 text-xs leading-6">
-              FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY
-            </code>
-          </div>
-        </Panel>
-      )}
-
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <StatCard label="Usuários" value={metrics.users || 0} helper="Contas e workspaces" icon={Users} tone="dark" />
-        <StatCard label="Acessos ativos" value={metrics.active_subscriptions || 0} helper="Teste ou pagamento válido" icon={UserCheck} tone="green" />
-        <StatCard label="Em teste" value={metrics.trialing_users || 0} helper="Dentro dos 7 dias" icon={Clock} tone="rose" />
-        <StatCard label="Expirados" value={metrics.expired_users || 0} helper="Precisam regularizar" icon={AlertTriangle} tone="violet" />
-        <StatCard label="Pix pendentes" value={metrics.pending_payments || 0} helper="Aguardando confirmação" icon={QrCode} tone="gold" />
-        <StatCard label="Recebido" value={formatCurrency(metrics.approved_revenue || 0)} helper="Pagamentos Pix listados" icon={DollarSign} tone="dark" />
-      </section>
-
-      {paymentDiagnostics && (
-        <Panel>
-          <PanelHeader
-            title="Diagnóstico de pagamentos"
-            subtitle={`Verificado em ${formatDateTime(paymentDiagnostics.checked_at)}.`}
-          />
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <InfoCard title="API Mercado Pago" value={paymentDiagnostics.mercado_pago_api === "online" ? "Online" : "Erro"} />
-            <InfoCard title="Pix" value={paymentDiagnostics.pix_available ? "Disponível" : paymentDiagnostics.pix_status || "Indisponível"} />
-            <InfoCard title="Webhook" value={paymentDiagnostics.webhook_ready ? "Assinatura configurada" : "Chave pendente"} />
-            <InfoCard title="Eventos processados" value={String(paymentDiagnostics.webhook_processed || 0)} />
-          </div>
-          <p className="mt-4 break-all rounded-2xl bg-zinc-50 p-4 text-xs font-bold text-zinc-500">
-            URL: {paymentDiagnostics.webhook_url || "-"}
-          </p>
-        </Panel>
-      )}
-
-      <Panel>
-        <PanelHeader
-          title="Pagamentos recentes"
-          subtitle="Rastreamento recebido do Mercado Pago para conciliação financeira."
-        />
-        <div className="mt-5 grid gap-3">
-          {recentPayments.length === 0 ? (
-            <EmptyState text="Nenhum pagamento Pix registrado ainda." />
-          ) : (
-            recentPayments.slice(0, 12).map((payment) => (
-              <div
-                key={`${payment.uid}-${payment.mercado_pago_payment_id}`}
-                className="grid min-w-0 gap-3 rounded-2xl border border-zinc-100 bg-zinc-50 p-4 sm:grid-cols-[1fr_auto] sm:items-center"
-              >
-                <div className="min-w-0">
-                  <p className="break-words font-black text-zinc-950">
-                    {payment.business_name || payment.user_email || "Conta StudiosBook"}
-                  </p>
-                  <p className="mt-1 break-all text-xs text-zinc-500">
-                    ID {payment.mercado_pago_payment_id} · {formatDateTime(payment.date_last_updated)}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                  <Badge tone={billingStatusTone(payment.status)}>{billingStatusLabel(payment.status)}</Badge>
-                  <strong>{formatCurrency(payment.amount)}</strong>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </Panel>
-
-      <Panel>
-        <PanelHeader
-          title="Studios e contas"
-          subtitle="Controle operacional por profissional. Use com cuidado: alterações aqui impactam produção."
-          action={
-            <a
-              href={supportWhatsAppLink("Preciso de suporte no painel admin do StudiosBook.")}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-10 items-center justify-center rounded-full bg-emerald-500 px-4 text-sm font-black text-white hover:bg-emerald-600"
-            >
-              <MessageCircle className="mr-2 h-4 w-4" />
-              Suporte
-            </a>
-          }
-        />
-        <div className="mt-5 grid gap-4">
-          {!data && !error ? (
-            <EmptyState
-              text="Atualize o painel para carregar dados administrativos."
-              action={
-                <Button onClick={onRefresh} className="mt-4 rounded-full bg-zinc-950 text-white">
-                  Carregar painel
-                </Button>
-              }
-            />
-          ) : users.length === 0 ? (
-            <EmptyState text="Nenhum usuário encontrado ainda." />
-          ) : (
-            users.map((adminUser) => (
-              <AdminUserCard
-                key={adminUser.uid}
-                adminUser={adminUser}
-                actionLoading={actionLoading}
-                onUpdateSubscription={onUpdateSubscription}
-                onUpdateAccess={onUpdateAccess}
-              />
-            ))
-          )}
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-function AdminHealthLine({ label, ok }) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-2xl bg-white/8 px-4 py-3">
-      <span className="text-sm font-bold text-white/75">{label}</span>
-      <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-black ${ok ? "bg-emerald-400/16 text-emerald-100" : "bg-amber-400/16 text-amber-100"}`}>
-        {ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-        {ok ? "OK" : "Atenção"}
-      </span>
-    </div>
-  );
-}
-
-function AdminUserCard({ adminUser, actionLoading, onUpdateSubscription, onUpdateAccess }) {
-  const subscriptionStatus = adminUser.subscription?.status || "not_started";
-  const loadingSubscription = actionLoading === `admin-subscription-${adminUser.uid}`;
-  const loadingAccess = actionLoading === `admin-access-${adminUser.uid}`;
-
-  return (
-    <div className="grid min-w-0 gap-4 rounded-[1.5rem] border border-zinc-100 bg-zinc-50 p-4 lg:grid-cols-[1.2fr_1fr_auto] lg:items-center">
-      <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <p className="min-w-0 break-words text-base font-black text-zinc-950">
-            {adminUser.business_name || adminUser.displayName || adminUser.email || "Conta sem nome"}
-          </p>
-          <Badge tone={adminUser.disabled ? "red" : "green"}>{adminUser.disabled ? "Bloqueado" : "Ativo"}</Badge>
-          <Badge tone={billingStatusTone(subscriptionStatus)}>{billingStatusLabel(subscriptionStatus)}</Badge>
-        </div>
-        <p className="mt-2 break-words text-xs font-bold text-zinc-500">{adminUser.email || adminUser.uid}</p>
-        <p className="mt-1 text-xs text-zinc-500">Último login: {formatDateTime(adminUser.lastSignInTime)}</p>
-        <p className="mt-1 text-xs text-zinc-500">
-          Teste até: {formatDateTime(adminUser.subscription?.trial_end_date)} · Meio: {adminUser.subscription?.payment_method_id || "Não definido"}
-        </p>
-        {adminUser.latest_payment && (
-          <p className="mt-1 text-xs font-bold text-zinc-600">
-            Último Pix: {billingStatusLabel(adminUser.latest_payment.status)} · {formatCurrency(adminUser.latest_payment.amount)}
-          </p>
-        )}
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <AdminMiniStat label="Clientes" value={adminUser.counts?.Client || 0} />
-        <AdminMiniStat label="Atend." value={adminUser.counts?.ServiceRecord || 0} />
-        <AdminMiniStat label="Agenda" value={adminUser.counts?.Appointment || 0} />
-      </div>
-
-      <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
-        <Button
-          type="button"
-          disabled={loadingSubscription}
-          onClick={() =>
-            onUpdateSubscription(adminUser, subscriptionStatus === "authorized" ? "paused" : "authorized")
-          }
-          className="rounded-full bg-zinc-950 text-white"
-        >
-          <CreditCard className="mr-2 h-4 w-4" />
-          {subscriptionStatus === "authorized" ? "Pausar" : "Autorizar"}
-        </Button>
-        <Button
-          type="button"
-          disabled={loadingAccess}
-          variant="ghost"
-          onClick={() => onUpdateAccess(adminUser, !adminUser.disabled)}
-          className="rounded-full bg-white"
-        >
-          {adminUser.disabled ? <UserCheck className="mr-2 h-4 w-4" /> : <UserX className="mr-2 h-4 w-4" />}
-          {adminUser.disabled ? "Liberar" : "Bloquear"}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function AdminMiniStat({ label, value }) {
-  return (
-    <div className="rounded-2xl bg-white px-3 py-3">
-      <p className="text-lg font-black text-zinc-950">{value}</p>
-      <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">{label}</p>
-    </div>
   );
 }
 
@@ -3638,26 +3223,26 @@ function BillingView({
 
   return (
     <div className="grid gap-6">
-      <section className="overflow-hidden rounded-[2rem] bg-zinc-950 text-white shadow-2xl">
-        <div className="relative grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.05fr_0.95fr]">
+      <section className="min-w-0 overflow-hidden rounded-2xl bg-zinc-950 text-white shadow-2xl sm:rounded-[2rem]">
+        <div className="relative grid min-w-0 gap-6 p-5 sm:gap-8 sm:p-8 lg:grid-cols-[1.05fr_0.95fr]">
           <div className="absolute right-8 top-8 h-28 w-28 rounded-full bg-rose-400/20 blur-3xl" />
           <div>
-            <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.2em] text-rose-100">
+            <p className="inline-flex max-w-full items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-rose-100 sm:px-4 sm:text-xs sm:tracking-[0.2em]">
               <CreditCard className="h-4 w-4" />
               Assinatura StudiosBook
             </p>
-            <h2 className="mt-5 max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl">
+            <h2 className="mt-5 max-w-3xl break-words text-3xl font-black leading-tight tracking-normal sm:text-5xl">
               7 dias grátis desde o cadastro. Depois {PRODUCT_PRICE}.
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
               Escolha cartão para cobrança recorrente automática ou Pix para liberar 30 dias de acesso por pagamento.
             </p>
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-6 grid gap-3 sm:flex sm:flex-row">
               <Button
                 type="button"
                 onClick={onStartCheckout}
                 disabled={actionLoading === "billing-checkout"}
-                className="h-12 rounded-full bg-rose-500 px-6 text-white hover:bg-rose-600"
+                className="h-12 w-full rounded-full bg-rose-500 px-4 text-white hover:bg-rose-600 sm:w-auto sm:px-6"
               >
                 <CreditCard className="mr-2 h-4 w-4" />
                 {actionLoading === "billing-checkout" ? "Abrindo checkout..." : "Assinar com cartão"}
@@ -3667,7 +3252,7 @@ function BillingView({
                 variant="ghost"
                 onClick={onRefreshStatus}
                 disabled={actionLoading === "billing-refresh"}
-                className="h-12 rounded-full bg-white/10 px-6 text-white hover:bg-white/15"
+                className="h-12 w-full rounded-full bg-white/10 px-4 text-white hover:bg-white/15 sm:w-auto sm:px-6"
               >
                 <Activity className="mr-2 h-4 w-4" />
                 {actionLoading === "billing-refresh" ? "Atualizando..." : "Atualizar status"}
@@ -3675,11 +3260,11 @@ function BillingView({
             </div>
           </div>
 
-          <div className="rounded-[1.75rem] border border-white/10 bg-white/8 p-5 backdrop-blur">
+          <div className="min-w-0 rounded-2xl border border-white/10 bg-white/8 p-4 backdrop-blur sm:rounded-[1.75rem] sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-white/55">Status da conta</p>
-                <p className="mt-2 text-3xl font-black">{billingStatusLabel(status)}</p>
+                <p className="mt-2 break-words text-2xl font-black sm:text-3xl">{billingStatusLabel(status)}</p>
               </div>
               <Badge tone={statusTone}>{billingStatusLabel(status)}</Badge>
             </div>
@@ -3693,7 +3278,7 @@ function BillingView({
         </div>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-2">
+      <section className="grid min-w-0 gap-4 sm:gap-6 lg:grid-cols-2">
         <Panel>
           <PanelHeader
             title="Cartão recorrente"
@@ -3716,7 +3301,7 @@ function BillingView({
               type="button"
               onClick={onStartCheckout}
               disabled={actionLoading === "billing-checkout"}
-              className="h-12 rounded-full bg-zinc-950 text-white hover:bg-zinc-800"
+              className="h-12 w-full rounded-full bg-zinc-950 px-4 text-white hover:bg-zinc-800"
             >
               <CreditCard className="mr-2 h-4 w-4" />
               {actionLoading === "billing-checkout" ? "Abrindo Mercado Pago..." : "Continuar com cartão"}
@@ -3748,7 +3333,7 @@ function BillingView({
               type="button"
               onClick={() => onCreatePix(cpf)}
               disabled={actionLoading === "billing-pix"}
-              className="h-12 rounded-full bg-emerald-600 text-white hover:bg-emerald-700"
+              className="h-12 w-full rounded-full bg-emerald-600 px-4 text-white hover:bg-emerald-700"
             >
               <QrCode className="mr-2 h-4 w-4" />
               {actionLoading === "billing-pix" ? "Gerando Pix..." : "Gerar Pix de R$ 19,90"}
@@ -3756,13 +3341,13 @@ function BillingView({
           </div>
 
           {pixQrCode && (
-            <div className="mt-5 rounded-[1.5rem] border border-emerald-100 bg-emerald-50 p-4">
+            <div className="mt-5 min-w-0 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 sm:rounded-[1.5rem] sm:p-4">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                 {pixQrImage && (
                   <img
                     src={`data:image/png;base64,${pixQrImage}`}
                     alt="QR Code Pix do StudiosBook"
-                    className="h-36 w-36 self-center rounded-xl bg-white p-2"
+                    className="h-auto w-full max-w-36 self-center rounded-xl bg-white p-2"
                   />
                 )}
                 <div className="min-w-0 flex-1">
@@ -3771,8 +3356,8 @@ function BillingView({
                     <span className="text-xs font-bold text-emerald-900">Válido até {formatDateTime(pixPayment?.date_of_expiration)}</span>
                   </div>
                   <p className="mt-3 line-clamp-3 break-all text-xs leading-5 text-emerald-950">{pixQrCode}</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button type="button" onClick={handleCopyPix} className="rounded-full bg-zinc-950 text-white">
+                  <div className="mt-3 grid gap-2 sm:flex sm:flex-wrap">
+                    <Button type="button" onClick={handleCopyPix} className="w-full rounded-full bg-zinc-950 px-3 text-white sm:w-auto">
                       <Copy className="mr-2 h-4 w-4" />
                       {pixCopied ? "Copiado" : "Copiar código Pix"}
                     </Button>
@@ -3781,7 +3366,7 @@ function BillingView({
                         href={pixPayment.ticket_url}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-white px-4 text-sm font-black text-zinc-900"
+                        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-white px-3 text-center text-sm font-black text-zinc-900 sm:w-auto sm:px-4"
                       >
                         <ExternalLink className="h-4 w-4" />
                         Abrir no Mercado Pago
@@ -3809,13 +3394,13 @@ function BillingView({
           <InfoCard title="Status Mercado Pago" value={billingStatusLabel(billingSubscription?.last_payment_status)} />
         </div>
 
-        <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+        <div className="mt-5 grid gap-3 sm:flex sm:flex-row">
             {billingSubscription?.checkout_url && (
               <a
                 href={billingSubscription.checkout_url}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-zinc-950 px-5 text-sm font-black text-white transition hover:bg-zinc-800"
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-zinc-950 px-4 text-sm font-black text-white transition hover:bg-zinc-800 sm:w-auto sm:px-5"
               >
                 <ExternalLink className="h-4 w-4" />
                 Reabrir cartão
@@ -3825,7 +3410,7 @@ function BillingView({
               href={supportHref}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-emerald-500 px-5 text-sm font-black text-white transition hover:bg-emerald-600"
+              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-emerald-500 px-4 text-sm font-black text-white transition hover:bg-emerald-600 sm:w-auto sm:px-5"
             >
               <MessageCircle className="h-4 w-4" />
               Suporte no WhatsApp
