@@ -144,7 +144,7 @@ function createEntity(entityName) {
 
 async function invokeFunction(name, data = {}) {
   if (!apiBaseUrls.length) {
-    throw new Error("Backend Railway não configurado. Defina VITE_API_BASE_URL.");
+    throw new Error("Serviço temporariamente indisponível.");
   }
 
   const user = await requireUser();
@@ -176,7 +176,7 @@ async function invokeFunction(name, data = {}) {
     }
   }
 
-  throw lastError || new Error("Backend Railway indisponível.");
+  throw lastError || new Error("Serviço temporariamente indisponível.");
 }
 
 export const base44 = {

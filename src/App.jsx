@@ -386,15 +386,15 @@ function authErrorMessage(error) {
   const code = error?.code || "";
   const raw = error?.message || "";
   if (code.includes("configuration-not-found") || raw.includes("CONFIGURATION_NOT_FOUND")) {
-    return "Firebase Authentication ainda não foi inicializado. No Firebase Console, abra Authentication, clique em Get started, habilite Google e adicione studiosbook.com.br nos domínios autorizados.";
+    return "O login está temporariamente indisponível. Tente novamente ou fale com o suporte.";
   }
   if (code.includes("operation-not-allowed") || raw.includes("OPERATION_NOT_ALLOWED")) {
-    return "Login com Google ainda não está habilitado no Firebase. Abra Authentication > Sign-in method > Google, ative o provedor e salve com o e-mail de suporte getblackvision.br@gmail.com.";
+    return "O login está temporariamente indisponível. Tente novamente ou fale com o suporte.";
   }
   if (code.includes("unauthorized-domain")) {
-    return "Domínio não autorizado no Firebase Auth. Adicione studiosbook.com.br e www.studiosbook.com.br em Authentication > Settings > Authorized domains.";
+    return "Não foi possível validar este acesso. Entre pelo endereço oficial studiosbook.com.br.";
   }
-  return raw || "Não foi possível entrar. Verifique a configuração do Firebase Authentication.";
+  return "Não foi possível entrar agora. Tente novamente ou fale com o suporte.";
 }
 
 function whatsappLink(client, message) {
@@ -1349,7 +1349,7 @@ export default function App() {
       }
 
       if (!result?.checkout_url) {
-        return showFeedback("Checkout não gerado. Configure o token do Mercado Pago antes de vender.", "error");
+        return showFeedback("Não foi possível abrir o pagamento agora. Tente novamente ou fale com o suporte.", "error");
       }
 
       window.location.href = result.checkout_url;
@@ -1357,7 +1357,7 @@ export default function App() {
       console.error(error);
       const missingSecret = error?.data?.missing_secret || error?.missing_secret;
       const message = missingSecret
-        ? `Configure a variável ${missingSecret} no Railway para ativar a cobrança.`
+        ? "Pagamento temporariamente indisponível. Fale com o suporte."
         : `Erro ao iniciar cobrança: ${getErrorMessage(error)}`;
       showFeedback(message, "error");
     } finally {
@@ -1378,7 +1378,7 @@ export default function App() {
       console.error(error);
       const missingSecret = error?.data?.missing_secret || error?.missing_secret;
       const message = missingSecret
-        ? `Configure a variável ${missingSecret} no Railway para gerar o Pix.`
+        ? "Pix temporariamente indisponível. Fale com o suporte."
         : `Erro ao gerar Pix: ${getErrorMessage(error)}`;
       showFeedback(message, "error");
       return null;
@@ -1399,7 +1399,7 @@ export default function App() {
       console.error(error);
       const missingSecret = error?.data?.missing_secret || error?.missing_secret;
       const message = missingSecret
-        ? `Configure a variável ${missingSecret} no Railway para consultar a assinatura.`
+        ? "Não foi possível atualizar o pagamento agora. Tente novamente em instantes."
         : `Erro ao atualizar assinatura: ${getErrorMessage(error)}`;
       showFeedback(message, "error");
     } finally {
@@ -3780,8 +3780,8 @@ function BillingView({
 
       <Panel>
         <PanelHeader
-          title="Detalhes e conciliação"
-          subtitle="Dados usados para rastrear assinatura, Pix e liberação de acesso."
+          title="Resumo da assinatura"
+          subtitle="Acompanhe o período gratuito, vencimento e status do seu plano."
         />
         <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
           <InfoCard title="Início do teste" value={formatDateTime(billingSubscription?.trial_start_date)} />
@@ -3816,21 +3816,6 @@ function BillingView({
         </div>
       </Panel>
 
-      <Panel>
-        <PanelHeader
-          title="Segurança do pagamento"
-          subtitle="Cobranças e confirmações são processadas no backend; o token do Mercado Pago não fica exposto no navegador."
-        />
-        <div className="mt-5 rounded-[1.5rem] border border-amber-100 bg-amber-50 p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
-            <p className="text-sm leading-6 text-amber-900">
-              O acesso só é liberado após confirmação consultada diretamente na API do Mercado Pago. O Pix não é recorrente:
-              cada pagamento aprovado adiciona 30 dias. Para cobrança automática mensal, use o cartão recorrente.
-            </p>
-          </div>
-        </div>
-      </Panel>
     </div>
   );
 }
