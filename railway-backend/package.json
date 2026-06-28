@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "node --test",
+    "smoke:production": "node scripts/production-smoke.js",
+    "smoke:admin": "node scripts/admin-smoke.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

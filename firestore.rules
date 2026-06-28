@@ -10,12 +10,35 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
+    function isPlatformAdmin() {
+      return signedIn() && request.auth.token.email in [
+        'sobrinhonewton@gmail.com',
+        'getblackvision.br@gmail.com'
+      ];
+    }
+
+    function hasActiveAccess(userId) {
+      return isPlatformAdmin() || (
+        exists(/databases/$(database)/documents/users/$(userId)) &&
+        get(/databases/$(database)/documents/users/$(userId)).data.access_allowed == true &&
+        (
+          get(/databases/$(database)/documents/users/$(userId)).data.billing_status == 'authorized' ||
+          get(/databases/$(database)/documents/users/$(userId)).data.access_expires_at > request.time
+        )
+      );
+    }
+
     match /users/{userId}/{entityName}/{documentId} {
-      allow read, create, update, delete: if ownsUserScope(userId);
+      allow read: if ownsUserScope(userId);
+      allow create, update, delete: if ownsUserScope(userId) &&
+        entityName != 'BillingSubscription' &&
+        entityName != 'BillingPayment' &&
+        hasActiveAccess(userId);
     }
 
     match /users/{userId} {
-      allow read, create, update, delete: if ownsUserScope(userId);
+      allow read: if ownsUserScope(userId);
+      allow write: if false;
     }
   }
 }

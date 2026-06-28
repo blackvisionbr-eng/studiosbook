@@ -8,7 +8,7 @@ Sistema privado para agenda, clientes, atendimentos, retornos, backups e assinat
 - Hospedagem: Firebase Hosting
 - Login e dados: Firebase Auth + Firestore
 - Backend de cobrança: Railway + Express
-- Cobrança recorrente: Mercado Pago
+- Cobrança: cartão recorrente e Pix mensal via Mercado Pago
 - Painel admin: aba `Admin` para `sobrinhonewton@gmail.com` e `getblackvision.br@gmail.com`
 - Domínio oficial: `https://studiosbook.com.br`
 
@@ -59,21 +59,33 @@ Variáveis obrigatórias no Railway:
 ```txt
 FIREBASE_PROJECT_ID=blackvision-27f1c
 PUBLIC_APP_URL=https://studiosbook.com.br
+PUBLIC_API_URL=https://studiosbook-api-production.up.railway.app
 FRONTEND_ORIGINS=https://studiosbook.com.br,https://www.studiosbook.com.br,https://studiosbook.web.app
 ADMIN_EMAILS=sobrinhonewton@gmail.com,getblackvision.br@gmail.com
 SUPPORT_EMAIL=getblackvision.br@gmail.com
 SUPPORT_PHONE=73981068594
 MERCADO_PAGO_ACCESS_TOKEN=token_do_mercado_pago
+MERCADO_PAGO_WEBHOOK_SECRET=chave_secreta_da_integracao
+MERCADO_PAGO_WEBHOOK_URL=https://studiosbook-api-production.up.railway.app/functions/mercado-pago-webhook
 FIREBASE_SERVICE_ACCOUNT_JSON=json_ou_base64_da_service_account
 ```
 
 Variáveis opcionais:
 
 ```txt
-MERCADO_PAGO_PLAN_ID=id_do_plano_assinatura
 FIREBASE_CLIENT_EMAIL=email_da_service_account
 FIREBASE_PRIVATE_KEY=private_key_da_service_account
 ```
+
+## Cobrança e webhooks
+
+- Os 7 dias de teste começam na data de criação da conta no Firebase Auth.
+- Cartão usa assinatura recorrente mensal de R$ 19,90.
+- Pix usa pagamento avulso de R$ 19,90 e libera 30 dias após aprovação.
+- URL do webhook: `https://studiosbook-api-production.up.railway.app/functions/mercado-pago-webhook`
+- Eventos necessários no Mercado Pago: `payment`, `subscription_preapproval` e `subscription_authorized_payment`.
+- A chave exibida em `Suas integrações > Webhooks` deve ser salva como `MERCADO_PAGO_WEBHOOK_SECRET` no Railway.
+- O painel Admin possui diagnóstico que valida token, disponibilidade do Pix e estado do webhook sem criar cobrança.
 
 Por padrão, o frontend chama:
 

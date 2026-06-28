@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Clock,
   Cloud,
+  Copy,
   CreditCard,
   Crown,
   Database,
@@ -30,6 +31,8 @@ import {
   MessageCircle,
   Paintbrush,
   Plus,
+  QrCode,
+  ReceiptText,
   RefreshCw,
   Save,
   Search,
@@ -425,17 +428,32 @@ function billingStatusLabel(status) {
     canceled: "Cancelada",
     expired: "Expirada",
     payment_failed: "Pagamento falhou",
+    approved: "Aprovado",
+    rejected: "Recusado",
+    refunded: "Estornado",
+    charged_back: "Contestado",
     setup_required: "Configuração necessária",
   };
   return labels[status] || status || "Não iniciada";
 }
 
 function billingStatusTone(status) {
-  if (status === "authorized" || status === "active" || status === "trialing") return "green";
+  if (status === "authorized" || status === "active" || status === "trialing" || status === "approved") return "green";
   if (status === "pending") return "amber";
-  if (status === "cancelled" || status === "canceled" || status === "expired" || status === "payment_failed") return "red";
+  if (["cancelled", "canceled", "expired", "payment_failed", "rejected", "refunded", "charged_back"].includes(status)) return "red";
   if (status === "setup_required") return "violet";
   return "slate";
+}
+
+function hasBillingAccessNow(subscription, access, now = Date.now()) {
+  if (!access) return true;
+  const status = String(subscription?.status || access.status || "").toLowerCase();
+  if (status === "authorized") return true;
+  const periodEnd = new Date(subscription?.current_period_end || 0).getTime();
+  if (Number.isFinite(periodEnd) && periodEnd > now) return true;
+  const trialEnd = new Date(subscription?.trial_end_date || 0).getTime();
+  if (Number.isFinite(trialEnd) && trialEnd > now) return true;
+  return false;
 }
 
 function downloadBlob(filename, content, type = "text/plain;charset=utf-8") {
@@ -818,6 +836,8 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [backupSnapshots, setBackupSnapshots] = useState([]);
   const [billingSubscription, setBillingSubscription] = useState(null);
+  const [billingAccess, setBillingAccess] = useState(null);
+  const [pixPayment, setPixPayment] = useState(null);
   const [profileForm, setProfileForm] = useState(() => createProfileForm(null));
   const [searchTerm, setSearchTerm] = useState("");
   const [clientFilter, setClientFilter] = useState("all");
@@ -834,6 +854,8 @@ export default function App() {
   const [isIosInstall, setIsIosInstall] = useState(false);
   const [adminData, setAdminData] = useState(null);
   const [adminError, setAdminError] = useState("");
+  const [paymentDiagnostics, setPaymentDiagnostics] = useState(null);
+  const [billingClock, setBillingClock] = useState(Date.now());
 
   const showFeedback = (message, type = "success") => {
     setFeedbackType(type);
@@ -866,6 +888,12 @@ export default function App() {
   const loadData = async () => {
     setIsLoading(true);
     try {
+      let ensuredBilling = null;
+      try {
+        ensuredBilling = await base44.functions.invoke("ensure-billing-account", {});
+      } catch (billingError) {
+        console.error("Billing bootstrap error", billingError);
+      }
       const [clientData, recordData, appointmentData, profileData, snapshotData, billingData] = await Promise.all([
         Client.list("-updated_date", 500),
         ServiceRecord.list("-procedure_date", 500),
@@ -879,7 +907,9 @@ export default function App() {
       setRecords(recordData || []);
       setAppointments(appointmentData || []);
       setBackupSnapshots(snapshotData || []);
-      setBillingSubscription(billingData?.[0] || null);
+      setBillingSubscription(ensuredBilling?.subscription || billingData?.[0] || null);
+      setBillingAccess(ensuredBilling?.access || null);
+      setPixPayment(ensuredBilling?.latest_payment || null);
       setProfile(normalizedProfile);
       setProfileForm(normalizedProfile || createProfileForm(user));
     } catch (error) {
@@ -950,11 +980,23 @@ export default function App() {
     if (user) loadData();
   }, [user]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setBillingClock(Date.now()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const platformAdmin = isPlatformAdmin(user);
+  const billingLocked = !platformAdmin && !hasBillingAccessNow(billingSubscription, billingAccess, billingClock);
 
   useEffect(() => {
     if (!platformAdmin && activeTab === "admin") setActiveTab("dashboard");
   }, [activeTab, platformAdmin]);
+
+  useEffect(() => {
+    if (billingLocked && !["billing", "security", "privacy"].includes(activeTab)) {
+      setActiveTab("billing");
+    }
+  }, [activeTab, billingLocked]);
 
   useEffect(() => {
     if (!user || typeof window === "undefined") return;
@@ -1302,10 +1344,8 @@ export default function App() {
       });
 
       if (result?.subscription) {
-        const savedSubscription = billingSubscription?.id
-          ? await BillingSubscription.update(billingSubscription.id, result.subscription)
-          : await BillingSubscription.create(result.subscription);
-        setBillingSubscription({ ...billingSubscription, ...result.subscription, id: savedSubscription.id });
+        setBillingSubscription(result.subscription);
+        setBillingAccess(result.access || null);
       }
 
       if (!result?.checkout_url) {
@@ -1325,26 +1365,36 @@ export default function App() {
     }
   };
 
-  const refreshBillingStatus = async () => {
-    if (!billingSubscription?.mercado_pago_preapproval_id) {
-      return showFeedback("Nenhuma assinatura Mercado Pago encontrada para sincronizar.", "error");
+  const createPixPayment = async (cpf) => {
+    setActionLoading("billing-pix");
+    try {
+      const result = await base44.functions.invoke("create-pix-payment", { cpf });
+      setBillingSubscription(result?.subscription || billingSubscription);
+      setBillingAccess(result?.access || billingAccess);
+      setPixPayment(result?.payment || pixPayment);
+      showFeedback(result?.reused ? "Pix pendente recuperado." : "Pix gerado com segurança.");
+      return result;
+    } catch (error) {
+      console.error(error);
+      const missingSecret = error?.data?.missing_secret || error?.missing_secret;
+      const message = missingSecret
+        ? `Configure a variável ${missingSecret} no Railway para gerar o Pix.`
+        : `Erro ao gerar Pix: ${getErrorMessage(error)}`;
+      showFeedback(message, "error");
+      return null;
+    } finally {
+      setActionLoading("");
     }
+  };
 
+  const refreshBillingStatus = async () => {
     setActionLoading("billing-refresh");
     try {
-      const result = await base44.functions.invoke("sync-subscription-status", {
-        preapproval_id: billingSubscription.mercado_pago_preapproval_id,
-      });
-      const updatePayload = result?.subscription || {};
-      const updatedSubscription = billingSubscription?.id
-        ? await BillingSubscription.update(billingSubscription.id, updatePayload)
-        : null;
-      setBillingSubscription({
-        ...billingSubscription,
-        ...updatePayload,
-        id: updatedSubscription?.id || billingSubscription.id,
-      });
-      showFeedback("Status da assinatura atualizado.");
+      const result = await base44.functions.invoke("sync-billing-status", {});
+      setBillingSubscription(result?.subscription || billingSubscription);
+      setBillingAccess(result?.access || billingAccess);
+      setPixPayment(result?.payment || result?.latest_payment || pixPayment);
+      showFeedback("Status do pagamento atualizado.");
     } catch (error) {
       console.error(error);
       const missingSecret = error?.data?.missing_secret || error?.missing_secret;
@@ -1352,6 +1402,20 @@ export default function App() {
         ? `Configure a variável ${missingSecret} no Railway para consultar a assinatura.`
         : `Erro ao atualizar assinatura: ${getErrorMessage(error)}`;
       showFeedback(message, "error");
+    } finally {
+      setActionLoading("");
+    }
+  };
+
+  const loadPaymentDiagnostics = async () => {
+    setActionLoading("admin-payment-diagnostics");
+    try {
+      const result = await base44.functions.invoke("admin-payment-diagnostics", {});
+      setPaymentDiagnostics(result);
+      showFeedback("Diagnóstico de pagamentos concluído.");
+    } catch (error) {
+      console.error(error);
+      showFeedback(`Erro no diagnóstico: ${getErrorMessage(error)}`, "error");
     } finally {
       setActionLoading("");
     }
@@ -1676,6 +1740,24 @@ export default function App() {
     );
   }
 
+  if (!isLoading && billingLocked && !profile) {
+    return (
+      <BillingAccessScreen
+        user={user}
+        billingSubscription={billingSubscription}
+        billingAccess={billingAccess}
+        pixPayment={pixPayment}
+        onStartCheckout={startSubscriptionCheckout}
+        onCreatePix={createPixPayment}
+        onRefreshStatus={refreshBillingStatus}
+        onLogout={handleLogout}
+        actionLoading={actionLoading}
+        feedback={feedback}
+        feedbackType={feedbackType}
+      />
+    );
+  }
+
   if (!isLoading && !profile) {
     return (
       <div className="min-h-screen bg-[#f6f1ef] text-zinc-950">
@@ -1707,6 +1789,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         onLogout={handleLogout}
         platformAdmin={platformAdmin}
+        billingLocked={billingLocked}
       />
 
       <main className="mx-auto max-w-7xl px-4 pb-28 pt-5 sm:px-6 lg:px-8">
@@ -1818,7 +1901,10 @@ export default function App() {
               <BillingView
                 user={user}
                 billingSubscription={billingSubscription}
+                billingAccess={billingAccess}
+                pixPayment={pixPayment}
                 onStartCheckout={startSubscriptionCheckout}
+                onCreatePix={createPixPayment}
                 onRefreshStatus={refreshBillingStatus}
                 actionLoading={actionLoading}
               />
@@ -1866,6 +1952,8 @@ export default function App() {
                 onExport={exportAdminData}
                 onUpdateSubscription={updateAdminSubscriptionStatus}
                 onUpdateAccess={updateAdminUserAccess}
+                paymentDiagnostics={paymentDiagnostics}
+                onPaymentDiagnostics={loadPaymentDiagnostics}
               />
             )}
           </>
@@ -2244,8 +2332,11 @@ function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
   );
 }
 
-function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, platformAdmin }) {
-  const visibleTabs = platformAdmin ? [...tabs, adminTab] : tabs;
+function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, platformAdmin, billingLocked }) {
+  const accountTabs = billingLocked
+    ? tabs.filter((tab) => ["billing", "security", "privacy"].includes(tab.id))
+    : tabs;
+  const visibleTabs = platformAdmin ? [...accountTabs, adminTab] : accountTabs;
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/70 bg-white/80 backdrop-blur-xl">
@@ -2298,11 +2389,15 @@ function AdminView({
   onExport,
   onUpdateSubscription,
   onUpdateAccess,
+  paymentDiagnostics,
+  onPaymentDiagnostics,
 }) {
   const metrics = data?.metrics || {};
   const users = data?.users || [];
+  const recentPayments = data?.recent_payments || [];
   const backendReady = data?.admin_ready !== false;
   const mercadoPagoReady = data?.mercado_pago_ready !== false;
+  const webhookReady = data?.webhook_ready !== false;
 
   return (
     <div className="grid gap-6">
@@ -2326,6 +2421,7 @@ function AdminView({
               <AdminHealthLine label="Backend Railway" ok={Boolean(data) && !error} />
               <AdminHealthLine label="Firebase Admin" ok={backendReady} />
               <AdminHealthLine label="Mercado Pago" ok={mercadoPagoReady} />
+              <AdminHealthLine label="Webhook seguro" ok={webhookReady} />
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
               <Button
@@ -2344,6 +2440,15 @@ function AdminView({
               >
                 <Download className="mr-2 h-4 w-4" />
                 Exportar
+              </Button>
+              <Button
+                onClick={onPaymentDiagnostics}
+                disabled={actionLoading === "admin-payment-diagnostics"}
+                variant="ghost"
+                className="rounded-full border border-white/15 text-white hover:bg-white/10"
+              >
+                <Activity className="mr-2 h-4 w-4" />
+                {actionLoading === "admin-payment-diagnostics" ? "Testando..." : "Testar pagamentos"}
               </Button>
             </div>
           </div>
@@ -2377,13 +2482,64 @@ function AdminView({
         </Panel>
       )}
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <StatCard label="Usuários" value={metrics.users || 0} helper="Contas e workspaces" icon={Users} tone="dark" />
-        <StatCard label="Clientes" value={metrics.clients || 0} helper="Total da base" icon={UserPlus} tone="rose" />
-        <StatCard label="Atendimentos" value={metrics.records || 0} helper="Procedimentos salvos" icon={ShieldCheck} tone="green" />
-        <StatCard label="Agenda" value={metrics.appointments || 0} helper="Horários criados" icon={CalendarDays} tone="violet" />
-        <StatCard label="Assinaturas" value={metrics.active_subscriptions || 0} helper="Autorizadas" icon={CreditCard} tone="gold" />
+        <StatCard label="Acessos ativos" value={metrics.active_subscriptions || 0} helper="Teste ou pagamento válido" icon={UserCheck} tone="green" />
+        <StatCard label="Em teste" value={metrics.trialing_users || 0} helper="Dentro dos 7 dias" icon={Clock} tone="rose" />
+        <StatCard label="Expirados" value={metrics.expired_users || 0} helper="Precisam regularizar" icon={AlertTriangle} tone="violet" />
+        <StatCard label="Pix pendentes" value={metrics.pending_payments || 0} helper="Aguardando confirmação" icon={QrCode} tone="gold" />
+        <StatCard label="Recebido" value={formatCurrency(metrics.approved_revenue || 0)} helper="Pagamentos Pix listados" icon={DollarSign} tone="dark" />
       </section>
+
+      {paymentDiagnostics && (
+        <Panel>
+          <PanelHeader
+            title="Diagnóstico de pagamentos"
+            subtitle={`Verificado em ${formatDateTime(paymentDiagnostics.checked_at)}.`}
+          />
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <InfoCard title="API Mercado Pago" value={paymentDiagnostics.mercado_pago_api === "online" ? "Online" : "Erro"} />
+            <InfoCard title="Pix" value={paymentDiagnostics.pix_available ? "Disponível" : paymentDiagnostics.pix_status || "Indisponível"} />
+            <InfoCard title="Webhook" value={paymentDiagnostics.webhook_ready ? "Assinatura configurada" : "Chave pendente"} />
+            <InfoCard title="Eventos processados" value={String(paymentDiagnostics.webhook_processed || 0)} />
+          </div>
+          <p className="mt-4 break-all rounded-2xl bg-zinc-50 p-4 text-xs font-bold text-zinc-500">
+            URL: {paymentDiagnostics.webhook_url || "-"}
+          </p>
+        </Panel>
+      )}
+
+      <Panel>
+        <PanelHeader
+          title="Pagamentos recentes"
+          subtitle="Rastreamento recebido do Mercado Pago para conciliação financeira."
+        />
+        <div className="mt-5 grid gap-3">
+          {recentPayments.length === 0 ? (
+            <EmptyState text="Nenhum pagamento Pix registrado ainda." />
+          ) : (
+            recentPayments.slice(0, 12).map((payment) => (
+              <div
+                key={`${payment.uid}-${payment.mercado_pago_payment_id}`}
+                className="grid min-w-0 gap-3 rounded-2xl border border-zinc-100 bg-zinc-50 p-4 sm:grid-cols-[1fr_auto] sm:items-center"
+              >
+                <div className="min-w-0">
+                  <p className="break-words font-black text-zinc-950">
+                    {payment.business_name || payment.user_email || "Conta StudiosBook"}
+                  </p>
+                  <p className="mt-1 break-all text-xs text-zinc-500">
+                    ID {payment.mercado_pago_payment_id} · {formatDateTime(payment.date_last_updated)}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                  <Badge tone={billingStatusTone(payment.status)}>{billingStatusLabel(payment.status)}</Badge>
+                  <strong>{formatCurrency(payment.amount)}</strong>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </Panel>
 
       <Panel>
         <PanelHeader
@@ -2459,6 +2615,14 @@ function AdminUserCard({ adminUser, actionLoading, onUpdateSubscription, onUpdat
         </div>
         <p className="mt-2 break-words text-xs font-bold text-zinc-500">{adminUser.email || adminUser.uid}</p>
         <p className="mt-1 text-xs text-zinc-500">Último login: {formatDateTime(adminUser.lastSignInTime)}</p>
+        <p className="mt-1 text-xs text-zinc-500">
+          Teste até: {formatDateTime(adminUser.subscription?.trial_end_date)} · Meio: {adminUser.subscription?.payment_method_id || "Não definido"}
+        </p>
+        {adminUser.latest_payment && (
+          <p className="mt-1 text-xs font-bold text-zinc-600">
+            Último Pix: {billingStatusLabel(adminUser.latest_payment.status)} · {formatCurrency(adminUser.latest_payment.amount)}
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-2 text-center">
@@ -3377,12 +3541,83 @@ function ReportsView({ reports, clients, records, returnItems }) {
   );
 }
 
-function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStatus, actionLoading }) {
+function BillingAccessScreen({
+  user,
+  billingSubscription,
+  billingAccess,
+  pixPayment,
+  onStartCheckout,
+  onCreatePix,
+  onRefreshStatus,
+  onLogout,
+  actionLoading,
+  feedback,
+  feedbackType,
+}) {
+  return (
+    <div className="min-h-screen bg-[#f6f1ef] text-zinc-950">
+      <header className="border-b border-white/70 bg-white/85 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-rose-700">{PRODUCT_NAME}</p>
+            <p className="mt-1 text-sm font-bold text-zinc-500">Regularização de acesso</p>
+          </div>
+          <Button variant="ghost" onClick={onLogout} className="rounded-full">
+            <LogOut className="mr-2 h-4 w-4" />
+            Sair
+          </Button>
+        </div>
+      </header>
+      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+        {feedback && (
+          <div className={`mb-5 rounded-2xl border px-4 py-3 text-sm font-bold ${feedbackType === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+            {feedback}
+          </div>
+        )}
+        <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+          O período gratuito terminou. Seus dados continuam salvos; regularize o pagamento para voltar a editar agenda, clientes e atendimentos.
+        </div>
+        <BillingView
+          user={user}
+          billingSubscription={billingSubscription}
+          billingAccess={billingAccess}
+          pixPayment={pixPayment}
+          onStartCheckout={onStartCheckout}
+          onCreatePix={onCreatePix}
+          onRefreshStatus={onRefreshStatus}
+          actionLoading={actionLoading}
+        />
+      </main>
+    </div>
+  );
+}
+
+function BillingView({
+  user,
+  billingSubscription,
+  billingAccess,
+  pixPayment,
+  onStartCheckout,
+  onCreatePix,
+  onRefreshStatus,
+  actionLoading,
+}) {
+  const [cpf, setCpf] = useState("");
+  const [pixCopied, setPixCopied] = useState(false);
   const status = billingSubscription?.status || "not_started";
   const statusTone = billingStatusTone(status);
   const trialEnd = billingSubscription?.trial_end_date;
-  const trialDaysLeft = trialEnd ? Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86400000)) : 7;
+  const trialDaysLeft = billingAccess?.daysLeft ?? (trialEnd ? Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86400000)) : 7);
   const supportHref = supportWhatsAppLink("Oi, preciso de suporte para ativar minha assinatura do StudiosBook.");
+  const pixQrCode = pixPayment?.qr_code || "";
+  const pixQrImage = pixPayment?.qr_code_base64 || "";
+
+  const handleCopyPix = async () => {
+    if (!pixQrCode) return;
+    await navigator.clipboard.writeText(pixQrCode);
+    setPixCopied(true);
+    window.setTimeout(() => setPixCopied(false), 2200);
+  };
 
   return (
     <div className="grid gap-6">
@@ -3395,11 +3630,10 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
               Assinatura StudiosBook
             </p>
             <h2 className="mt-5 max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl">
-              7 dias grátis. Depois {PRODUCT_PRICE}.
+              7 dias grátis desde o cadastro. Depois {PRODUCT_PRICE}.
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
-              A cobrança recorrente é autorizada pela profissional no checkout do Mercado Pago.
-              Após o período gratuito, a mensalidade é processada automaticamente.
+              Escolha cartão para cobrança recorrente automática ou Pix para liberar 30 dias de acesso por pagamento.
             </p>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
               <Button
@@ -3409,7 +3643,7 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
                 className="h-12 rounded-full bg-rose-500 px-6 text-white hover:bg-rose-600"
               >
                 <CreditCard className="mr-2 h-4 w-4" />
-                {actionLoading === "billing-checkout" ? "Abrindo checkout..." : "Começar 7 dias grátis"}
+                {actionLoading === "billing-checkout" ? "Abrindo checkout..." : "Assinar com cartão"}
               </Button>
               <Button
                 type="button"
@@ -3435,24 +3669,23 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
             <div className="mt-5 grid gap-3">
               <MiniMetric label="Profissional" value={user?.email || "-"} />
               <MiniMetric label="Plano" value={billingSubscription?.plan_name || "StudiosBook Intermediário"} />
-              <MiniMetric label="Teste grátis" value={trialEnd ? `${trialDaysLeft} dia(s) restantes` : "7 dias"} />
+              <MiniMetric label="Teste grátis" value={trialEnd ? `${trialDaysLeft} dia(s) restantes` : "7 dias desde o cadastro"} />
               <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
             </div>
           </div>
         </div>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+      <section className="grid gap-6 lg:grid-cols-2">
         <Panel>
           <PanelHeader
-            title="Resumo comercial"
-            subtitle="Condição clara para vender o StudiosBook sem ruído."
+            title="Cartão recorrente"
+            subtitle="Autorize uma vez e o Mercado Pago processa R$ 19,90 mensalmente."
           />
           <div className="mt-5 grid gap-4">
             {[
-              ["Teste grátis", "A profissional usa por 7 dias antes da primeira cobrança.", Sparkles],
+              ["Teste vinculado ao cadastro", "Os 7 dias começam na criação da conta, mesmo que o checkout seja aberto depois.", Sparkles],
               ["Cobrança automática", "A recorrência mensal é processada pelo Mercado Pago após autorização.", CreditCard],
-              ["Cancelamento assistido", "Suporte direto da BlackVision para dúvidas de acesso, cobrança e dados.", LifeBuoy],
             ].map(([title, text, Icon]) => (
               <div key={title} className="flex items-start gap-3 rounded-[1.25rem] bg-zinc-50 p-4">
                 <Icon className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" />
@@ -3462,24 +3695,104 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
                 </div>
               </div>
             ))}
+            <Button
+              type="button"
+              onClick={onStartCheckout}
+              disabled={actionLoading === "billing-checkout"}
+              className="h-12 rounded-full bg-zinc-950 text-white hover:bg-zinc-800"
+            >
+              <CreditCard className="mr-2 h-4 w-4" />
+              {actionLoading === "billing-checkout" ? "Abrindo Mercado Pago..." : "Continuar com cartão"}
+            </Button>
           </div>
         </Panel>
 
         <Panel>
           <PanelHeader
-            title="Detalhes da assinatura"
-            subtitle="Dados usados para conciliação entre StudiosBook e Mercado Pago."
+            title="Pagamento por Pix"
+            subtitle="Pagamento avulso de R$ 19,90 que libera 30 dias após a aprovação."
           />
-          <div className="mt-5 grid gap-3 md:grid-cols-2">
-            <InfoCard title="Início do teste" value={formatDateTime(billingSubscription?.trial_start_date)} />
-            <InfoCard title="Fim do teste" value={formatDateTime(billingSubscription?.trial_end_date)} />
-            <InfoCard title="Próxima cobrança" value={formatDateTime(billingSubscription?.next_payment_date)} />
-            <InfoCard title="Última sincronização" value={formatDateTime(billingSubscription?.last_sync_date)} />
-            <InfoCard title="ID Mercado Pago" value={billingSubscription?.mercado_pago_preapproval_id || "Aguardando checkout"} />
-            <InfoCard title="Status Mercado Pago" value={billingSubscription?.last_payment_status || "Não iniciado"} />
+          <div className="mt-5 grid gap-3">
+            <label className="grid gap-2 text-sm font-black text-zinc-700">
+              CPF do pagador
+              <Input
+                value={cpf}
+                onChange={(event) => setCpf(event.target.value)}
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="000.000.000-00"
+                className="h-12 rounded-2xl bg-zinc-50"
+              />
+            </label>
+            <p className="text-xs leading-5 text-zinc-500">
+              O CPF é enviado diretamente ao Mercado Pago para gerar a cobrança e não é armazenado pelo StudiosBook.
+            </p>
+            <Button
+              type="button"
+              onClick={() => onCreatePix(cpf)}
+              disabled={actionLoading === "billing-pix"}
+              className="h-12 rounded-full bg-emerald-600 text-white hover:bg-emerald-700"
+            >
+              <QrCode className="mr-2 h-4 w-4" />
+              {actionLoading === "billing-pix" ? "Gerando Pix..." : "Gerar Pix de R$ 19,90"}
+            </Button>
           </div>
 
-          <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+          {pixQrCode && (
+            <div className="mt-5 rounded-[1.5rem] border border-emerald-100 bg-emerald-50 p-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                {pixQrImage && (
+                  <img
+                    src={`data:image/png;base64,${pixQrImage}`}
+                    alt="QR Code Pix do StudiosBook"
+                    className="h-36 w-36 self-center rounded-xl bg-white p-2"
+                  />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={billingStatusTone(pixPayment?.status)}>{billingStatusLabel(pixPayment?.status)}</Badge>
+                    <span className="text-xs font-bold text-emerald-900">Válido até {formatDateTime(pixPayment?.date_of_expiration)}</span>
+                  </div>
+                  <p className="mt-3 line-clamp-3 break-all text-xs leading-5 text-emerald-950">{pixQrCode}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button type="button" onClick={handleCopyPix} className="rounded-full bg-zinc-950 text-white">
+                      <Copy className="mr-2 h-4 w-4" />
+                      {pixCopied ? "Copiado" : "Copiar código Pix"}
+                    </Button>
+                    {pixPayment?.ticket_url && (
+                      <a
+                        href={pixPayment.ticket_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-white px-4 text-sm font-black text-zinc-900"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Abrir no Mercado Pago
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </Panel>
+      </section>
+
+      <Panel>
+        <PanelHeader
+          title="Detalhes e conciliação"
+          subtitle="Dados usados para rastrear assinatura, Pix e liberação de acesso."
+        />
+        <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+          <InfoCard title="Início do teste" value={formatDateTime(billingSubscription?.trial_start_date)} />
+          <InfoCard title="Fim do teste" value={formatDateTime(billingSubscription?.trial_end_date)} />
+          <InfoCard title="Acesso válido até" value={formatDateTime(billingSubscription?.current_period_end)} />
+          <InfoCard title="Próxima cobrança" value={formatDateTime(billingSubscription?.next_payment_date)} />
+          <InfoCard title="Última sincronização" value={formatDateTime(billingSubscription?.last_sync_date)} />
+          <InfoCard title="Status Mercado Pago" value={billingStatusLabel(billingSubscription?.last_payment_status)} />
+        </div>
+
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row">
             {billingSubscription?.checkout_url && (
               <a
                 href={billingSubscription.checkout_url}
@@ -3488,7 +3801,7 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-zinc-950 px-5 text-sm font-black text-white transition hover:bg-zinc-800"
               >
                 <ExternalLink className="h-4 w-4" />
-                Reabrir checkout
+                Reabrir cartão
               </a>
             )}
             <a
@@ -3500,22 +3813,20 @@ function BillingView({ user, billingSubscription, onStartCheckout, onRefreshStat
               <MessageCircle className="h-4 w-4" />
               Suporte no WhatsApp
             </a>
-          </div>
-        </Panel>
-      </section>
+        </div>
+      </Panel>
 
       <Panel>
         <PanelHeader
-          title="Ponto de controle antes da produção"
-          subtitle="O fluxo está pronto para teste, mas a cobrança real depende do token do Mercado Pago salvo no backend."
+          title="Segurança do pagamento"
+          subtitle="Cobranças e confirmações são processadas no backend; o token do Mercado Pago não fica exposto no navegador."
         />
         <div className="mt-5 rounded-[1.5rem] border border-amber-100 bg-amber-50 p-4">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
             <p className="text-sm leading-6 text-amber-900">
-              Para liberar cobrança real, configure a variável <strong>MERCADO_PAGO_ACCESS_TOKEN</strong> no Railway.
-              Se quiser usar um plano oficial com teste grátis cadastrado no Mercado Pago, adicione também
-              <strong> MERCADO_PAGO_PLAN_ID</strong>. Sem esses dados, o app mantém a operação protegida e não tenta cobrar.
+              O acesso só é liberado após confirmação consultada diretamente na API do Mercado Pago. O Pix não é recorrente:
+              cada pagamento aprovado adiciona 30 dias. Para cobrança automática mensal, use o cartão recorrente.
             </p>
           </div>
         </div>
