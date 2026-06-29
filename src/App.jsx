@@ -1013,12 +1013,17 @@ export default function App() {
           setBillingSubscription(result?.subscription || null);
           setBillingAccess(result?.access || null);
           setPixPayment(result?.payment || result?.latest_payment || null);
-          const confirmed = ["authorized", "active"].includes(result?.subscription?.status);
-          showFeedback(
-            confirmed
-              ? "Assinatura confirmada pelo Mercado Pago."
-              : "Assinatura ainda pendente. O acesso será atualizado após a confirmação do Mercado Pago."
-          );
+          const status = result?.subscription?.status;
+          if (["authorized", "active"].includes(status)) {
+            showFeedback("Assinatura confirmada pelo Mercado Pago.");
+          } else if (["cancelled", "canceled", "payment_failed", "rejected"].includes(status)) {
+            showFeedback(
+              "Pagamento não aprovado pelo Mercado Pago. Tente novamente com outro cartão ou use Pix.",
+              "error"
+            );
+          } else {
+            showFeedback("Assinatura ainda pendente. O acesso será atualizado após a confirmação do Mercado Pago.");
+          }
         })
         .catch((error) => {
           console.error("Billing return sync error", error);

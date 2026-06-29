@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   billingAccess,
+  billingReferenceType,
   createWebhookSignature,
   isValidCpf,
   trialFromAccountCreation,
@@ -72,4 +73,11 @@ test("extracts user UID from billing references", () => {
   assert.equal(uidFromExternalReference("studiosbook:pix:user-1:payment-1"), "user-1");
   assert.equal(uidFromExternalReference("studiosbook:user-2:subscription-1"), "user-2");
   assert.equal(uidFromExternalReference("another-product:user-3"), "");
+});
+
+test("classifies StudiosBook billing references", () => {
+  assert.equal(billingReferenceType("studiosbook:pix:user-1:payment-1"), "pix");
+  assert.equal(billingReferenceType("studiosbook:subscription:user-2:checkout-1"), "subscription");
+  assert.equal(billingReferenceType("studiosbook:user-3:legacy"), "");
+  assert.equal(billingReferenceType("another-product:pix:user-4"), "");
 });

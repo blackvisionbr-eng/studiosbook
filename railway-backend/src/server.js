@@ -13,6 +13,7 @@ import {
   TRIAL_DAYS,
   addDays,
   billingAccess,
+  billingReferenceType,
   isValidCpf,
   localPaymentStatus,
   normalizeCpf,
@@ -507,7 +508,13 @@ function paymentRecordFromMercadoPago(uid, payment) {
 
 async function applyPixPayment(uid, payment) {
   const referenceUid = uidFromExternalReference(payment?.external_reference);
-  if (!uid || (referenceUid && referenceUid !== uid)) {
+  const referenceType = billingReferenceType(payment?.external_reference);
+  if (
+    !uid ||
+    (referenceUid && referenceUid !== uid) ||
+    (referenceType && referenceType !== "pix") ||
+    (!referenceType && payment?.payment_method_id !== "pix")
+  ) {
     throw new Error("Pagamento Pix não pertence à conta informada.");
   }
 
@@ -548,6 +555,43 @@ async function applyPixPayment(uid, payment) {
     email: account.subscription?.user_email || payment?.payer?.email || "",
     forceAccess: await isPlatformAdminUid(uid),
   });
+  return { ...billing, payment: { id: paymentId, ...record } };
+}
+
+async function applySubscriptionPayment(uid, payment) {
+  const referenceUid = uidFromExternalReference(payment?.external_reference);
+  if (
+    !uid ||
+    billingReferenceType(payment?.external_reference) !== "subscription" ||
+    referenceUid !== uid
+  ) {
+    throw new Error("Pagamento recorrente não pertence à conta informada.");
+  }
+
+  const account = await ensureBillingAccount(uid, payment?.payer?.email || "");
+  const record = {
+    ...paymentRecordFromMercadoPago(uid, payment),
+    billing_flow: "subscription",
+  };
+  const paymentId = record.mercado_pago_payment_id;
+  if (!paymentId) throw new Error("Pagamento Mercado Pago sem identificador.");
+
+  await paymentCollection(uid).doc(paymentId).set(record, { merge: true });
+  const billing = await persistBillingState(
+    uid,
+    {
+      subscription_payment_id: paymentId,
+      payment_method_id: record.payment_method || account.subscription?.payment_method_id || "",
+      last_payment_status: record.status,
+      last_payment_date: record.date_approved || record.date_last_updated,
+      last_sync_date: new Date().toISOString(),
+      notes: `Pagamento recorrente ${record.status} sincronizado pelo Mercado Pago.`,
+    },
+    {
+      email: account.subscription?.user_email || payment?.payer?.email || "",
+      forceAccess: await isPlatformAdminUid(uid),
+    }
+  );
   return { ...billing, payment: { id: paymentId, ...record } };
 }
 
@@ -785,7 +829,11 @@ app.post("/functions/sync-billing-status", requireFirebaseUser, async (req, res)
   try {
     const account = await ensureBillingAccount(req.user.uid, req.user.email);
     let result = account;
-    if (account.latest_payment?.mercado_pago_payment_id) {
+    if (
+      account.latest_payment?.mercado_pago_payment_id &&
+      (billingReferenceType(account.latest_payment.external_reference) === "pix" ||
+        account.latest_payment.payment_method === "pix")
+    ) {
       result = await syncPixPayment(req.user.uid, account.latest_payment.mercado_pago_payment_id);
     }
     if (account.subscription?.mercado_pago_preapproval_id) {
@@ -855,8 +903,19 @@ app.post("/functions/mercado-pago-webhook", async (req, res) => {
     if (eventType === "payment") {
       const { response, data } = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(dataId)}`);
       if (!response.ok) throw new Error(`Mercado Pago retornou ${response.status} ao consultar pagamento.`);
-      const uid = uidFromExternalReference(data.external_reference) || data?.metadata?.studiosbook_uid || "";
-      result = uid ? await applyPixPayment(uid, data) : { ignored: true, reason: "foreign_payment" };
+      const referenceType = billingReferenceType(data.external_reference);
+      const referenceUid = uidFromExternalReference(data.external_reference);
+      const metadataUid = data?.metadata?.studiosbook_uid || "";
+      if (referenceType === "subscription" && referenceUid) {
+        result = await applySubscriptionPayment(referenceUid, data);
+      } else if (
+        (referenceType === "pix" && referenceUid) ||
+        (!referenceType && data.payment_method_id === "pix" && metadataUid)
+      ) {
+        result = await applyPixPayment(referenceUid || metadataUid, data);
+      } else {
+        result = { ignored: true, reason: "foreign_payment" };
+      }
     } else if (eventType === "subscription_preapproval") {
       const { response, data } = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(dataId)}`);
       if (!response.ok) throw new Error(`Mercado Pago retornou ${response.status} ao consultar assinatura.`);

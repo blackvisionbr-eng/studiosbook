@@ -122,6 +122,12 @@ export function uidFromExternalReference(value) {
   return parts[1] || "";
 }
 
+export function billingReferenceType(value) {
+  const parts = String(value || "").split(":");
+  if (parts[0] !== "studiosbook") return "";
+  return parts[1] === "pix" || parts[1] === "subscription" ? parts[1] : "";
+}
+
 export function localPaymentStatus(status) {
   const normalized = String(status || "").toLowerCase();
   if (normalized === "approved") return "approved";
