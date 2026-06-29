@@ -80,8 +80,8 @@ FIREBASE_PRIVATE_KEY=private_key_da_service_account
 ## Cobrança e webhooks
 
 - Os 7 dias de teste começam na data de criação da conta no Firebase Auth.
-- Cartão usa assinatura recorrente mensal de R$ 19,90.
-- Pix usa pagamento avulso de R$ 19,90 e libera 30 dias após aprovação.
+- Cartão usa assinatura recorrente mensal de R$ 26,90.
+- Pix usa pagamento avulso de R$ 26,90 e libera 30 dias após aprovação.
 - URL do webhook: `https://studiosbook-api-production.up.railway.app/functions/mercado-pago-webhook`
 - Eventos necessários no Mercado Pago: `payment`, `subscription_preapproval` e `subscription_authorized_payment`.
 - A chave exibida em `Suas integrações > Webhooks` deve ser salva como `MERCADO_PAGO_WEBHOOK_SECRET` no Railway.

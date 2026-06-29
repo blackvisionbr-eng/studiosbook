@@ -61,7 +61,7 @@ const BillingSubscription = base44.entities.BillingSubscription;
 
 const PRODUCT_NAME = "StudiosBook";
 const PRODUCT_COMPANY = "BlackVision";
-const PRODUCT_PRICE = "R$ 19,90/mês";
+const PRODUCT_PRICE = "R$ 26,90/mês";
 const OFFICIAL_APP_URL = "https://studiosbook.com.br";
 const SUPPORT_EMAIL = "getblackvision.br@gmail.com";
 const SUPPORT_PHONE = "73981068594";
@@ -2201,7 +2201,7 @@ function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
     <div className="min-h-screen bg-[#f6f1ef] px-5 py-10 text-zinc-950">
       <div className="mx-auto grid min-h-[calc(100vh-5rem)] max-w-6xl items-center gap-10 lg:grid-cols-[0.9fr_1.1fr]">
         <div>
-          <BrandLockup size="hero" heading subtitle="Gestão inteligente para profissionais da beleza" />
+          <BrandLockup size="hero" heading subtitle="Seu talento em foco. Seu studio sob controle." />
           <div className="mt-7 flex w-fit items-center gap-2 rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-black text-rose-800 shadow-sm">
             <Lock className="h-4 w-4" />
             Agenda privada
@@ -3301,7 +3301,7 @@ function BillingView({
         <Panel>
           <PanelHeader
             title="Cartão recorrente"
-            subtitle="Autorize uma vez e o Mercado Pago processa R$ 19,90 mensalmente."
+            subtitle="Autorize uma vez e o Mercado Pago processa R$ 26,90 mensalmente."
           />
           <div className="mt-5 grid gap-4">
             {[
@@ -3331,7 +3331,7 @@ function BillingView({
         <Panel>
           <PanelHeader
             title="Pagamento por Pix"
-            subtitle="Pagamento avulso de R$ 19,90 que libera 30 dias após a aprovação."
+            subtitle="Pagamento avulso de R$ 26,90 que libera 30 dias após a aprovação."
           />
           <div className="mt-5 grid gap-3">
             <label className="grid gap-2 text-sm font-black text-zinc-700">
@@ -3355,7 +3355,7 @@ function BillingView({
               className="h-12 w-full rounded-full bg-emerald-600 px-4 text-white hover:bg-emerald-700"
             >
               <QrCode className="mr-2 h-4 w-4" />
-              {actionLoading === "billing-pix" ? "Gerando Pix..." : "Gerar Pix de R$ 19,90"}
+              {actionLoading === "billing-pix" ? "Gerando Pix..." : "Gerar Pix de R$ 26,90"}
             </Button>
           </div>
 
