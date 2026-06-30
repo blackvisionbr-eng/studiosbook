@@ -1374,7 +1374,9 @@ export default function App() {
       setBillingSubscription(result?.subscription || billingSubscription);
       setBillingAccess(result?.access || billingAccess);
       showFeedback(
-        result?.already_active
+        result?.pending_authorization
+          ? "Dados recebidos. O Mercado Pago está confirmando a autorização."
+          : result?.already_active
           ? "Sua assinatura já está ativa."
           : "Cartão autorizado. Sua assinatura recorrente está ativa."
       );

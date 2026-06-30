@@ -6,6 +6,7 @@ import {
   createWebhookSignature,
   isValidCpf,
   isValidCardToken,
+  subscriptionRecoveryMode,
   subscriptionChargeStart,
   trialFromAccountCreation,
   uidFromExternalReference,
@@ -100,4 +101,13 @@ test("schedules recurring charge at trial end or five minutes from now", () => {
     subscriptionChargeStart("2026-06-20T20:00:00.000Z", now).toISOString(),
     "2026-06-29T20:05:00.000Z"
   );
+});
+
+test("recovers a previous Mercado Pago subscription without creating duplicates", () => {
+  assert.equal(subscriptionRecoveryMode("authorized"), "reuse");
+  assert.equal(subscriptionRecoveryMode("pending"), "update");
+  assert.equal(subscriptionRecoveryMode("paused"), "update");
+  assert.equal(subscriptionRecoveryMode("canceled"), "create");
+  assert.equal(subscriptionRecoveryMode(""), "create");
+  assert.equal(subscriptionRecoveryMode("unknown_provider_state"), "block");
 });

@@ -14,6 +14,14 @@ export function subscriptionChargeStart(trialEnd, now = new Date()) {
   return Number.isFinite(parsedTrialEnd.getTime()) && parsedTrialEnd > minimumStart ? parsedTrialEnd : minimumStart;
 }
 
+export function subscriptionRecoveryMode(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "authorized" || normalized === "active") return "reuse";
+  if (normalized === "pending" || normalized === "paused") return "update";
+  if (["canceled", "cancelled", "rejected", "expired"].includes(normalized)) return "create";
+  return normalized ? "block" : "create";
+}
+
 export function addDays(value, days) {
   const date = value instanceof Date ? new Date(value) : new Date(value);
   date.setUTCDate(date.getUTCDate() + days);

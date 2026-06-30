@@ -19,6 +19,7 @@ import {
   localPaymentStatus,
   normalizeCpf,
   subscriptionChargeStart,
+  subscriptionRecoveryMode,
   trialFromAccountCreation,
   uidFromExternalReference,
   validateWebhookSignature,
@@ -657,19 +658,81 @@ async function syncSubscription(uid, preapprovalId) {
   return { ...(await applySubscription(uid, data)), mercado_pago_status: data.status || "" };
 }
 
-async function cancelPendingSubscription(preapprovalId) {
-  if (!preapprovalId) return;
-  const current = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`);
-  if (!current.response.ok || current.data?.status !== "pending") return;
+function mercadoPagoErrorCode(data, fallback = "provider_error") {
+  return String(data?.cause?.[0]?.code || data?.code || data?.message || fallback).slice(0, 80);
+}
 
-  const cancelled = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`, {
-    method: "PUT",
-    body: JSON.stringify({ status: "canceled" }),
-  });
-  if (!cancelled.response.ok) {
-    const error = new Error("Não foi possível encerrar a tentativa de assinatura anterior.");
+async function recoverPreviousSubscription(preapprovalId, updatePayload, requestId) {
+  if (!preapprovalId) return { action: "create", previousPreapprovalId: "" };
+
+  const current = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`);
+  if (current.response.status === 404) return { action: "create", previousPreapprovalId: "" };
+  if (!current.response.ok) {
+    const error = new Error("Não foi possível consultar a assinatura anterior no Mercado Pago.");
+    error.status = current.response.status >= 500 ? 502 : 409;
+    error.providerCode = mercadoPagoErrorCode(current.data, "subscription_lookup_failed");
+    throw error;
+  }
+
+  const recoveryMode = subscriptionRecoveryMode(current.data?.status);
+  if (recoveryMode === "reuse") return { action: "reuse", subscription: current.data };
+  if (recoveryMode === "create") return { action: "create", previousPreapprovalId: "" };
+  if (recoveryMode === "block") {
+    const error = new Error("A assinatura anterior está sendo processada. Atualize o status antes de tentar novamente.");
     error.status = 409;
     throw error;
+  }
+
+  const updated = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`, {
+    method: "PUT",
+    body: JSON.stringify(updatePayload),
+  });
+  if (updated.response.ok) {
+    const updatedMode = subscriptionRecoveryMode(updated.data?.status);
+    return {
+      action: updatedMode === "reuse" ? "reuse" : "pending",
+      subscription: updated.data,
+      recovered: true,
+    };
+  }
+
+  const providerCode = mercadoPagoErrorCode(updated.data, "pending_subscription_update_failed");
+  if (updated.response.status >= 500 || [401, 403].includes(updated.response.status)) {
+    const error = new Error("O Mercado Pago não conseguiu recuperar a assinatura anterior.");
+    error.status = 502;
+    error.providerCode = providerCode;
+    throw error;
+  }
+
+  console.warn("Pending subscription recovery rejected; creating replacement", {
+    requestId,
+    mercadoPagoStatus: updated.response.status,
+    mercadoPagoCode: providerCode,
+  });
+  return { action: "create", previousPreapprovalId: preapprovalId };
+}
+
+async function cancelSupersededSubscription(preapprovalId, requestId) {
+  if (!preapprovalId) return true;
+  try {
+    const cancelled = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ status: "canceled" }),
+    });
+    if (cancelled.response.ok || cancelled.response.status === 404) return true;
+
+    console.warn("Superseded pending subscription could not be canceled", {
+      requestId,
+      mercadoPagoStatus: cancelled.response.status,
+      mercadoPagoCode: mercadoPagoErrorCode(cancelled.data, "subscription_cleanup_failed"),
+    });
+    return false;
+  } catch (error) {
+    console.warn("Superseded pending subscription cleanup unavailable", {
+      requestId,
+      message: error?.message || "cleanup_unavailable",
+    });
+    return false;
   }
 }
 
@@ -721,7 +784,6 @@ app.post(
         return res.json({ success: true, already_active: true, ...account });
       }
 
-      await cancelPendingSubscription(account.subscription?.mercado_pago_preapproval_id);
       const now = new Date();
       const chargeStart = subscriptionChargeStart(account.subscription?.trial_end_date, now);
       const appOrigin = safeOrigin(req.body?.app_url || PUBLIC_APP_URL);
@@ -742,15 +804,41 @@ app.post(
         },
       };
 
+      const recovery = await recoverPreviousSubscription(
+        account.subscription?.mercado_pago_preapproval_id,
+        mpPayload,
+        req.requestId
+      );
+      if (recovery.action === "reuse") {
+        const recoveredBilling = await applySubscription(req.user.uid, recovery.subscription);
+        return res.json({
+          success: true,
+          already_active: !recovery.recovered,
+          recovered: Boolean(recovery.recovered),
+          ...recoveredBilling,
+          trial_days: TRIAL_DAYS,
+          trial_end_date: account.subscription.trial_end_date,
+        });
+      }
+      if (recovery.action === "pending") {
+        const pendingBilling = await applySubscription(req.user.uid, recovery.subscription);
+        return res.status(202).json({
+          success: true,
+          pending_authorization: true,
+          recovered: true,
+          ...pendingBilling,
+          trial_days: TRIAL_DAYS,
+          trial_end_date: account.subscription.trial_end_date,
+        });
+      }
+
       const { response, data } = await mercadoPagoRequest("/preapproval", {
         method: "POST",
         headers: { "X-Idempotency-Key": randomUUID() },
         body: JSON.stringify(mpPayload),
       });
       if (!response.ok) {
-        const providerCode = String(
-          data?.cause?.[0]?.code || data?.message || "authorization_failed"
-        ).slice(0, 80);
+        const providerCode = mercadoPagoErrorCode(data, "authorization_failed");
         return res.status(response.status >= 500 ? 502 : 422).json({
           error: "O Mercado Pago não autorizou o cartão. Confira os dados ou use outro cartão.",
           mercado_pago_status: response.status,
@@ -759,6 +847,8 @@ app.post(
         });
       }
 
+      const previousPreapprovalId = recovery.previousPreapprovalId || "";
+      const previousCancelled = await cancelSupersededSubscription(previousPreapprovalId, req.requestId);
       await applySubscription(req.user.uid, data);
       const saved = await persistBillingState(
         req.user.uid,
@@ -773,6 +863,8 @@ app.post(
           last_payment_status: data.status || "authorized",
           last_sync_date: now.toISOString(),
           notes: "Assinatura autorizada com token descartável do Mercado Pago.",
+          superseded_preapproval_id: previousPreapprovalId,
+          superseded_preapproval_cancelled: previousPreapprovalId ? previousCancelled : true,
         },
         { email: req.user.email, forceAccess: req.user.platformAdmin === true }
       );
@@ -784,7 +876,11 @@ app.post(
         trial_end_date: account.subscription.trial_end_date,
       });
     } catch (error) {
-      console.error("Card subscription error", { requestId: req.requestId, message: error?.message });
+      console.error("Card subscription error", {
+        requestId: req.requestId,
+        message: error?.message,
+        providerCode: error?.providerCode || "",
+      });
       return res.status(error?.status || 500).json({
         error: error?.status === 409 ? error.message : "Erro interno ao autorizar assinatura.",
         request_id: req.requestId,
