@@ -940,7 +940,10 @@ export default function App() {
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch((error) => console.error("Service worker error", error));
+      navigator.serviceWorker
+        .register("/sw.js", { updateViaCache: "none" })
+        .then((registration) => registration.update())
+        .catch((error) => console.error("Service worker error", error));
     }
 
     if (!shouldShowInstallBanner()) return;
