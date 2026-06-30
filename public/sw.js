@@ -1,12 +1,5 @@
-const CACHE_NAME = "studiosbook-v5";
-const APP_SHELL = [
-  "/index.html",
-  "/manifest.json",
-  "/brand/studiosbook-mark.svg",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png",
-  "/icons/icon-maskable-512.png",
-];
+const CACHE_PREFIX = "studiosbook-";
+const CACHE_NAME = "studiosbook-v6";
 
 const OFFLINE_HTML = `<!doctype html>
 <html lang="pt-BR">
@@ -34,77 +27,31 @@ function offlineResponse() {
   });
 }
 
-async function cacheShell() {
-  const cache = await caches.open(CACHE_NAME);
-  await Promise.allSettled(
-    APP_SHELL.map(async (path) => {
-      try {
-        const response = await fetch(new Request(path, { cache: "reload" }));
-        if (response.ok) await cache.put(path, response);
-      } catch {
-        // A partial cache must not prevent the service worker from installing.
-      }
-    })
-  );
-}
-
 self.addEventListener("install", (event) => {
-  event.waitUntil(cacheShell().then(() => self.skipWaiting()));
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+            .map((key) => caches.delete(key))
+        )
+      )
       .then(() => self.clients.claim())
   );
 });
 
-async function navigationResponse(request) {
-  try {
-    const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(CACHE_NAME);
-      await cache.put("/index.html", response.clone());
-    }
-    return response;
-  } catch {
-    return (await caches.match("/index.html")) || offlineResponse();
-  }
-}
-
-async function assetResponse(request, event) {
-  const cached = await caches.match(request);
-  const networkUpdate = fetch(request)
-    .then(async (response) => {
-      if (response.ok) {
-        const cache = await caches.open(CACHE_NAME);
-        await cache.put(request, response.clone());
-      }
-      return response;
-    })
-    .catch(() => null);
-
-  if (cached) {
-    event.waitUntil(networkUpdate);
-    return cached;
-  }
-
-  return (await networkUpdate) || new Response("", { status: 504, statusText: "Gateway Timeout" });
-}
-
 self.addEventListener("fetch", (event) => {
   const { request } = event;
-  if (request.method !== "GET") return;
+  if (request.method !== "GET" || request.mode !== "navigate") return;
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  if (request.mode === "navigate") {
-    event.respondWith(navigationResponse(request));
-    return;
-  }
-
-  event.respondWith(assetResponse(request, event));
+  event.respondWith(fetch(request).catch(() => offlineResponse()));
 });
