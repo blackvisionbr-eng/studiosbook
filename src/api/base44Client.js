@@ -26,7 +26,7 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:574358182772:web:9796070587004f3f33aa21",
 };
 
-const apiBaseUrls = (import.meta.env.VITE_API_BASE_URLS || import.meta.env.VITE_API_BASE_URL || "https://api.studiosbook.com.br,https://studiosbook-api-production.up.railway.app")
+const apiBaseUrls = (import.meta.env.VITE_API_BASE_URLS || import.meta.env.VITE_API_BASE_URL || "https://studiosbook-api-production.up.railway.app")
   .split(",")
   .map((url) => url.trim().replace(/\/$/, ""))
   .filter(Boolean);

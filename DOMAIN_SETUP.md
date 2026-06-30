@@ -46,12 +46,6 @@ e.sec.dns.br
 
 ## Backend Railway
 
-O backend não deve usar o domínio raiz. Use este subdomínio:
-
-```txt
-api.studiosbook.com.br
-```
-
 Serviço Railway atual: `studiosbook-api`
 
 URL pública atual:
@@ -60,8 +54,7 @@ URL pública atual:
 https://studiosbook-api-production.up.railway.app
 ```
 
-No Railway, adicione o domínio customizado `api.studiosbook.com.br` no serviço `studiosbook-api` e copie o CNAME informado pelo Railway.
-Até o domínio customizado ficar pronto, o frontend possui fallback automático para a URL pública do Railway.
+O frontend deve usar diretamente a URL pública da Railway. Um domínio customizado para a API só poderá ser ativado quando o plano da Railway permitir esse recurso e o DNS correspondente estiver validado.
 No serviço, mantenha:
 
 ```txt

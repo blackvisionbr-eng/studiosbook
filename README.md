@@ -90,12 +90,11 @@ FIREBASE_PRIVATE_KEY=private_key_da_service_account
 Por padrão, o frontend chama:
 
 ```txt
-https://api.studiosbook.com.br
 https://studiosbook-api-production.up.railway.app
 ```
 
-O domínio público atual do Railway é `https://studiosbook-api-production.up.railway.app`.
-Depois de registrar o domínio customizado no Railway, aponte `api.studiosbook.com.br` para o CNAME informado pelo Railway.
+O domínio público ativo do backend é `https://studiosbook-api-production.up.railway.app`.
+Um domínio customizado para a API só deve ser ativado depois de habilitar esse recurso no plano da Railway e concluir o DNS.
 
 ## Firebase Auth
 

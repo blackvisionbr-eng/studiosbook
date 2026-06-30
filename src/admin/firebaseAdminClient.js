@@ -19,7 +19,7 @@ const firebaseConfig = {
 const apiBaseUrls = (
   import.meta.env.VITE_API_BASE_URLS ||
   import.meta.env.VITE_API_BASE_URL ||
-  "https://api.studiosbook.com.br,https://studiosbook-api-production.up.railway.app"
+  "https://studiosbook-api-production.up.railway.app"
 )
   .split(",")
   .map((url) => url.trim().replace(/\/$/, ""))
