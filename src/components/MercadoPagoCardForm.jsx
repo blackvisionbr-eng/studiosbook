@@ -114,24 +114,24 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
   return (
     <form ref={formRef} id="studiosbook-card-form" data-submitting="false" className="grid gap-4" noValidate>
       <div className="grid gap-2">
-        <label htmlFor="studiosbook-card-number" className="text-sm font-black text-zinc-700">
+        <p id="studiosbook-card-number-label" className="text-sm font-black text-zinc-700">
           Número do cartão
-        </label>
-        <div id="studiosbook-card-number" className={secureFieldClass} />
+        </p>
+        <div id="studiosbook-card-number" role="group" aria-labelledby="studiosbook-card-number-label" className={secureFieldClass} />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div className="grid min-w-0 gap-2">
-          <label htmlFor="studiosbook-card-expiration" className="text-sm font-black text-zinc-700">
+          <p id="studiosbook-card-expiration-label" className="text-sm font-black text-zinc-700">
             Validade
-          </label>
-          <div id="studiosbook-card-expiration" className={secureFieldClass} />
+          </p>
+          <div id="studiosbook-card-expiration" role="group" aria-labelledby="studiosbook-card-expiration-label" className={secureFieldClass} />
         </div>
         <div className="grid min-w-0 gap-2">
-          <label htmlFor="studiosbook-card-security-code" className="text-sm font-black text-zinc-700">
+          <p id="studiosbook-card-security-code-label" className="text-sm font-black text-zinc-700">
             Código de segurança
-          </label>
-          <div id="studiosbook-card-security-code" className={secureFieldClass} />
+          </p>
+          <div id="studiosbook-card-security-code" role="group" aria-labelledby="studiosbook-card-security-code-label" className={secureFieldClass} />
         </div>
       </div>
 

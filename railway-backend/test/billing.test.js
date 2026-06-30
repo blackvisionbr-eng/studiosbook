@@ -6,6 +6,7 @@ import {
   createWebhookSignature,
   isValidCpf,
   isValidCardToken,
+  latestSubscriptionInvoice,
   subscriptionRecoveryMode,
   subscriptionChargeStart,
   trialFromAccountCreation,
@@ -110,4 +111,13 @@ test("recovers a previous Mercado Pago subscription without creating duplicates"
   assert.equal(subscriptionRecoveryMode("canceled"), "create");
   assert.equal(subscriptionRecoveryMode(""), "create");
   assert.equal(subscriptionRecoveryMode("unknown_provider_state"), "block");
+});
+
+test("selects the latest subscription invoice for reconciliation", () => {
+  const latest = latestSubscriptionInvoice([
+    { id: "older", last_modified: "2026-06-29T20:00:00.000Z" },
+    { id: "newer", last_modified: "2026-06-29T21:00:00.000Z" },
+  ]);
+  assert.equal(latest.id, "newer");
+  assert.equal(latestSubscriptionInvoice([]), null);
 });

@@ -16,6 +16,7 @@ import {
   billingReferenceType,
   isValidCpf,
   isValidCardToken,
+  latestSubscriptionInvoice,
   localPaymentStatus,
   normalizeCpf,
   subscriptionChargeStart,
@@ -658,6 +659,32 @@ async function syncSubscription(uid, preapprovalId) {
   return { ...(await applySubscription(uid, data)), mercado_pago_status: data.status || "" };
 }
 
+async function syncLatestSubscriptionPayment(uid, preapprovalId) {
+  const invoiceResult = await mercadoPagoRequest(
+    `/authorized_payments/search?preapproval_id=${encodeURIComponent(preapprovalId)}`
+  );
+  if (!invoiceResult.response.ok) {
+    const error = new Error("Não foi possível consultar as faturas da assinatura no Mercado Pago.");
+    error.status = invoiceResult.response.status;
+    error.providerResponse = invoiceResult.data;
+    throw error;
+  }
+
+  const invoice = latestSubscriptionInvoice(invoiceResult.data?.results || []);
+  const paymentId = invoice?.payment?.id;
+  if (!paymentId) return null;
+
+  const paymentResult = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(paymentId)}`);
+  if (!paymentResult.response.ok) {
+    const error = new Error("Não foi possível consultar o pagamento recorrente no Mercado Pago.");
+    error.status = paymentResult.response.status;
+    error.providerResponse = paymentResult.data;
+    throw error;
+  }
+
+  return applySubscriptionPayment(uid, paymentResult.data);
+}
+
 function mercadoPagoErrorCode(data, fallback = "provider_error") {
   return String(data?.cause?.[0]?.code || data?.code || data?.message || fallback).slice(0, 80);
 }
@@ -961,7 +988,9 @@ app.post("/functions/sync-subscription-status", requireFirebaseUser, async (req,
       req.body?.mercado_pago_preapproval_id ||
       account.subscription?.mercado_pago_preapproval_id;
     if (!preapprovalId) return res.status(400).json({ error: "ID da assinatura Mercado Pago não informado." });
-    const result = await syncSubscription(req.user.uid, preapprovalId);
+    let result = await syncSubscription(req.user.uid, preapprovalId);
+    const paymentResult = await syncLatestSubscriptionPayment(req.user.uid, preapprovalId);
+    if (paymentResult) result = { ...result, ...paymentResult };
     res.json({ success: true, ...result });
   } catch (error) {
     console.error(error);
@@ -985,7 +1014,10 @@ app.post("/functions/sync-billing-status", requireFirebaseUser, async (req, res)
       result = await syncPixPayment(req.user.uid, account.latest_payment.mercado_pago_payment_id);
     }
     if (account.subscription?.mercado_pago_preapproval_id) {
-      result = await syncSubscription(req.user.uid, account.subscription.mercado_pago_preapproval_id);
+      const preapprovalId = account.subscription.mercado_pago_preapproval_id;
+      result = await syncSubscription(req.user.uid, preapprovalId);
+      const paymentResult = await syncLatestSubscriptionPayment(req.user.uid, preapprovalId);
+      if (paymentResult) result = { ...result, ...paymentResult };
       result.latest_payment = await latestBillingPayment(req.user.uid);
     }
     res.json({ success: true, ...result });
@@ -1077,7 +1109,17 @@ app.post("/functions/mercado-pago-webhook", async (req, res) => {
         const subscriptionResult = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`);
         if (!subscriptionResult.response.ok) throw new Error("Não foi possível consultar a assinatura da fatura.");
         const uid = uidFromExternalReference(subscriptionResult.data.external_reference);
-        result = uid ? await applySubscription(uid, subscriptionResult.data) : { ignored: true, reason: "foreign_invoice" };
+        if (uid) {
+          result = await applySubscription(uid, subscriptionResult.data);
+          const paymentId = data?.payment?.id;
+          if (paymentId) {
+            const paymentResult = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(paymentId)}`);
+            if (!paymentResult.response.ok) throw new Error("Não foi possível consultar o pagamento da fatura.");
+            result = { ...result, ...(await applySubscriptionPayment(uid, paymentResult.data)) };
+          }
+        } else {
+          result = { ignored: true, reason: "foreign_invoice" };
+        }
       }
     }
 
@@ -1278,7 +1320,9 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, async (re
     }
 
     const previousStatus = current.data?.status || "";
-    const result = await syncSubscription(uid, preapprovalId);
+    let result = await syncSubscription(uid, preapprovalId);
+    const paymentResult = await syncLatestSubscriptionPayment(uid, preapprovalId);
+    if (paymentResult) result = { ...result, ...paymentResult };
 
     await safeAdminAudit(req, "admin.subscription.updated", {
       target_uid: uid,

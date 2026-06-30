@@ -22,6 +22,14 @@ export function subscriptionRecoveryMode(status) {
   return normalized ? "block" : "create";
 }
 
+export function latestSubscriptionInvoice(invoices = []) {
+  return [...invoices].sort((left, right) => {
+    const leftDate = new Date(left?.last_modified || left?.date_created || 0).getTime();
+    const rightDate = new Date(right?.last_modified || right?.date_created || 0).getTime();
+    return rightDate - leftDate;
+  })[0] || null;
+}
+
 export function addDays(value, days) {
   const date = value instanceof Date ? new Date(value) : new Date(value);
   date.setUTCDate(date.getUTCDate() + days);

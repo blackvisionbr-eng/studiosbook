@@ -327,7 +327,7 @@ function Overview({ data, loading }) {
     ["Acessos ativos", metrics.active_subscriptions || 0, UserCheck],
     ["Em teste", metrics.trialing_users || 0, Activity],
     ["Expirados", metrics.expired_users || 0, AlertTriangle],
-    ["Pix pendentes", metrics.pending_payments || 0, QrCode],
+    ["Pagamentos pendentes", metrics.pending_payments || 0, QrCode],
     ["Receita confirmada", money(metrics.approved_revenue), CreditCard],
   ];
   if (loading && !data) return <LoadingPanel />;

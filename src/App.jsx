@@ -1381,7 +1381,7 @@ export default function App() {
           ? "Dados recebidos. O Mercado Pago está confirmando a autorização."
           : result?.already_active
           ? "Sua assinatura já está ativa."
-          : "Cartão autorizado. Sua assinatura recorrente está ativa."
+          : "Cartão autorizado. A primeira cobrança pode levar até 1 hora para ser processada."
       );
       return result;
     } catch (error) {
@@ -3237,6 +3237,8 @@ function BillingView({
   const [cpf, setCpf] = useState("");
   const [pixCopied, setPixCopied] = useState(false);
   const status = billingSubscription?.status || "not_started";
+  const recurringAuthorized = status === "authorized" || status === "active";
+  const recurringPaymentStatus = pixPayment?.billing_flow === "subscription" ? pixPayment?.status : "";
   const statusTone = billingStatusTone(status);
   const trialEnd = billingSubscription?.trial_end_date;
   const trialDaysLeft = billingAccess?.daysLeft ?? (trialEnd ? Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86400000)) : 7);
@@ -3272,15 +3274,17 @@ function BillingView({
               Escolha cartão para cobrança recorrente automática ou Pix para liberar 30 dias de acesso por pagamento.
             </p>
             <div className="mt-6 grid gap-3 sm:flex sm:flex-row">
-              <Button
-                type="button"
-                onClick={scrollToCardForm}
-                disabled={actionLoading === "billing-card"}
-                className="h-12 w-full rounded-full bg-rose-500 px-4 text-white hover:bg-rose-600 sm:w-auto sm:px-6"
-              >
-                <CreditCard className="mr-2 h-4 w-4" />
-                Preencher cartão
-              </Button>
+              {!recurringAuthorized && (
+                <Button
+                  type="button"
+                  onClick={scrollToCardForm}
+                  disabled={actionLoading === "billing-card"}
+                  className="h-12 w-full rounded-full bg-rose-500 px-4 text-white hover:bg-rose-600 sm:w-auto sm:px-6"
+                >
+                  <CreditCard className="mr-2 h-4 w-4" />
+                  Preencher cartão
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="ghost"
@@ -3331,11 +3335,30 @@ function BillingView({
                 </div>
               </div>
             ))}
-            <MercadoPagoCardForm
-              userEmail={user?.email || ""}
-              disabled={actionLoading === "billing-card"}
-              onAuthorize={onAuthorizeCard}
-            />
+            {recurringAuthorized ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
+                <p className="font-black">
+                  {recurringPaymentStatus === "approved"
+                    ? "Pagamento confirmado"
+                    : recurringPaymentStatus === "pending"
+                    ? "Pagamento em análise pelo Mercado Pago"
+                    : "Cartão autorizado com segurança"}
+                </p>
+                <p className="mt-1 text-emerald-900/75">
+                  {recurringPaymentStatus === "approved"
+                    ? "A mensalidade foi confirmada e a recorrência está ativa."
+                    : recurringPaymentStatus === "pending"
+                    ? "Não envie outro cartão. A análise será atualizada automaticamente."
+                    : "A primeira cobrança pode levar até 1 hora. Use Atualizar status para acompanhar."}
+                </p>
+              </div>
+            ) : (
+              <MercadoPagoCardForm
+                userEmail={user?.email || ""}
+                disabled={actionLoading === "billing-card"}
+                onAuthorize={onAuthorizeCard}
+              />
+            )}
           </div>
         </Panel>
 
