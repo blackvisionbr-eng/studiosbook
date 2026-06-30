@@ -3,6 +3,7 @@ import { jsPDF } from "jspdf";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MercadoPagoCardForm } from "@/components/MercadoPagoCardForm";
 import {
   Activity,
   AlertTriangle,
@@ -1362,30 +1363,30 @@ export default function App() {
     }
   };
 
-  const startSubscriptionCheckout = async () => {
-    setActionLoading("billing-checkout");
+  const authorizeCardSubscription = async ({ card_token_id }) => {
+    setActionLoading("billing-card");
     try {
-      const result = await base44.functions.invoke("create-subscription-checkout", {
+      const result = await base44.functions.invoke("create-card-subscription", {
+        card_token_id,
         app_url: OFFICIAL_APP_URL,
       });
 
-      if (result?.subscription) {
-        setBillingSubscription(result.subscription);
-        setBillingAccess(result.access || null);
-      }
-
-      if (!result?.checkout_url) {
-        return showFeedback("Não foi possível abrir o pagamento agora. Tente novamente ou fale com o suporte.", "error");
-      }
-
-      window.location.href = result.checkout_url;
+      setBillingSubscription(result?.subscription || billingSubscription);
+      setBillingAccess(result?.access || billingAccess);
+      showFeedback(
+        result?.already_active
+          ? "Sua assinatura já está ativa."
+          : "Cartão autorizado. Sua assinatura recorrente está ativa."
+      );
+      return result;
     } catch (error) {
       console.error(error);
       const missingSecret = error?.data?.missing_secret || error?.missing_secret;
       const message = missingSecret
         ? "Pagamento temporariamente indisponível. Fale com o suporte."
-        : `Erro ao iniciar cobrança: ${getErrorMessage(error)}`;
+        : getErrorMessage(error);
       showFeedback(message, "error");
+      throw error;
     } finally {
       setActionLoading("");
     }
@@ -1448,7 +1449,7 @@ export default function App() {
 
   const installPromptNode = (
     <InstallAppPrompt
-      show={showInstallPrompt}
+      show={showInstallPrompt && !billingLocked && activeTab !== "billing"}
       canInstall={Boolean(installPrompt)}
       isIosInstall={isIosInstall}
       onInstall={installApp}
@@ -1683,7 +1684,7 @@ export default function App() {
         billingSubscription={billingSubscription}
         billingAccess={billingAccess}
         pixPayment={pixPayment}
-        onStartCheckout={startSubscriptionCheckout}
+        onAuthorizeCard={authorizeCardSubscription}
         onCreatePix={createPixPayment}
         onRefreshStatus={refreshBillingStatus}
         onLogout={handleLogout}
@@ -1838,7 +1839,7 @@ export default function App() {
                 billingSubscription={billingSubscription}
                 billingAccess={billingAccess}
                 pixPayment={pixPayment}
-                onStartCheckout={startSubscriptionCheckout}
+                onAuthorizeCard={authorizeCardSubscription}
                 onCreatePix={createPixPayment}
                 onRefreshStatus={refreshBillingStatus}
                 actionLoading={actionLoading}
@@ -3175,7 +3176,7 @@ function BillingAccessScreen({
   billingSubscription,
   billingAccess,
   pixPayment,
-  onStartCheckout,
+  onAuthorizeCard,
   onCreatePix,
   onRefreshStatus,
   onLogout,
@@ -3208,7 +3209,7 @@ function BillingAccessScreen({
           billingSubscription={billingSubscription}
           billingAccess={billingAccess}
           pixPayment={pixPayment}
-          onStartCheckout={onStartCheckout}
+          onAuthorizeCard={onAuthorizeCard}
           onCreatePix={onCreatePix}
           onRefreshStatus={onRefreshStatus}
           actionLoading={actionLoading}
@@ -3223,7 +3224,7 @@ function BillingView({
   billingSubscription,
   billingAccess,
   pixPayment,
-  onStartCheckout,
+  onAuthorizeCard,
   onCreatePix,
   onRefreshStatus,
   actionLoading,
@@ -3245,6 +3246,10 @@ function BillingView({
     window.setTimeout(() => setPixCopied(false), 2200);
   };
 
+  const scrollToCardForm = () => {
+    document.getElementById("studiosbook-card-form")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
   return (
     <div className="grid gap-6">
       <section className="min-w-0 overflow-hidden rounded-2xl bg-zinc-950 text-white shadow-2xl sm:rounded-[2rem]">
@@ -3264,12 +3269,12 @@ function BillingView({
             <div className="mt-6 grid gap-3 sm:flex sm:flex-row">
               <Button
                 type="button"
-                onClick={onStartCheckout}
-                disabled={actionLoading === "billing-checkout"}
+                onClick={scrollToCardForm}
+                disabled={actionLoading === "billing-card"}
                 className="h-12 w-full rounded-full bg-rose-500 px-4 text-white hover:bg-rose-600 sm:w-auto sm:px-6"
               >
                 <CreditCard className="mr-2 h-4 w-4" />
-                {actionLoading === "billing-checkout" ? "Abrindo checkout..." : "Assinar com cartão"}
+                Preencher cartão
               </Button>
               <Button
                 type="button"
@@ -3321,15 +3326,11 @@ function BillingView({
                 </div>
               </div>
             ))}
-            <Button
-              type="button"
-              onClick={onStartCheckout}
-              disabled={actionLoading === "billing-checkout"}
-              className="h-12 w-full rounded-full bg-zinc-950 px-4 text-white hover:bg-zinc-800"
-            >
-              <CreditCard className="mr-2 h-4 w-4" />
-              {actionLoading === "billing-checkout" ? "Abrindo Mercado Pago..." : "Continuar com cartão"}
-            </Button>
+            <MercadoPagoCardForm
+              userEmail={user?.email || ""}
+              disabled={actionLoading === "billing-card"}
+              onAuthorize={onAuthorizeCard}
+            />
           </div>
         </Panel>
 
@@ -3419,17 +3420,6 @@ function BillingView({
         </div>
 
         <div className="mt-5 grid gap-3 sm:flex sm:flex-row">
-            {billingSubscription?.checkout_url && (
-              <a
-                href={billingSubscription.checkout_url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-zinc-950 px-4 text-sm font-black text-white transition hover:bg-zinc-800 sm:w-auto sm:px-5"
-              >
-                <ExternalLink className="h-4 w-4" />
-                Reabrir cartão
-              </a>
-            )}
             <a
               href={supportHref}
               target="_blank"

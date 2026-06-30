@@ -5,6 +5,8 @@ import {
   billingReferenceType,
   createWebhookSignature,
   isValidCpf,
+  isValidCardToken,
+  subscriptionChargeStart,
   trialFromAccountCreation,
   uidFromExternalReference,
   validateWebhookSignature,
@@ -80,4 +82,22 @@ test("classifies StudiosBook billing references", () => {
   assert.equal(billingReferenceType("studiosbook:subscription:user-2:checkout-1"), "subscription");
   assert.equal(billingReferenceType("studiosbook:user-3:legacy"), "");
   assert.equal(billingReferenceType("another-product:pix:user-4"), "");
+});
+
+test("validates Mercado Pago card tokens without accepting arbitrary input", () => {
+  assert.equal(isValidCardToken("e3ed6f098462036dd2cbabe314b9de2a"), true);
+  assert.equal(isValidCardToken("short"), false);
+  assert.equal(isValidCardToken("token with spaces and card data"), false);
+});
+
+test("schedules recurring charge at trial end or five minutes from now", () => {
+  const now = new Date("2026-06-29T20:00:00.000Z");
+  assert.equal(
+    subscriptionChargeStart("2026-07-02T20:00:00.000Z", now).toISOString(),
+    "2026-07-02T20:00:00.000Z"
+  );
+  assert.equal(
+    subscriptionChargeStart("2026-06-20T20:00:00.000Z", now).toISOString(),
+    "2026-06-29T20:05:00.000Z"
+  );
 });

@@ -3,6 +3,17 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 export const TRIAL_DAYS = 7;
 export const PIX_ACCESS_DAYS = 30;
 
+export function isValidCardToken(value) {
+  return /^[A-Za-z0-9_-]{16,256}$/.test(String(value || "").trim());
+}
+
+export function subscriptionChargeStart(trialEnd, now = new Date()) {
+  const current = new Date(now);
+  const minimumStart = new Date(current.getTime() + 5 * 60 * 1000);
+  const parsedTrialEnd = new Date(trialEnd || 0);
+  return Number.isFinite(parsedTrialEnd.getTime()) && parsedTrialEnd > minimumStart ? parsedTrialEnd : minimumStart;
+}
+
 export function addDays(value, days) {
   const date = value instanceof Date ? new Date(value) : new Date(value);
   date.setUTCDate(date.getUTCDate() + days);

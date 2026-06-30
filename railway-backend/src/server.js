@@ -15,8 +15,10 @@ import {
   billingAccess,
   billingReferenceType,
   isValidCpf,
+  isValidCardToken,
   localPaymentStatus,
   normalizeCpf,
+  subscriptionChargeStart,
   trialFromAccountCreation,
   uidFromExternalReference,
   validateWebhookSignature,
@@ -158,6 +160,13 @@ const adminRateLimit = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Limite administrativo temporariamente atingido." },
+});
+const billingPaymentRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Muitas tentativas de pagamento. Aguarde alguns minutos." },
 });
 app.use((req, res, next) => {
   if (req.path.startsWith("/functions/admin-")) return adminRateLimit(req, res, next);
@@ -648,6 +657,22 @@ async function syncSubscription(uid, preapprovalId) {
   return { ...(await applySubscription(uid, data)), mercado_pago_status: data.status || "" };
 }
 
+async function cancelPendingSubscription(preapprovalId) {
+  if (!preapprovalId) return;
+  const current = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`);
+  if (!current.response.ok || current.data?.status !== "pending") return;
+
+  const cancelled = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ status: "canceled" }),
+  });
+  if (!cancelled.response.ok) {
+    const error = new Error("Não foi possível encerrar a tentativa de assinatura anterior.");
+    error.status = 409;
+    throw error;
+  }
+}
+
 app.get("/", (_req, res) => {
   res.json({
     ok: true,
@@ -671,75 +696,102 @@ app.post("/functions/ensure-billing-account", requireFirebaseUser, async (req, r
   }
 });
 
-app.post("/functions/create-subscription-checkout", requireFirebaseUser, async (req, res) => {
-  if (!requireFirebaseAdminSdk(res)) return;
-  try {
-    const account = await ensureBillingAccount(req.user.uid, req.user.email);
-    const now = new Date();
-    const originalTrialEnd = new Date(account.subscription.trial_end_date);
-    const minimumStart = new Date(now.getTime() + 5 * 60 * 1000);
-    const chargeStart = originalTrialEnd > minimumStart ? originalTrialEnd : minimumStart;
-    const appOrigin = safeOrigin(req.body?.app_url || PUBLIC_APP_URL);
-    const externalReference = `studiosbook:subscription:${req.user.uid}:${Date.now()}`;
-    const mpPayload = {
-      payer_email: req.user.email,
-      reason: `${PRODUCT_NAME} - assinatura mensal`,
-      external_reference: externalReference,
-      back_url: `${appOrigin}/?checkout=studiosbook`,
-      status: "pending",
-      auto_recurring: {
-        frequency: 1,
-        frequency_type: "months",
-        start_date: chargeStart.toISOString(),
-        transaction_amount: MONTHLY_AMOUNT,
-        currency_id: "BRL",
-      },
-    };
+app.post("/functions/create-subscription-checkout", requireFirebaseUser, (_req, res) => {
+  return res.status(410).json({
+    error: "Este checkout foi substituído por uma autorização segura dentro do StudiosBook. Atualize o aplicativo.",
+  });
+});
 
-    const { response, data } = await mercadoPagoRequest("/preapproval", {
-      method: "POST",
-      body: JSON.stringify(mpPayload),
-    });
-    if (!response.ok) {
-      return res.status(502).json({
-        error: "Mercado Pago recusou a criação do checkout.",
-        mercado_pago_status: response.status,
+app.post(
+  "/functions/create-card-subscription",
+  billingPaymentRateLimit,
+  requireFirebaseUser,
+  async (req, res) => {
+    if (!requireFirebaseAdminSdk(res)) return;
+    try {
+      const cardTokenId = String(req.body?.card_token_id || "").trim();
+      if (!isValidCardToken(cardTokenId)) {
+        return res.status(400).json({
+          error: "Token do cartão inválido ou expirado. Confira os dados e tente novamente.",
+        });
+      }
+
+      const account = await ensureBillingAccount(req.user.uid, req.user.email);
+      if (["authorized", "active"].includes(account.subscription?.status)) {
+        return res.json({ success: true, already_active: true, ...account });
+      }
+
+      await cancelPendingSubscription(account.subscription?.mercado_pago_preapproval_id);
+      const now = new Date();
+      const chargeStart = subscriptionChargeStart(account.subscription?.trial_end_date, now);
+      const appOrigin = safeOrigin(req.body?.app_url || PUBLIC_APP_URL);
+      const externalReference = `studiosbook:subscription:${req.user.uid}:${Date.now()}`;
+      const mpPayload = {
+        card_token_id: cardTokenId,
+        payer_email: req.user.email,
+        reason: `${PRODUCT_NAME} - assinatura mensal`,
+        external_reference: externalReference,
+        back_url: `${appOrigin}/?checkout=studiosbook`,
+        status: "authorized",
+        auto_recurring: {
+          frequency: 1,
+          frequency_type: "months",
+          start_date: chargeStart.toISOString(),
+          transaction_amount: MONTHLY_AMOUNT,
+          currency_id: "BRL",
+        },
+      };
+
+      const { response, data } = await mercadoPagoRequest("/preapproval", {
+        method: "POST",
+        headers: { "X-Idempotency-Key": randomUUID() },
+        body: JSON.stringify(mpPayload),
+      });
+      if (!response.ok) {
+        const providerCode = String(
+          data?.cause?.[0]?.code || data?.message || "authorization_failed"
+        ).slice(0, 80);
+        return res.status(response.status >= 500 ? 502 : 422).json({
+          error: "O Mercado Pago não autorizou o cartão. Confira os dados ou use outro cartão.",
+          mercado_pago_status: response.status,
+          mercado_pago_code: providerCode,
+          request_id: req.requestId,
+        });
+      }
+
+      await applySubscription(req.user.uid, data);
+      const saved = await persistBillingState(
+        req.user.uid,
+        {
+          mercado_pago_preapproval_id: data.id || "",
+          mercado_pago_plan_id: data.preapproval_plan_id || "",
+          checkout_url: "",
+          authorization_mode: "card_token",
+          external_reference: externalReference,
+          payer_email: req.user.email,
+          payment_method_id: data.payment_method_id || "",
+          last_payment_status: data.status || "authorized",
+          last_sync_date: now.toISOString(),
+          notes: "Assinatura autorizada com token descartável do Mercado Pago.",
+        },
+        { email: req.user.email, forceAccess: req.user.platformAdmin === true }
+      );
+
+      return res.json({
+        success: true,
+        ...saved,
+        trial_days: TRIAL_DAYS,
+        trial_end_date: account.subscription.trial_end_date,
+      });
+    } catch (error) {
+      console.error("Card subscription error", { requestId: req.requestId, message: error?.message });
+      return res.status(error?.status || 500).json({
+        error: error?.status === 409 ? error.message : "Erro interno ao autorizar assinatura.",
         request_id: req.requestId,
       });
     }
-
-    const checkoutUrl = data.init_point || data.sandbox_init_point || "";
-    const saved = await persistBillingState(
-      req.user.uid,
-      {
-        mercado_pago_preapproval_id: data.id || "",
-        mercado_pago_plan_id: data.preapproval_plan_id || "",
-        checkout_url: checkoutUrl,
-        external_reference: externalReference,
-        payer_email: req.user.email,
-        payment_method_id: data.payment_method_id || "",
-        last_payment_status: data.status || "pending",
-        last_sync_date: now.toISOString(),
-        notes: "Checkout recorrente criado. O teste gratuito continua vinculado à data de cadastro.",
-      },
-      { email: req.user.email, forceAccess: req.user.platformAdmin === true }
-    );
-
-    return res.json({
-      success: true,
-      checkout_url: checkoutUrl,
-      ...saved,
-      trial_days: TRIAL_DAYS,
-      trial_end_date: account.subscription.trial_end_date,
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({
-      error: "Erro interno ao criar assinatura.",
-      request_id: req.requestId,
-    });
   }
-});
+);
 
 app.post("/functions/create-pix-payment", requireFirebaseUser, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
