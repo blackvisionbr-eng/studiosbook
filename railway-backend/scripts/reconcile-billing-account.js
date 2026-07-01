@@ -77,6 +77,18 @@ const response = await fetch(`${apiUrl}/functions/admin-update-subscription`, {
 const data = await response.json();
 if (!response.ok) throw new Error(data.error || `Reconciliação falhou com HTTP ${response.status}.`);
 
+const overviewResponse = await fetch(`${apiUrl}/functions/admin-overview`, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${signIn.idToken}`,
+    "Content-Type": "application/json",
+  },
+  body: "{}",
+});
+const overview = await overviewResponse.json();
+if (!overviewResponse.ok) throw new Error("Reconciliação concluída, mas o painel admin não pôde ser validado.");
+const adminAccount = (overview.users || []).find((account) => account.uid === targetUser.uid) || null;
+
 console.log(
   JSON.stringify({
     success: true,
@@ -89,5 +101,8 @@ console.log(
     payment_status: data.subscription?.last_payment_status || "",
     payment_detail: data.subscription?.last_payment_detail || "",
     current_period_end: data.subscription?.current_period_end || "",
+    admin_access_status: adminAccount?.access?.status || "",
+    admin_subscription_status: adminAccount?.subscription?.mercado_pago_subscription_status || "",
+    admin_payment_status: adminAccount?.subscription?.last_payment_status || "",
   })
 );

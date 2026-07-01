@@ -393,7 +393,6 @@ async function ensureBillingAccount(uid, email = "") {
       trial_start_date: trial.start.toISOString(),
       trial_end_date: trial.end.toISOString(),
       status: existing.status || (trial.active ? "trialing" : "expired"),
-      last_sync_date: new Date().toISOString(),
       notes: existing.notes || "Teste gratuito iniciado na data de criação da conta.",
     },
     { email: accountEmail, forceAccess: authUser.customClaims?.platform_admin === true }
@@ -416,6 +415,7 @@ async function mercadoPagoRequest(path, options = {}) {
 
   const response = await fetch(`${MP_API}${path}`, {
     ...options,
+    signal: options.signal || AbortSignal.timeout(12000),
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
@@ -818,7 +818,31 @@ app.get("/health", (_req, res) => {
 app.post("/functions/ensure-billing-account", requireFirebaseUser, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
-    const billing = await ensureBillingAccount(req.user.uid, req.user.email);
+    let billing = await ensureBillingAccount(req.user.uid, req.user.email);
+    const lastSyncAt = new Date(billing.subscription?.last_sync_date || 0).getTime();
+    const providerSyncStale =
+      !Number.isFinite(lastSyncAt) || Date.now() - lastSyncAt > 5 * 60 * 1000;
+    const shouldSearchProvider =
+      Boolean(billing.subscription?.mercado_pago_preapproval_id) ||
+      ["pending", "payment_failed", "expired"].includes(billing.subscription?.status);
+
+    if (providerSyncStale && shouldSearchProvider) {
+      try {
+        const reconciled = await reconcileSubscription(
+          req.user.uid,
+          billing.subscription?.mercado_pago_preapproval_id || ""
+        );
+        if (reconciled) {
+          billing = { ...reconciled, latest_payment: await latestBillingPayment(req.user.uid) };
+        }
+      } catch (syncError) {
+        console.warn("Automatic billing reconciliation unavailable", {
+          requestId: req.requestId,
+          uid: req.user.uid,
+          message: syncError?.message || "provider_sync_failed",
+        });
+      }
+    }
     res.json({ success: true, ...billing });
   } catch (error) {
     console.error(error);
