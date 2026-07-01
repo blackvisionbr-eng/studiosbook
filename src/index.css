@@ -32,8 +32,14 @@
   body,
   #root {
     width: 100%;
+    min-width: 0;
     max-width: 100%;
     overflow-x: hidden;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   * {
@@ -43,6 +49,53 @@
 
   body {
     @apply bg-background text-foreground antialiased;
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
     font-family: "DM Sans", Inter, Arial, sans-serif;
+  }
+
+  #root {
+    min-height: 100dvh;
+    isolation: isolate;
+  }
+
+  main,
+  header,
+  nav,
+  section,
+  article,
+  form,
+  fieldset,
+  div {
+    min-width: 0;
+  }
+
+  img,
+  svg,
+  video,
+  canvas,
+  iframe {
+    max-width: 100%;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  button,
+  a,
+  p,
+  h1,
+  h2,
+  h3,
+  h4,
+  label,
+  span {
+    overflow-wrap: anywhere;
   }
 }

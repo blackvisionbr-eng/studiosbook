@@ -194,9 +194,9 @@ export default function AdminApp() {
   if (!user || !authorized) return <AdminLogin onSubmit={handleLogin} loading={loading === "login"} error={error} />;
 
   return (
-    <div className="min-h-screen bg-[#f5f5f4] text-zinc-950">
-      <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-3 sm:px-6">
+    <div className="min-h-dvh bg-[#f5f5f4] text-zinc-950">
+      <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white sm:bg-white/95 sm:backdrop-blur">
+        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-2 px-3 py-3 sm:gap-3 sm:px-6">
           <Brand />
           <div className="flex min-w-0 items-center gap-2">
             <div className="hidden min-w-0 text-right sm:block">
@@ -208,7 +208,7 @@ export default function AdminApp() {
             </Button>
           </div>
         </div>
-        <nav className="mx-auto flex max-w-[1440px] gap-2 overflow-x-auto px-4 pb-3 sm:px-6">
+        <nav className="mx-auto flex max-w-[1440px] gap-2 overflow-x-auto overscroll-x-contain px-3 pb-3 sm:px-6">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
@@ -228,7 +228,7 @@ export default function AdminApp() {
         </nav>
       </header>
 
-      <main className="mx-auto grid max-w-[1440px] gap-4 px-4 py-5 sm:gap-6 sm:px-6 sm:py-7">
+      <main className="mx-auto grid max-w-[1440px] gap-4 px-3 py-4 sm:gap-6 sm:px-6 sm:py-7">
         {notice && <Alert tone="success">{notice}</Alert>}
         {error && <Alert tone="error">{error}</Alert>}
 
@@ -238,7 +238,7 @@ export default function AdminApp() {
             <h1 className="mt-2 text-2xl font-black tracking-normal sm:text-3xl">Painel administrativo</h1>
             <p className="mt-1 text-sm text-zinc-500">Acesso separado, auditado e protegido por cargo.</p>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:flex">
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
             <Button type="button" onClick={() => loadOverview()} disabled={loading === "overview"} variant="ghost" className="h-10 rounded-lg border bg-white">
               <RefreshCw className={`mr-2 h-4 w-4 ${loading === "overview" ? "animate-spin" : ""}`} />
               Atualizar
@@ -273,9 +273,9 @@ export default function AdminApp() {
 function AdminLogin({ onSubmit, loading, error }) {
   const [showPassword, setShowPassword] = useState(false);
   return (
-    <main className="grid min-h-screen bg-[#f5f5f4] lg:grid-cols-[0.9fr_1.1fr]">
-      <section className="flex items-center justify-center px-4 py-10 sm:px-8">
-        <form onSubmit={onSubmit} className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-5 shadow-xl sm:p-8">
+    <main className="grid min-h-dvh bg-[#f5f5f4] lg:grid-cols-[0.9fr_1.1fr]">
+      <section className="flex items-center justify-center px-3 py-6 sm:px-8 sm:py-10">
+        <form onSubmit={onSubmit} className="w-full min-w-0 max-w-md overflow-hidden rounded-lg border border-zinc-200 bg-white p-4 shadow-xl sm:p-8">
           <Brand />
           <div className="mt-8">
             <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-zinc-950 text-white">
@@ -367,7 +367,7 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess 
                 <Mini label="Atend." value={account.counts?.ServiceRecord || 0} />
                 <Mini label="Agenda" value={account.counts?.Appointment || 0} />
               </div>
-              <div className="grid grid-cols-2 gap-2 xl:grid-cols-1">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
                 <Button type="button" disabled={loading === `subscription-${account.uid}`} onClick={() => onSubscription(account)} className="h-10 rounded-lg bg-zinc-950 px-3 text-white"><RefreshCw className={`mr-2 h-4 w-4 ${loading === `subscription-${account.uid}` ? "animate-spin" : ""}`} />Sincronizar</Button>
                 <Button type="button" disabled={loading === `access-${account.uid}`} onClick={() => onAccess(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3">{account.disabled ? <UserCheck className="mr-2 h-4 w-4" /> : <UserX className="mr-2 h-4 w-4" />}{account.disabled ? "Liberar" : "Bloquear"}</Button>
               </div>
@@ -384,7 +384,7 @@ function Payments({ rows }) {
   return (
     <Panel title="Pagamentos recentes" subtitle="Conciliação dos eventos recebidos do Mercado Pago.">
       <div className="mt-5 grid gap-3">
-        {rows.map((payment) => <div key={`${payment.uid}-${payment.mercado_pago_payment_id}`} className="grid min-w-0 gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 sm:grid-cols-[1fr_auto] sm:items-center"><div className="min-w-0"><p className="break-words font-black">{payment.business_name || payment.user_email || "Conta StudiosBook"}</p><p className="mt-1 break-all text-xs text-zinc-500">ID {payment.mercado_pago_payment_id} · {dateTime(payment.date_last_updated)}</p></div><div className="flex items-center gap-2 sm:justify-end"><Status value={payment.status} /><strong>{money(payment.amount)}</strong></div></div>)}
+        {rows.map((payment) => <div key={`${payment.uid}-${payment.mercado_pago_payment_id}`} className="grid min-w-0 gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 sm:grid-cols-[1fr_auto] sm:items-center"><div className="min-w-0"><p className="break-words font-black">{payment.business_name || payment.user_email || "Conta StudiosBook"}</p><p className="mt-1 break-all text-xs text-zinc-500">ID {payment.mercado_pago_payment_id} · {dateTime(payment.date_last_updated)}</p></div><div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end"><Status value={payment.status} /><strong className="break-words">{money(payment.amount)}</strong></div></div>)}
         {!rows.length && <p className="rounded-lg bg-zinc-50 p-8 text-center text-sm text-zinc-500">Nenhum pagamento registrado.</p>}
       </div>
     </Panel>
@@ -396,7 +396,7 @@ function System({ data, diagnostics, loading, onDiagnostics }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Panel title="Saúde do sistema" subtitle="Detalhes disponíveis somente após autenticação administrativa.">
-        <div className="mt-5 grid gap-2">{checks.map(([label, ok]) => <div key={label} className="flex items-center justify-between gap-4 rounded-lg bg-zinc-50 px-4 py-3"><span className="text-sm font-bold">{label}</span><span className={`inline-flex items-center gap-2 text-xs font-black ${ok ? "text-emerald-700" : "text-amber-700"}`}>{ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}{ok ? "Operacional" : "Atenção"}</span></div>)}</div>
+        <div className="mt-5 grid gap-2">{checks.map(([label, ok]) => <div key={label} className="flex min-w-0 flex-col gap-2 rounded-lg bg-zinc-50 px-4 py-3 min-[360px]:flex-row min-[360px]:items-center min-[360px]:justify-between"><span className="break-words text-sm font-bold">{label}</span><span className={`inline-flex shrink-0 items-center gap-2 text-xs font-black ${ok ? "text-emerald-700" : "text-amber-700"}`}>{ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}{ok ? "Operacional" : "Atenção"}</span></div>)}</div>
       </Panel>
       <Panel title="Pagamentos e webhooks" subtitle="Teste autenticado da integração financeira.">
         <Button type="button" onClick={onDiagnostics} disabled={loading === "diagnostics"} className="mt-5 h-11 w-full rounded-lg bg-zinc-950 text-white"><Activity className="mr-2 h-4 w-4" />{loading === "diagnostics" ? "Executando..." : "Executar diagnóstico"}</Button>
@@ -406,12 +406,12 @@ function System({ data, diagnostics, loading, onDiagnostics }) {
   );
 }
 
-function Brand() { return <div className="flex items-center gap-3"><img src="/brand/studiosbook-mark.svg" alt="" className="h-9 w-9" /><div><p className="text-lg font-black leading-none">Studios<span className="font-medium text-[#a84d68]">Book</span></p><p className="mt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-400">Admin BlackVision</p></div></div>; }
-function Panel({ title, subtitle, children }) { return <section className="min-w-0 rounded-lg border border-zinc-200 bg-white p-4 sm:p-5"><h2 className="text-lg font-black">{title}</h2><p className="mt-1 text-sm text-zinc-500">{subtitle}</p>{children}</section>; }
+function Brand() { return <div className="flex min-w-0 items-center gap-2 sm:gap-3"><img src="/brand/studiosbook-mark.svg" alt="" className="h-9 w-9 shrink-0" /><div className="min-w-0"><p className="text-lg font-black leading-none">Studios<span className="font-medium text-[#a84d68]">Book</span></p><p className="mt-1 break-words text-[9px] font-bold uppercase tracking-[0.08em] text-zinc-400 sm:text-[10px] sm:tracking-[0.12em]">Admin BlackVision</p></div></div>; }
+function Panel({ title, subtitle, children }) { return <section className="min-w-0 overflow-hidden rounded-lg border border-zinc-200 bg-white p-4 sm:p-5"><h2 className="break-words text-lg font-black">{title}</h2><p className="mt-1 break-words text-sm text-zinc-500">{subtitle}</p>{children}</section>; }
 function Mini({ label, value }) { return <div className="min-w-0 rounded-lg bg-white p-3 text-center"><p className="break-words text-sm font-black">{value}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-400">{label}</p></div>; }
-function Alert({ tone, children }) { return <div className={`rounded-lg border px-4 py-3 text-sm font-bold ${tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{children}</div>; }
-function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", authorized: "Autorizado", trialing: "Em teste", paused: "Pausado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado" }[key] || "Não iniciado"; const good = ["active", "authorized", "approved", "trialing"].includes(key); return <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${good ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
+function Alert({ tone, children }) { return <div className={`min-w-0 break-words rounded-lg border px-4 py-3 text-sm font-bold ${tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{children}</div>; }
+function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", authorized: "Autorizado", trialing: "Em teste", paused: "Pausado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado" }[key] || "Não iniciado"; const good = ["active", "authorized", "approved", "trialing"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black leading-tight ${good ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
 function LoadingPanel() { return <div className="flex min-h-48 items-center justify-center rounded-lg border bg-white"><LoaderCircle className="h-6 w-6 animate-spin text-[#a84d68]" /></div>; }
-function AdminLoading() { return <div className="flex min-h-screen items-center justify-center bg-[#f5f5f4]"><div className="text-center"><img src="/brand/studiosbook-mark.svg" alt="" className="mx-auto h-12 w-12" /><LoaderCircle className="mx-auto mt-5 h-5 w-5 animate-spin text-[#a84d68]" /></div></div>; }
+function AdminLoading() { return <div className="flex min-h-dvh items-center justify-center bg-[#f5f5f4]"><div className="text-center"><img src="/brand/studiosbook-mark.svg" alt="" className="mx-auto h-12 w-12" /><LoaderCircle className="mx-auto mt-5 h-5 w-5 animate-spin text-[#a84d68]" /></div></div>; }
 function dateTime(value) { if (!value) return "-"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "-" : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date); }
 function money(value) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0)); }

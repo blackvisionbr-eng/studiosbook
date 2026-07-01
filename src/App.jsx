@@ -716,10 +716,10 @@ function maintenanceText(dateString) {
 
 function Field({ label, hint, children, className = "" }) {
   return (
-    <label className={`grid gap-1.5 text-sm font-semibold text-zinc-700 ${className}`}>
-      <span>{label}</span>
+    <label className={`grid min-w-0 max-w-full gap-1.5 text-sm font-semibold text-zinc-700 ${className}`}>
+      <span className="break-words">{label}</span>
       {children}
-      {hint && <span className="text-xs font-medium text-zinc-400">{hint}</span>}
+      {hint && <span className="break-words text-xs font-medium text-zinc-400">{hint}</span>}
     </label>
   );
 }
@@ -727,7 +727,7 @@ function Field({ label, hint, children, className = "" }) {
 function Select({ className = "", ...props }) {
   return (
     <select
-      className={`h-11 rounded-2xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-rose-300 focus:ring-4 focus:ring-rose-100 ${className}`}
+      className={`h-11 w-full min-w-0 max-w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-rose-300 focus:ring-4 focus:ring-rose-100 ${className}`}
       {...props}
     />
   );
@@ -736,7 +736,7 @@ function Select({ className = "", ...props }) {
 function TextArea({ className = "", ...props }) {
   return (
     <textarea
-      className={`min-h-24 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-rose-300 focus:ring-4 focus:ring-rose-100 ${className}`}
+      className={`min-h-24 w-full min-w-0 max-w-full resize-y rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-rose-300 focus:ring-4 focus:ring-rose-100 ${className}`}
       {...props}
     />
   );
@@ -755,7 +755,7 @@ function Badge({ children, tone = "slate" }) {
   };
 
   return (
-    <span className={`inline-flex max-w-full items-center rounded-full px-3 py-1 text-xs font-black ${tones[tone]}`}>
+    <span className={`inline-flex min-w-0 max-w-full items-center rounded-full px-3 py-1 text-center text-xs font-black leading-tight ${tones[tone]}`}>
       {children}
     </span>
   );
@@ -763,7 +763,7 @@ function Badge({ children, tone = "slate" }) {
 
 function Panel({ children, className = "" }) {
   return (
-    <section className={`min-w-0 max-w-full rounded-[1.75rem] border border-white/70 bg-white/88 p-4 shadow-[0_24px_80px_rgba(24,24,27,0.08)] backdrop-blur sm:p-5 ${className}`}>
+    <section className={`min-w-0 max-w-full overflow-hidden rounded-[1.25rem] border border-white/70 bg-white p-4 shadow-[0_18px_50px_rgba(24,24,27,0.07)] sm:rounded-[1.75rem] sm:bg-white/88 sm:p-5 sm:backdrop-blur ${className}`}>
       {children}
     </section>
   );
@@ -779,13 +779,13 @@ function StatCard({ label, value, helper, icon: Icon, tone = "rose" }) {
   };
 
   return (
-    <div className={`rounded-[1.5rem] border border-white bg-gradient-to-br p-5 shadow-sm ${colors[tone]}`}>
+    <div className={`min-w-0 rounded-[1.25rem] border border-white bg-gradient-to-br p-4 shadow-sm sm:rounded-[1.5rem] sm:p-5 ${colors[tone]}`}>
       <div className="flex items-start justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <p className={`text-sm font-bold ${tone === "dark" ? "text-white/70" : "text-zinc-500"}`}>
             {label}
           </p>
-          <p className="mt-2 text-3xl font-black tracking-tight">{value}</p>
+          <p className="mt-2 break-words text-2xl font-black tracking-tight sm:text-3xl">{value}</p>
           {helper && (
             <p className={`mt-1 text-xs font-medium ${tone === "dark" ? "text-white/60" : "text-zinc-500"}`}>
               {helper}
@@ -813,7 +813,7 @@ function BrandLockup({ size = "compact", tone = "dark", heading = false, subtitl
   const sizes = {
     compact: { mark: "h-9 w-9", text: "text-xl", gap: "gap-2.5" },
     header: { mark: "h-10 w-10", text: "text-xl sm:text-2xl", gap: "gap-3" },
-    hero: { mark: "h-16 w-16 sm:h-20 sm:w-20", text: "text-4xl sm:text-6xl", gap: "gap-4 sm:gap-5" },
+    hero: { mark: "h-12 w-12 sm:h-20 sm:w-20", text: "text-3xl sm:text-6xl", gap: "gap-3 sm:gap-5" },
   };
   const current = sizes[size] || sizes.compact;
   const TextTag = heading ? "h1" : "span";
@@ -822,7 +822,7 @@ function BrandLockup({ size = "compact", tone = "dark", heading = false, subtitl
   return (
     <div className={`inline-flex min-w-0 items-center ${current.gap}`} aria-label={PRODUCT_NAME}>
       <img src={markSrc} alt="" className={`${current.mark} shrink-0`} />
-      <div className="min-w-0">
+      <div className="min-w-0 max-w-full">
         <TextTag className={`${current.text} block whitespace-nowrap font-bold leading-none tracking-normal ${tone === "light" ? "text-[#fff9fa]" : "text-[#171417]"}`}>
           Studios<span className={`font-medium ${tone === "light" ? "text-[#f2b7c7]" : "text-[#a84d68]"}`}>Book</span>
         </TextTag>
@@ -1702,7 +1702,7 @@ export default function App() {
 
   if (!isLoading && !profile) {
     return (
-      <div className="min-h-screen bg-[#f6f1ef] text-zinc-950">
+      <div className="min-h-dvh bg-[#f6f1ef] text-zinc-950">
         <OnboardingScreen
           user={user}
           profileForm={profileForm}
@@ -1722,8 +1722,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f6f1ef] text-zinc-950">
-      <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,rgba(244,114,182,0.16),transparent_30%),radial-gradient(circle_at_80%_10%,rgba(168,85,247,0.12),transparent_24%),linear-gradient(180deg,#fffafa,#f6f1ef)]" />
+    <div className="min-h-dvh bg-[#f6f1ef] text-zinc-950">
       <AppHeader
         user={user}
         profile={profile}
@@ -1733,7 +1732,7 @@ export default function App() {
         billingLocked={billingLocked}
       />
 
-      <main className="mx-auto max-w-7xl px-4 pb-28 pt-5 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-7xl px-3 pb-28 pt-4 sm:px-6 sm:pt-5 lg:px-8">
         {feedback && (
           <div
             className={`mb-5 rounded-2xl border px-4 py-3 text-sm font-bold shadow-sm ${
@@ -1896,8 +1895,8 @@ function InstallAppPrompt({ show, canInstall, isIosInstall, onInstall, onDismiss
   if (!show) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-4 z-50 px-4">
-      <div className="mx-auto max-w-md rounded-[1.5rem] border border-white/80 bg-zinc-950 p-4 text-white shadow-2xl">
+    <div className="fixed inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50 px-3 sm:px-4">
+      <div className="mx-auto max-h-[calc(100dvh-1.5rem)] max-w-md overflow-y-auto rounded-[1.25rem] border border-white/80 bg-zinc-950 p-3 text-white shadow-2xl sm:rounded-[1.5rem] sm:p-4">
         <div className="flex items-start gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#402239]">
             <img src="/brand/studiosbook-mark-reversed.svg" alt="" className="h-7 w-7" />
@@ -1967,14 +1966,14 @@ function OnboardingScreen({
   feedbackType,
 }) {
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-8 rounded-[2rem] bg-zinc-950 p-6 text-white shadow-2xl sm:p-8">
+    <main className="mx-auto max-w-6xl px-3 py-5 sm:px-6 sm:py-8 lg:px-8">
+      <div className="mb-6 overflow-hidden rounded-2xl bg-zinc-950 p-5 text-white shadow-2xl sm:mb-8 sm:rounded-[2rem] sm:p-8">
         <BrandLockup size="compact" tone="light" subtitle="Gestão para profissionais da beleza" />
-        <p className="mt-6 flex w-fit items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.2em] text-rose-100">
-          <Sparkles className="h-4 w-4" />
+        <p className="mt-6 inline-flex max-w-full items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-rose-100 sm:px-4 sm:text-xs sm:tracking-[0.2em]">
+          <Sparkles className="h-4 w-4 shrink-0" />
           Primeiro acesso
         </p>
-        <h1 className="mt-5 max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl">
+        <h1 className="mt-5 max-w-3xl break-words text-3xl font-black leading-tight tracking-normal sm:text-5xl">
           Configure o {PRODUCT_NAME} para o seu tipo de atendimento.
         </h1>
         <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
@@ -2209,12 +2208,12 @@ function ServiceCatalogEditor({ services, categories, onUpdate, onRemove }) {
 
 function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
   return (
-    <div className="min-h-screen bg-[#f6f1ef] px-5 py-10 text-zinc-950">
-      <div className="mx-auto grid min-h-[calc(100vh-5rem)] max-w-6xl items-center gap-10 lg:grid-cols-[0.9fr_1.1fr]">
+    <div className="min-h-dvh bg-[#f6f1ef] px-4 py-6 text-zinc-950 sm:px-5 sm:py-10">
+      <div className="mx-auto grid min-h-[calc(100dvh-3rem)] max-w-6xl items-center gap-7 sm:min-h-[calc(100dvh-5rem)] sm:gap-10 lg:grid-cols-[0.9fr_1.1fr]">
         <div>
           <BrandLockup size="hero" heading subtitle="Seu talento em foco. Seu studio sob controle." />
-          <div className="mt-7 flex w-fit items-center gap-2 rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-black text-rose-800 shadow-sm">
-            <Lock className="h-4 w-4" />
+          <div className="mt-6 inline-flex max-w-full items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-2 text-sm font-black text-rose-800 shadow-sm sm:mt-7 sm:px-4">
+            <Lock className="h-4 w-4 shrink-0" />
             Agenda privada
           </div>
           <p className="mt-5 max-w-xl text-lg leading-8 text-zinc-600">
@@ -2234,12 +2233,12 @@ function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
           <Button
             onClick={onLogin}
             disabled={actionLoading === "login"}
-            className="mt-8 h-12 rounded-full bg-[#402239] px-7 text-white hover:bg-[#553047]"
+            className="mt-8 h-12 w-full rounded-full bg-[#402239] px-5 text-white hover:bg-[#553047] sm:w-auto sm:px-7"
           >
             {actionLoading === "login" ? "Abrindo login..." : "Entrar com Google"}
           </Button>
         </div>
-        <div className="rounded-[2rem] border border-white bg-white/86 p-6 shadow-2xl backdrop-blur">
+        <div className="overflow-hidden rounded-2xl border border-white bg-white p-4 shadow-2xl sm:rounded-[2rem] sm:bg-white/86 sm:p-6 sm:backdrop-blur">
           <div className="grid gap-4 sm:grid-cols-2">
             {[
               ["Agenda fechada", "A profissional decide quando atende."],
@@ -2265,20 +2264,20 @@ function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, billingLo
     : tabs;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-white/70 bg-white/80 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+    <header className="sticky top-0 z-40 border-b border-white/70 bg-white/95 sm:bg-white/80 sm:backdrop-blur-xl">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-3 py-3 sm:gap-4 sm:px-6 sm:py-4 lg:px-8">
         <BrandLockup size="header" subtitle="Central de operação" />
         <div className="flex items-center gap-3">
           <div className="hidden text-right sm:block">
             <p className="text-sm font-bold text-zinc-800">{profile?.business_name || PRODUCT_NAME}</p>
             <p className="text-xs text-zinc-500">{user.email}</p>
           </div>
-          <Button variant="ghost" size="icon" onClick={onLogout} className="rounded-full" title="Sair">
+          <Button variant="ghost" size="icon" onClick={onLogout} className="shrink-0 rounded-full" title="Sair">
             <LogOut className="h-4 w-4" />
           </Button>
         </div>
       </div>
-      <nav className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 pb-4 sm:px-6 lg:px-8">
+      <nav className="mx-auto flex max-w-7xl gap-2 overflow-x-auto overscroll-x-contain px-3 pb-3 sm:px-6 sm:pb-4 lg:px-8">
         {accountTabs.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
@@ -2329,15 +2328,14 @@ function DashboardView({
 
   return (
     <div className="grid gap-6">
-      <section className="overflow-hidden rounded-[2rem] bg-zinc-950 text-white shadow-2xl">
-        <div className="relative grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="absolute right-8 top-8 h-32 w-32 rounded-full bg-rose-400/20 blur-3xl" />
-          <div>
-            <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.2em] text-rose-100">
-              <WandSparkles className="h-4 w-4" />
+      <section className="min-w-0 overflow-hidden rounded-2xl bg-zinc-950 text-white shadow-2xl sm:rounded-[2rem]">
+        <div className="relative grid min-w-0 gap-6 p-5 sm:gap-8 sm:p-8 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="min-w-0">
+            <p className="inline-flex max-w-full items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-rose-100 sm:px-4 sm:text-xs sm:tracking-[0.2em]">
+              <WandSparkles className="h-4 w-4 shrink-0" />
               Hoje na sua operação
             </p>
-            <h2 className="mt-5 text-4xl font-black leading-tight tracking-tight sm:text-5xl">
+            <h2 className="mt-5 break-words text-3xl font-black leading-tight tracking-normal sm:text-5xl">
               Boa operação, {firstName}.
             </h2>
             <p className="mt-4 max-w-2xl text-base leading-7 text-white/70">{heroMessage}</p>
@@ -2348,9 +2346,9 @@ function DashboardView({
               <QuickAction label="Retornos" icon={MessageCircle} onClick={() => setActiveTab("returns")} />
             </div>
           </div>
-          <div className="rounded-[1.75rem] border border-white/10 bg-white/8 p-5 backdrop-blur">
+          <div className="min-w-0 rounded-[1.25rem] border border-white/10 bg-white/10 p-4 sm:rounded-[1.75rem] sm:bg-white/8 sm:p-5 sm:backdrop-blur">
             <p className="text-sm font-bold text-white/60">Resumo do mês</p>
-            <p className="mt-3 text-4xl font-black">{money(metrics.monthRevenue)}</p>
+            <p className="mt-3 break-words text-3xl font-black sm:text-4xl">{money(metrics.monthRevenue)}</p>
             <div className="mt-5 grid grid-cols-2 gap-3">
               <MiniMetric label="Atendimentos" value={reports.attendances} />
               <MiniMetric label="Ticket médio" value={money(reports.avgTicket)} />
@@ -3190,17 +3188,17 @@ function BillingAccessScreen({
   feedbackType,
 }) {
   return (
-    <div className="min-h-screen bg-[#f6f1ef] text-zinc-950">
-      <header className="border-b border-white/70 bg-white/85 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+    <div className="min-h-dvh bg-[#f6f1ef] text-zinc-950">
+      <header className="border-b border-white/70 bg-white sm:bg-white/85 sm:backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-3 sm:gap-4 sm:px-6 sm:py-4">
           <BrandLockup size="header" subtitle="Regularização de acesso" />
-          <Button variant="ghost" onClick={onLogout} className="rounded-full">
-            <LogOut className="mr-2 h-4 w-4" />
-            Sair
+          <Button variant="ghost" onClick={onLogout} className="h-10 shrink-0 rounded-full px-3 sm:px-4" title="Sair">
+            <LogOut className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Sair</span>
           </Button>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+      <main className="mx-auto max-w-6xl px-3 py-5 sm:px-6 sm:py-6">
         {feedback && (
           <div className={`mb-5 rounded-2xl border px-4 py-3 text-sm font-bold ${feedbackType === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
             {feedback}
@@ -3261,10 +3259,9 @@ function BillingView({
     <div className="grid gap-6">
       <section className="min-w-0 overflow-hidden rounded-2xl bg-zinc-950 text-white shadow-2xl sm:rounded-[2rem]">
         <div className="relative grid min-w-0 gap-6 p-5 sm:gap-8 sm:p-8 lg:grid-cols-[1.05fr_0.95fr]">
-          <div className="absolute right-8 top-8 h-28 w-28 rounded-full bg-rose-400/20 blur-3xl" />
-          <div>
+          <div className="min-w-0">
             <p className="inline-flex max-w-full items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-rose-100 sm:px-4 sm:text-xs sm:tracking-[0.2em]">
-              <CreditCard className="h-4 w-4" />
+              <CreditCard className="h-4 w-4 shrink-0" />
               Assinatura StudiosBook
             </p>
             <h2 className="mt-5 max-w-3xl break-words text-3xl font-black leading-tight tracking-normal sm:text-5xl">
@@ -3298,7 +3295,7 @@ function BillingView({
             </div>
           </div>
 
-          <div className="min-w-0 rounded-2xl border border-white/10 bg-white/8 p-4 backdrop-blur sm:rounded-[1.75rem] sm:p-5">
+          <div className="min-w-0 rounded-2xl border border-white/10 bg-white/10 p-4 sm:rounded-[1.75rem] sm:bg-white/8 sm:p-5 sm:backdrop-blur">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-white/55">Status da conta</p>
@@ -3472,21 +3469,20 @@ function PrivacyPolicyView() {
 
   return (
     <div className="grid gap-6">
-      <section className="overflow-hidden rounded-[2rem] bg-zinc-950 text-white shadow-2xl">
-        <div className="relative p-6 sm:p-8">
-          <div className="absolute right-8 top-8 h-28 w-28 rounded-full bg-rose-400/20 blur-3xl" />
-          <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.2em] text-rose-100">
-            <FileText className="h-4 w-4" />
+      <section className="min-w-0 overflow-hidden rounded-2xl bg-zinc-950 text-white shadow-2xl sm:rounded-[2rem]">
+        <div className="relative min-w-0 p-5 sm:p-8">
+          <p className="inline-flex max-w-full items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-rose-100 sm:px-4 sm:text-xs sm:tracking-[0.2em]">
+            <FileText className="h-4 w-4 shrink-0" />
             Política de Privacidade
           </p>
-          <h2 className="mt-5 max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl">
+          <h2 className="mt-5 max-w-3xl break-words text-3xl font-black leading-tight tracking-normal sm:text-5xl">
             Transparência sobre dados e LGPD.
           </h2>
           <p className="mt-4 max-w-3xl text-sm leading-7 text-white/70 sm:text-base">
             Esta política descreve como o {PRODUCT_NAME}, produto da {PRODUCT_COMPANY}, coleta, utiliza,
             armazena e protege dados dentro do sistema de gestão para profissionais da beleza.
           </p>
-          <p className="mt-4 text-xs font-bold uppercase tracking-[0.18em] text-white/45">
+          <p className="mt-4 break-words text-[11px] font-bold uppercase tracking-[0.1em] text-white/45 sm:text-xs sm:tracking-[0.18em]">
             Última atualização: 12/06/2026
           </p>
         </div>
@@ -3631,14 +3627,13 @@ function SecurityView({
 
   return (
     <div className="grid gap-6">
-      <section className="overflow-hidden rounded-[2rem] bg-zinc-950 text-white shadow-2xl">
-        <div className="relative p-6 sm:p-8">
-          <div className="absolute right-8 top-8 h-28 w-28 rounded-full bg-rose-400/20 blur-3xl" />
-          <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.2em] text-rose-100">
-            <Lock className="h-4 w-4" />
+      <section className="min-w-0 overflow-hidden rounded-2xl bg-zinc-950 text-white shadow-2xl sm:rounded-[2rem]">
+        <div className="relative min-w-0 p-5 sm:p-8">
+          <p className="inline-flex max-w-full items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-rose-100 sm:px-4 sm:text-xs sm:tracking-[0.2em]">
+            <Lock className="h-4 w-4 shrink-0" />
             Modo segurança
           </p>
-          <h2 className="mt-5 max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl">
+          <h2 className="mt-5 max-w-3xl break-words text-3xl font-black leading-tight tracking-normal sm:text-5xl">
             Seus dados ficam salvos na nuvem.
           </h2>
           <p className="mt-4 max-w-3xl text-sm leading-7 text-white/70 sm:text-base">
@@ -3890,15 +3885,15 @@ function ReturnOpportunity({ item, onSendReminder, expanded = false }) {
   const tone = maintenanceTone(dueDate);
 
   return (
-    <div className="flex flex-col justify-between gap-4 rounded-[1.5rem] border border-zinc-100 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg sm:flex-row sm:items-center">
-      <div>
+    <div className="flex min-w-0 flex-col justify-between gap-4 rounded-[1.25rem] border border-zinc-100 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg sm:rounded-[1.5rem] sm:flex-row sm:items-center">
+      <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <p className="font-black">{client.full_name}</p>
           {client.vip && <Badge tone="gold">VIP</Badge>}
           <Badge tone={tone}>{maintenanceText(dueDate)}</Badge>
           {contacted && <Badge tone="violet">Já chamada</Badge>}
         </div>
-        <p className="mt-1 text-sm text-zinc-500">
+        <p className="mt-1 break-words text-sm text-zinc-500">
           Retorno: {formatDate(dueDate)} {record?.service_name || record?.effect ? `| ${record.service_name || record.effect}` : ""}
         </p>
         {expanded && (
@@ -3907,7 +3902,7 @@ function ReturnOpportunity({ item, onSendReminder, expanded = false }) {
           </p>
         )}
       </div>
-      <Button onClick={() => onSendReminder(client, record)} className="h-11 rounded-full bg-emerald-500 px-5 text-white hover:bg-emerald-600">
+      <Button onClick={() => onSendReminder(client, record)} className="h-11 w-full rounded-full bg-emerald-500 px-5 text-white hover:bg-emerald-600 sm:w-auto sm:shrink-0">
         <MessageCircle className="mr-2 h-4 w-4" />
         Chamar cliente
       </Button>
@@ -3947,21 +3942,21 @@ function ClientListCard({ client, selected, onClick }) {
 
 function AppointmentTimeline({ appointment }) {
   return (
-    <div className="flex items-start gap-4">
-      <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded-2xl bg-zinc-950 text-sm font-black text-white">
+    <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+      <div className="flex h-11 w-14 shrink-0 items-center justify-center rounded-xl bg-zinc-950 text-xs font-black text-white sm:h-12 sm:w-16 sm:rounded-2xl sm:text-sm">
         {appointment.appointment_time}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <p className="font-black">{appointment.client_name || "Sem cliente"}</p>
+          <p className="break-words font-black">{appointment.client_name || "Sem cliente"}</p>
           <Badge tone={appointment.status === "blocked" ? "dark" : appointment.status === "completed" ? "green" : "rose"}>
             {statusLabel(appointment.status)}
           </Badge>
         </div>
-        <p className="mt-1 text-sm text-zinc-500">
+        <p className="mt-1 break-words text-sm text-zinc-500">
           {formatDate(appointment.appointment_date)} | {appointment.service_name || "-"}
         </p>
-        {appointment.private_note && <p className="mt-1 text-xs text-zinc-500">{appointment.private_note}</p>}
+        {appointment.private_note && <p className="mt-1 break-words text-xs text-zinc-500">{appointment.private_note}</p>}
       </div>
     </div>
   );
@@ -4033,9 +4028,9 @@ function PanelHeader({ title, subtitle, action }) {
     <div className="flex min-w-0 flex-col justify-between gap-3 sm:flex-row sm:items-start">
       <div className="min-w-0">
         <h2 className="break-words text-xl font-black tracking-tight text-zinc-950">{title}</h2>
-        {subtitle && <p className="mt-1 text-sm leading-6 text-zinc-500">{subtitle}</p>}
+        {subtitle && <p className="mt-1 break-words text-sm leading-6 text-zinc-500">{subtitle}</p>}
       </div>
-      {action}
+      {action && <div className="w-full min-w-0 [&>*]:w-full sm:w-auto sm:shrink-0 sm:[&>*]:w-auto">{action}</div>}
     </div>
   );
 }
@@ -4044,9 +4039,9 @@ function QuickAction({ label, icon: Icon, onClick }) {
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-black text-zinc-950 transition hover:scale-[1.02] hover:bg-rose-50"
+      className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-full bg-white px-4 py-2 text-center text-sm font-black leading-tight text-zinc-950 transition hover:scale-[1.02] hover:bg-rose-50"
     >
-      <Icon className="h-4 w-4 text-rose-700" />
+      <Icon className="h-4 w-4 shrink-0 text-rose-700" />
       {label}
     </button>
   );
@@ -4054,9 +4049,9 @@ function QuickAction({ label, icon: Icon, onClick }) {
 
 function MiniMetric({ label, value }) {
   return (
-    <div className="rounded-2xl bg-white/10 p-4">
-      <p className="text-xs font-bold text-white/50">{label}</p>
-      <p className="mt-1 text-lg font-black">{value}</p>
+    <div className="min-w-0 rounded-2xl bg-white/10 p-3 sm:p-4">
+      <p className="break-words text-xs font-bold text-white/50">{label}</p>
+      <p className="mt-1 break-all text-base font-black sm:text-lg">{value}</p>
     </div>
   );
 }
@@ -4065,7 +4060,7 @@ function PerformanceCard({ title, value, text }) {
   return (
     <div className="rounded-[1.5rem] bg-zinc-50 p-5">
       <p className="text-sm font-bold text-zinc-500">{title}</p>
-      <p className="mt-2 text-3xl font-black">{value}</p>
+      <p className="mt-2 break-words text-2xl font-black sm:text-3xl">{value}</p>
       <p className="mt-2 text-sm leading-6 text-zinc-500">{text}</p>
     </div>
   );
@@ -4127,12 +4122,12 @@ function PhotoPlaceholder({ label }) {
 
 function FormStep({ number, title, children }) {
   return (
-    <section className="rounded-[1.5rem] border border-zinc-100 bg-white p-5">
-      <div className="mb-4 flex items-center gap-3">
-        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-950 text-xs font-black text-white">
+    <section className="min-w-0 overflow-hidden rounded-[1.25rem] border border-zinc-100 bg-white p-4 sm:rounded-[1.5rem] sm:p-5">
+      <div className="mb-4 flex min-w-0 items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-950 text-xs font-black text-white">
           {number}
         </span>
-        <h3 className="font-black">{title}</h3>
+        <h3 className="min-w-0 break-words font-black">{title}</h3>
       </div>
       {children}
     </section>
@@ -4141,14 +4136,14 @@ function FormStep({ number, title, children }) {
 
 function RankRow({ index, label, value }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-[1.25rem] bg-zinc-50 p-4">
-      <div className="flex items-center gap-3">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-xs font-black text-zinc-500">
+    <div className="flex min-w-0 flex-col gap-3 rounded-[1.25rem] bg-zinc-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-xs font-black text-zinc-500">
           {index}
         </span>
-        <p className="font-black">{label}</p>
+        <p className="min-w-0 break-words font-black">{label}</p>
       </div>
-      <p className="text-sm font-bold text-zinc-500">{value}</p>
+      <p className="break-words text-sm font-bold text-zinc-500 sm:text-right">{value}</p>
     </div>
   );
 }
@@ -4163,7 +4158,7 @@ function InfoLine({ label, value }) {
 
 function LoadingScreen() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#f6f1ef]">
+    <div className="flex min-h-dvh items-center justify-center bg-[#f6f1ef]">
       <div className="grid justify-items-center gap-5">
         <img src="/brand/studiosbook-mark.svg" alt="StudiosBook" className="h-16 w-16 animate-pulse" />
         <div className="h-1 w-20 overflow-hidden rounded-full bg-[#eadde3]">

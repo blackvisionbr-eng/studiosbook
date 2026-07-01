@@ -120,7 +120,7 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
         <div id="studiosbook-card-number" role="group" aria-labelledby="studiosbook-card-number-label" className={secureFieldClass} />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="grid min-w-0 gap-2">
           <p id="studiosbook-card-expiration-label" className="text-sm font-black text-zinc-700">
             Validade
@@ -140,7 +140,7 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
         <Input id="studiosbook-cardholder-name" autoComplete="cc-name" className="h-12 rounded-2xl bg-zinc-50" />
       </label>
 
-      <div className="grid grid-cols-[0.8fr_1.2fr] gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[0.8fr_1.2fr]">
         <label className="grid min-w-0 gap-2 text-sm font-black text-zinc-700">
           Documento
           <select id="studiosbook-identification-type" className="h-12 min-w-0 rounded-2xl border border-zinc-200 bg-zinc-50 px-3" />
@@ -172,9 +172,9 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
 
       {formError && <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">{formError}</p>}
 
-      <div className="flex items-start gap-3 rounded-2xl bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
+      <div className="flex min-w-0 items-start gap-3 rounded-2xl bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
         <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
-        <p>Os dados sensíveis são tokenizados pelo Mercado Pago e não são armazenados pelo StudiosBook.</p>
+        <p className="min-w-0 break-words">Os dados sensíveis são tokenizados pelo Mercado Pago e não são armazenados pelo StudiosBook.</p>
       </div>
 
       <Button
