@@ -17,9 +17,9 @@ import {
   isValidCpf,
   isValidCardToken,
   isValidPayerEmail,
-  latestSubscriptionInvoice,
   localPaymentStatus,
   normalizeCpf,
+  selectBestSubscription,
   subscriptionChargeStart,
   subscriptionRecoveryMode,
   trialFromAccountCreation,
@@ -589,16 +589,32 @@ async function applySubscriptionPayment(uid, payment) {
   if (!paymentId) throw new Error("Pagamento Mercado Pago sem identificador.");
 
   await paymentCollection(uid).doc(paymentId).set(record, { merge: true });
+  const patch = {
+    subscription_payment_id: paymentId,
+    payment_method_id: record.payment_method || account.subscription?.payment_method_id || "",
+    last_payment_status: record.status,
+    last_payment_detail: record.status_detail,
+    last_payment_date: record.date_approved || record.date_last_updated,
+    last_sync_date: new Date().toISOString(),
+    notes: `Pagamento recorrente ${record.status} sincronizado pelo Mercado Pago.`,
+  };
+
+  if (record.status === "approved") {
+    const approvedAt = new Date(record.date_approved || record.date_last_updated || new Date());
+    const configuredNextPayment = new Date(account.subscription?.next_payment_date || 0);
+    const periodEnd =
+      Number.isFinite(configuredNextPayment.getTime()) && configuredNextPayment > approvedAt
+        ? configuredNextPayment
+        : addDays(approvedAt, PIX_ACCESS_DAYS);
+    patch.current_period_start = approvedAt.toISOString();
+    patch.current_period_end = periodEnd.toISOString();
+    patch.last_approved_payment_id = paymentId;
+    patch.last_approved_payment_date = approvedAt.toISOString();
+  }
+
   const billing = await persistBillingState(
     uid,
-    {
-      subscription_payment_id: paymentId,
-      payment_method_id: record.payment_method || account.subscription?.payment_method_id || "",
-      last_payment_status: record.status,
-      last_payment_date: record.date_approved || record.date_last_updated,
-      last_sync_date: new Date().toISOString(),
-      notes: `Pagamento recorrente ${record.status} sincronizado pelo Mercado Pago.`,
-    },
+    patch,
     {
       email: account.subscription?.user_email || payment?.payer?.email || "",
       forceAccess: await isPlatformAdminUid(uid),
@@ -617,9 +633,11 @@ async function applySubscription(uid, subscription) {
   return persistBillingState(
     uid,
     {
-      status: mercadoPagoStatusToLocal(subscription?.status),
+      mercado_pago_subscription_status: mercadoPagoStatusToLocal(subscription?.status),
       current_period_start: subscription?.auto_recurring?.start_date || "",
-      current_period_end: subscription?.auto_recurring?.end_date || "",
+      ...(subscription?.auto_recurring?.end_date
+        ? { current_period_end: subscription.auto_recurring.end_date }
+        : {}),
       next_payment_date: subscription?.next_payment_date || "",
       mercado_pago_preapproval_id: subscription?.id || "",
       mercado_pago_plan_id: subscription?.preapproval_plan_id || "",
@@ -627,7 +645,6 @@ async function applySubscription(uid, subscription) {
       external_reference: subscription?.external_reference || "",
       payer_email: subscription?.payer_email || account.subscription?.user_email || "",
       payment_method_id: subscription?.payment_method_id || "",
-      last_payment_status: subscription?.status || "",
       last_sync_date: new Date().toISOString(),
       notes: "Assinatura recorrente sincronizada com o Mercado Pago.",
     },
@@ -671,26 +688,66 @@ async function syncLatestSubscriptionPayment(uid, preapprovalId) {
     throw error;
   }
 
-  const invoice = latestSubscriptionInvoice(invoiceResult.data?.results || []);
-  const paymentId = invoice?.payment?.id;
-  if (!paymentId) return null;
+  const invoices = [...(invoiceResult.data?.results || [])]
+    .sort((left, right) => {
+      const leftDate = new Date(left?.last_modified || left?.date_created || 0).getTime();
+      const rightDate = new Date(right?.last_modified || right?.date_created || 0).getTime();
+      return leftDate - rightDate;
+    })
+    .slice(-24);
+  const paymentIds = [...new Set(invoices.map((invoice) => invoice?.payment?.id).filter(Boolean))];
+  let latestResult = null;
 
-  const paymentResult = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(paymentId)}`);
-  if (!paymentResult.response.ok) {
-    const error = new Error("Não foi possível consultar o pagamento recorrente no Mercado Pago.");
-    error.status = paymentResult.response.status;
-    error.providerResponse = paymentResult.data;
-    throw error;
+  for (const paymentId of paymentIds) {
+    const paymentResult = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(paymentId)}`);
+    if (!paymentResult.response.ok) {
+      const error = new Error("Não foi possível consultar o pagamento recorrente no Mercado Pago.");
+      error.status = paymentResult.response.status;
+      error.providerResponse = paymentResult.data;
+      throw error;
+    }
+    latestResult = await applySubscriptionPayment(uid, paymentResult.data);
   }
 
-  return applySubscriptionPayment(uid, paymentResult.data);
+  return latestResult;
+}
+
+async function findBestMercadoPagoSubscription(uid, preferredId = "") {
+  const search = await mercadoPagoRequest("/preapproval/search?limit=100&offset=0");
+  const candidates = (search.response.ok && Array.isArray(search.data?.results)
+    ? search.data.results
+    : []
+  ).filter((subscription) => uidFromExternalReference(subscription?.external_reference) === uid);
+
+  if (preferredId && !candidates.some((subscription) => subscription.id === preferredId)) {
+    const preferred = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preferredId)}`);
+    if (
+      preferred.response.ok &&
+      uidFromExternalReference(preferred.data?.external_reference) === uid
+    ) {
+      candidates.push(preferred.data);
+    }
+  }
+
+  return selectBestSubscription(candidates);
+}
+
+async function reconcileSubscription(uid, preferredId = "") {
+  const selected = await findBestMercadoPagoSubscription(uid, preferredId);
+  const preapprovalId = selected?.id || preferredId;
+  if (!preapprovalId) return null;
+
+  let result = await syncSubscription(uid, preapprovalId);
+  const paymentResult = await syncLatestSubscriptionPayment(uid, preapprovalId);
+  if (paymentResult) result = { ...result, ...paymentResult };
+  return { ...result, reconciled_preapproval_id: preapprovalId };
 }
 
 function mercadoPagoErrorCode(data, fallback = "provider_error") {
   return String(data?.cause?.[0]?.code || data?.code || data?.message || fallback).slice(0, 80);
 }
 
-async function recoverPreviousSubscription(preapprovalId, requestId) {
+async function recoverPreviousSubscription(preapprovalId, requestId, options = {}) {
   if (!preapprovalId) return { action: "create", previousPreapprovalId: "" };
 
   const current = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`);
@@ -703,7 +760,12 @@ async function recoverPreviousSubscription(preapprovalId, requestId) {
   }
 
   const recoveryMode = subscriptionRecoveryMode(current.data?.status);
-  if (recoveryMode === "reuse") return { action: "reuse", subscription: current.data };
+  if (recoveryMode === "reuse" && options.forceReplace !== true) {
+    return { action: "reuse", subscription: current.data };
+  }
+  if (recoveryMode === "reuse" && options.forceReplace === true) {
+    return { action: "create", previousPreapprovalId: preapprovalId };
+  }
   if (recoveryMode === "create") return { action: "create", previousPreapprovalId: "" };
   if (recoveryMode === "block") {
     const error = new Error("A assinatura anterior está sendo processada. Atualize o status antes de tentar novamente.");
@@ -711,18 +773,9 @@ async function recoverPreviousSubscription(preapprovalId, requestId) {
     throw error;
   }
 
-  const previousCancelled = await cancelSupersededSubscription(preapprovalId, requestId);
-  if (!previousCancelled) {
-    const error = new Error("Não foi possível encerrar a tentativa de assinatura anterior. Atualize o status e tente novamente.");
-    error.status = 409;
-    error.providerCode = "previous_subscription_cleanup_failed";
-    throw error;
-  }
-
   return {
     action: "create",
     previousPreapprovalId: preapprovalId,
-    previousCancelled: true,
   };
 }
 
@@ -801,7 +854,10 @@ app.post(
       }
 
       const account = await ensureBillingAccount(req.user.uid, req.user.email);
-      if (["authorized", "active"].includes(account.subscription?.status)) {
+      const failedPayment = ["rejected", "payment_failed", "charged_back", "refunded"].includes(
+        String(account.subscription?.last_payment_status || "").toLowerCase()
+      );
+      if (account.access?.allowed && account.subscription?.status === "active" && !failedPayment) {
         return res.json({ success: true, already_active: true, ...account });
       }
 
@@ -827,7 +883,8 @@ app.post(
 
       const recovery = await recoverPreviousSubscription(
         account.subscription?.mercado_pago_preapproval_id,
-        req.requestId
+        req.requestId,
+        { forceReplace: failedPayment }
       );
       if (recovery.action === "reuse") {
         const recoveredBilling = await applySubscription(req.user.uid, recovery.subscription);
@@ -840,18 +897,6 @@ app.post(
           trial_end_date: account.subscription.trial_end_date,
         });
       }
-      if (recovery.action === "pending") {
-        const pendingBilling = await applySubscription(req.user.uid, recovery.subscription);
-        return res.status(202).json({
-          success: true,
-          pending_authorization: true,
-          recovered: true,
-          ...pendingBilling,
-          trial_days: TRIAL_DAYS,
-          trial_end_date: account.subscription.trial_end_date,
-        });
-      }
-
       const { response, data } = await mercadoPagoRequest("/preapproval", {
         method: "POST",
         headers: { "X-Idempotency-Key": randomUUID() },
@@ -887,7 +932,10 @@ app.post(
           external_reference: externalReference,
           payer_email: payerEmail,
           payment_method_id: data.payment_method_id || "",
-          last_payment_status: data.status || "authorized",
+          mercado_pago_subscription_status: data.status || "authorized",
+          last_payment_status: "pending",
+          last_payment_detail: "",
+          subscription_payment_id: "",
           last_sync_date: now.toISOString(),
           notes: "Assinatura autorizada com token descartável do Mercado Pago.",
           superseded_preapproval_id: previousPreapprovalId,
@@ -987,10 +1035,8 @@ app.post("/functions/sync-subscription-status", requireFirebaseUser, async (req,
       req.body?.preapproval_id ||
       req.body?.mercado_pago_preapproval_id ||
       account.subscription?.mercado_pago_preapproval_id;
-    if (!preapprovalId) return res.status(400).json({ error: "ID da assinatura Mercado Pago não informado." });
-    let result = await syncSubscription(req.user.uid, preapprovalId);
-    const paymentResult = await syncLatestSubscriptionPayment(req.user.uid, preapprovalId);
-    if (paymentResult) result = { ...result, ...paymentResult };
+    const result = await reconcileSubscription(req.user.uid, preapprovalId);
+    if (!result) return res.status(400).json({ error: "Assinatura Mercado Pago não encontrada." });
     res.json({ success: true, ...result });
   } catch (error) {
     console.error(error);
@@ -1013,11 +1059,12 @@ app.post("/functions/sync-billing-status", requireFirebaseUser, async (req, res)
     ) {
       result = await syncPixPayment(req.user.uid, account.latest_payment.mercado_pago_payment_id);
     }
-    if (account.subscription?.mercado_pago_preapproval_id) {
-      const preapprovalId = account.subscription.mercado_pago_preapproval_id;
-      result = await syncSubscription(req.user.uid, preapprovalId);
-      const paymentResult = await syncLatestSubscriptionPayment(req.user.uid, preapprovalId);
-      if (paymentResult) result = { ...result, ...paymentResult };
+    const subscriptionResult = await reconcileSubscription(
+      req.user.uid,
+      account.subscription?.mercado_pago_preapproval_id || ""
+    );
+    if (subscriptionResult) {
+      result = subscriptionResult;
       result.latest_payment = await latestBillingPayment(req.user.uid);
     }
     res.json({ success: true, ...result });
@@ -1315,14 +1362,11 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, async (re
 
     const current = await currentSubscription(uid);
     const preapprovalId = current.data?.mercado_pago_preapproval_id || "";
-    if (!preapprovalId) {
-      return res.status(409).json({ error: "Esta conta ainda não possui uma assinatura no Mercado Pago." });
-    }
-
     const previousStatus = current.data?.status || "";
-    let result = await syncSubscription(uid, preapprovalId);
-    const paymentResult = await syncLatestSubscriptionPayment(uid, preapprovalId);
-    if (paymentResult) result = { ...result, ...paymentResult };
+    const result = await reconcileSubscription(uid, preapprovalId);
+    if (!result) {
+      return res.status(404).json({ error: "Nenhuma assinatura Mercado Pago foi localizada para esta conta." });
+    }
 
     await safeAdminAudit(req, "admin.subscription.updated", {
       target_uid: uid,

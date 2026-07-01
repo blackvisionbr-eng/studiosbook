@@ -35,6 +35,25 @@ export function latestSubscriptionInvoice(invoices = []) {
   })[0] || null;
 }
 
+export function selectBestSubscription(subscriptions = []) {
+  const statusScore = {
+    active: 5,
+    authorized: 5,
+    paused: 4,
+    pending: 3,
+    cancelled: 1,
+    canceled: 1,
+  };
+  return [...subscriptions].sort((left, right) => {
+    const leftStatus = statusScore[String(left?.status || "").toLowerCase()] || 0;
+    const rightStatus = statusScore[String(right?.status || "").toLowerCase()] || 0;
+    if (leftStatus !== rightStatus) return rightStatus - leftStatus;
+    const leftDate = new Date(left?.last_modified || left?.date_created || 0).getTime();
+    const rightDate = new Date(right?.last_modified || right?.date_created || 0).getTime();
+    return (Number.isFinite(rightDate) ? rightDate : 0) - (Number.isFinite(leftDate) ? leftDate : 0);
+  })[0] || null;
+}
+
 export function addDays(value, days) {
   const date = value instanceof Date ? new Date(value) : new Date(value);
   date.setUTCDate(date.getUTCDate() + days);
@@ -58,18 +77,24 @@ export function trialFromAccountCreation(creationTime, now = new Date()) {
 export function billingAccess(subscription = {}, now = new Date()) {
   const currentTime = new Date(now).getTime();
   const status = String(subscription.status || "not_started").toLowerCase();
+  const providerStatus = String(
+    subscription.mercado_pago_subscription_status ||
+      (["authorized", "active", "paused", "pending", "cancelled", "canceled"].includes(status)
+        ? status
+        : "")
+  ).toLowerCase();
+  const paymentStatus = String(subscription.last_payment_status || "").toLowerCase();
   const trialEnd = new Date(subscription.trial_end_date || 0).getTime();
   const periodEnd = new Date(subscription.current_period_end || 0).getTime();
   const trialActive = Number.isFinite(trialEnd) && trialEnd > currentTime;
   const paidPeriodActive = Number.isFinite(periodEnd) && periodEnd > currentTime;
-  const recurringActive = status === "authorized" || status === "active";
 
-  if (recurringActive || paidPeriodActive) {
+  if (paidPeriodActive) {
     return {
       allowed: true,
-      reason: recurringActive ? "subscription_active" : "paid_period_active",
-      status: recurringActive ? status : "active",
-      daysLeft: paidPeriodActive ? Math.ceil((periodEnd - currentTime) / 86400000) : null,
+      reason: "paid_period_active",
+      status: "active",
+      daysLeft: Math.ceil((periodEnd - currentTime) / 86400000),
     };
   }
 
@@ -83,10 +108,25 @@ export function billingAccess(subscription = {}, now = new Date()) {
   }
 
   const failedStatuses = new Set(["rejected", "payment_failed", "charged_back", "refunded"]);
+  if (failedStatuses.has(paymentStatus) || failedStatuses.has(status)) {
+    return { allowed: false, reason: "payment_failed", status: "payment_failed", daysLeft: 0 };
+  }
+
+  if (paymentStatus === "approved" && ["authorized", "active"].includes(providerStatus)) {
+    return { allowed: true, reason: "approved_payment", status: "active", daysLeft: null };
+  }
+
+  if (
+    paymentStatus === "pending" ||
+    ["pending", "authorized", "active", "paused"].includes(providerStatus)
+  ) {
+    return { allowed: false, reason: "payment_pending", status: "pending", daysLeft: 0 };
+  }
+
   return {
     allowed: false,
-    reason: failedStatuses.has(status) ? "payment_failed" : "trial_expired",
-    status: failedStatuses.has(status) ? "payment_failed" : status === "pending" ? "pending" : "expired",
+    reason: "trial_expired",
+    status: "expired",
     daysLeft: 0,
   };
 }

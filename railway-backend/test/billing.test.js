@@ -8,6 +8,7 @@ import {
   isValidCardToken,
   isValidPayerEmail,
   latestSubscriptionInvoice,
+  selectBestSubscription,
   subscriptionRecoveryMode,
   subscriptionChargeStart,
   trialFromAccountCreation,
@@ -39,6 +40,45 @@ test("approved Pix period keeps access active", () => {
   );
   assert.equal(access.allowed, true);
   assert.equal(access.status, "active");
+});
+
+test("authorized subscription does not hide a rejected payment", () => {
+  const access = billingAccess(
+    {
+      status: "authorized",
+      mercado_pago_subscription_status: "authorized",
+      last_payment_status: "rejected",
+      trial_end_date: "2026-06-08T12:00:00.000Z",
+    },
+    new Date("2026-06-09T12:00:00.000Z")
+  );
+  assert.equal(access.allowed, false);
+  assert.equal(access.status, "payment_failed");
+});
+
+test("paid period remains active after a later rejected attempt", () => {
+  const access = billingAccess(
+    {
+      mercado_pago_subscription_status: "authorized",
+      last_payment_status: "rejected",
+      current_period_end: "2026-07-08T12:00:00.000Z",
+    },
+    new Date("2026-06-09T12:00:00.000Z")
+  );
+  assert.equal(access.allowed, true);
+  assert.equal(access.status, "active");
+});
+
+test("authorized subscription waits for payment after the trial", () => {
+  const access = billingAccess(
+    {
+      mercado_pago_subscription_status: "authorized",
+      trial_end_date: "2026-06-08T12:00:00.000Z",
+    },
+    new Date("2026-06-09T12:00:00.000Z")
+  );
+  assert.equal(access.allowed, false);
+  assert.equal(access.status, "pending");
 });
 
 test("validates CPF checksum", () => {
@@ -127,4 +167,12 @@ test("selects the latest subscription invoice for reconciliation", () => {
   ]);
   assert.equal(latest.id, "newer");
   assert.equal(latestSubscriptionInvoice([]), null);
+});
+
+test("prefers an authorized subscription over newer orphan pending attempts", () => {
+  const selected = selectBestSubscription([
+    { id: "pending-new", status: "pending", last_modified: "2026-06-30T12:00:00.000Z" },
+    { id: "authorized-old", status: "authorized", last_modified: "2026-06-29T12:00:00.000Z" },
+  ]);
+  assert.equal(selected.id, "authorized-old");
 });

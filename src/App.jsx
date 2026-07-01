@@ -439,13 +439,11 @@ function billingStatusTone(status) {
 
 function hasBillingAccessNow(subscription, access, now = Date.now()) {
   if (!access) return true;
-  const status = String(subscription?.status || access.status || "").toLowerCase();
-  if (status === "authorized") return true;
   const periodEnd = new Date(subscription?.current_period_end || 0).getTime();
   if (Number.isFinite(periodEnd) && periodEnd > now) return true;
   const trialEnd = new Date(subscription?.trial_end_date || 0).getTime();
   if (Number.isFinite(trialEnd) && trialEnd > now) return true;
-  return false;
+  return access.allowed === true;
 }
 
 function downloadBlob(filename, content, type = "text/plain;charset=utf-8") {
@@ -3236,8 +3234,21 @@ function BillingView({
   const [cpf, setCpf] = useState("");
   const [pixCopied, setPixCopied] = useState(false);
   const status = billingSubscription?.status || "not_started";
-  const recurringAuthorized = status === "authorized" || status === "active";
-  const recurringPaymentStatus = pixPayment?.billing_flow === "subscription" ? pixPayment?.status : "";
+  const providerSubscriptionStatus =
+    billingSubscription?.mercado_pago_subscription_status ||
+    (["authorized", "active", "paused", "pending", "cancelled", "canceled"].includes(status)
+      ? status
+      : "not_started");
+  const recurringPaymentStatus =
+    (pixPayment?.billing_flow === "subscription" ? pixPayment?.status : "") ||
+    billingSubscription?.last_payment_status ||
+    "not_started";
+  const recurringPaymentFailed = ["rejected", "payment_failed", "charged_back", "refunded"].includes(
+    recurringPaymentStatus
+  );
+  const recurringAuthorized =
+    status === "active" ||
+    (["authorized", "active"].includes(providerSubscriptionStatus) && !recurringPaymentFailed);
   const statusTone = billingStatusTone(status);
   const trialEnd = billingSubscription?.trial_end_date;
   const trialDaysLeft = billingAccess?.daysLeft ?? (trialEnd ? Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86400000)) : 7);
@@ -3307,6 +3318,8 @@ function BillingView({
             <div className="mt-5 grid gap-3">
               <MiniMetric label="Profissional" value={user?.email || "-"} />
               <MiniMetric label="Plano" value={billingSubscription?.plan_name || "StudiosBook Intermediário"} />
+              <MiniMetric label="Assinatura Mercado Pago" value={billingStatusLabel(providerSubscriptionStatus)} />
+              <MiniMetric label="Último pagamento" value={billingStatusLabel(recurringPaymentStatus)} />
               <MiniMetric label="Teste grátis" value={trialEnd ? `${trialDaysLeft} dia(s) restantes` : "7 dias desde o cadastro"} />
               <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
             </div>
@@ -3442,7 +3455,8 @@ function BillingView({
           <InfoCard title="Acesso válido até" value={formatDateTime(billingSubscription?.current_period_end)} />
           <InfoCard title="Próxima cobrança" value={formatDateTime(billingSubscription?.next_payment_date)} />
           <InfoCard title="Última sincronização" value={formatDateTime(billingSubscription?.last_sync_date)} />
-          <InfoCard title="Status Mercado Pago" value={billingStatusLabel(billingSubscription?.last_payment_status)} />
+          <InfoCard title="Assinatura Mercado Pago" value={billingStatusLabel(providerSubscriptionStatus)} />
+          <InfoCard title="Último pagamento" value={billingStatusLabel(recurringPaymentStatus)} />
         </div>
 
         <div className="mt-5 grid gap-3 sm:flex sm:flex-row">

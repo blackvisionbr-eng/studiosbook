@@ -8,7 +8,9 @@
     "test": "node --test",
     "smoke:production": "node scripts/production-smoke.js",
     "smoke:admin": "node scripts/admin-smoke.js",
-    "bootstrap:admin": "node scripts/bootstrap-admin.js"
+    "bootstrap:admin": "node scripts/bootstrap-admin.js",
+    "audit:billing": "node scripts/audit-billing-account.js",
+    "reconcile:billing": "node scripts/reconcile-billing-account.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

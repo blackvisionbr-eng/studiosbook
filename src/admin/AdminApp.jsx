@@ -355,12 +355,19 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess 
       <div className="mt-4 grid gap-3">
         {users.map((account) => {
           const status = account.subscription?.status || "not_started";
+          const providerStatus = account.subscription?.mercado_pago_subscription_status || "not_started";
+          const paymentStatus = account.subscription?.last_payment_status || account.latest_payment?.status || "not_started";
           return (
             <article key={account.uid} className="grid min-w-0 gap-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 xl:grid-cols-[1.2fr_0.8fr_auto] xl:items-center">
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2"><h3 className="break-words font-black">{account.business_name || account.displayName || account.email || "Conta sem nome"}</h3><Status value={account.disabled ? "blocked" : "active"} /><Status value={status} /></div>
+                <div className="flex flex-wrap items-center gap-2"><h3 className="break-words font-black">{account.business_name || account.displayName || account.email || "Conta sem nome"}</h3><Status value={account.disabled ? "blocked" : "active"} /></div>
                 <p className="mt-2 break-all text-xs font-bold text-zinc-500">{account.email || account.uid}</p>
                 <p className="mt-1 text-xs text-zinc-500">Último login: {dateTime(account.lastSignInTime)}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <LabeledStatus label="Acesso" value={account.access?.status || status} />
+                  <LabeledStatus label="Assinatura MP" value={providerStatus} />
+                  <LabeledStatus label="Pagamento" value={paymentStatus} />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <Mini label="Clientes" value={account.counts?.Client || 0} />
@@ -410,7 +417,8 @@ function Brand() { return <div className="flex min-w-0 items-center gap-2 sm:gap
 function Panel({ title, subtitle, children }) { return <section className="min-w-0 overflow-hidden rounded-lg border border-zinc-200 bg-white p-4 sm:p-5"><h2 className="break-words text-lg font-black">{title}</h2><p className="mt-1 break-words text-sm text-zinc-500">{subtitle}</p>{children}</section>; }
 function Mini({ label, value }) { return <div className="min-w-0 rounded-lg bg-white p-3 text-center"><p className="break-words text-sm font-black">{value}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-400">{label}</p></div>; }
 function Alert({ tone, children }) { return <div className={`min-w-0 break-words rounded-lg border px-4 py-3 text-sm font-bold ${tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{children}</div>; }
-function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", authorized: "Autorizado", trialing: "Em teste", paused: "Pausado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado" }[key] || "Não iniciado"; const good = ["active", "authorized", "approved", "trialing"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black leading-tight ${good ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
+function LabeledStatus({ label, value }) { return <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2 py-1 text-[10px] font-bold uppercase text-zinc-500">{label}<Status value={value} /></span>; }
+function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", authorized: "Autorizado", trialing: "Em teste", paused: "Pausado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; const good = ["active", "authorized", "approved", "trialing"].includes(key); const bad = ["rejected", "payment_failed", "expired", "blocked", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
 function LoadingPanel() { return <div className="flex min-h-48 items-center justify-center rounded-lg border bg-white"><LoaderCircle className="h-6 w-6 animate-spin text-[#a84d68]" /></div>; }
 function AdminLoading() { return <div className="flex min-h-dvh items-center justify-center bg-[#f5f5f4]"><div className="text-center"><img src="/brand/studiosbook-mark.svg" alt="" className="mx-auto h-12 w-12" /><LoaderCircle className="mx-auto mt-5 h-5 w-5 animate-spin text-[#a84d68]" /></div></div>; }
 function dateTime(value) { if (!value) return "-"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "-" : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date); }
