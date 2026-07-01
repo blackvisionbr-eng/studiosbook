@@ -24,6 +24,7 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
   const [fetching, setFetching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  const [formRevision, setFormRevision] = useState(0);
   const [payerEmail, setPayerEmail] = useState(userEmail || "");
   const payerEmailRef = useRef(userEmail || "");
 
@@ -47,6 +48,8 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
 
     async function mountCardForm() {
       try {
+        setSdkReady(false);
+        setFetching(false);
         await loadMercadoPago();
         if (disposed || !window.MercadoPago) return;
 
@@ -92,9 +95,14 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
                 await authorizeRef.current({
                   card_token_id: token,
                   payer_email: String(cardholderEmail || payerEmailRef.current || "").trim(),
+                  attempt_id: window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
                 });
               } catch (error) {
-                setFormError(readableSdkError(error));
+                if (!disposed) {
+                  setFormError(readableSdkError(error));
+                  setSdkReady(false);
+                  setFormRevision((current) => current + 1);
+                }
               } finally {
                 if (formRef.current) formRef.current.dataset.submitting = "false";
                 if (!disposed) setSubmitting(false);
@@ -117,8 +125,11 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
     return () => {
       disposed = true;
       if (typeof cardForm?.unmount === "function") cardForm.unmount();
+      formRef.current
+        ?.querySelectorAll('input[name="MPHiddenInputToken"]')
+        .forEach((node) => node.remove());
     };
-  }, [userEmail]);
+  }, [userEmail, formRevision]);
 
   const busy = disabled || submitting || fetching;
 

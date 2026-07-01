@@ -1364,12 +1364,13 @@ export default function App() {
     }
   };
 
-  const authorizeCardSubscription = async ({ card_token_id, payer_email }) => {
+  const authorizeCardSubscription = async ({ card_token_id, payer_email, attempt_id }) => {
     setActionLoading("billing-card");
     try {
       const result = await base44.functions.invoke("create-card-subscription", {
         card_token_id,
         payer_email,
+        attempt_id,
         app_url: OFFICIAL_APP_URL,
       });
 

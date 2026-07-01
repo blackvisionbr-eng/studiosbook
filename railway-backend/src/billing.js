@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export const TRIAL_DAYS = 7;
 export const PIX_ACCESS_DAYS = 30;
@@ -10,6 +10,53 @@ export function isValidCardToken(value) {
 export function isValidPayerEmail(value) {
   const email = String(value || "").trim();
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+export function cardSubscriptionIdempotencyKey(uid, attemptId) {
+  return createHash("sha256")
+    .update(`${String(uid || "").trim()}:${String(attemptId || "").trim()}`)
+    .digest("hex");
+}
+
+export function mercadoPagoCardErrorMessage(code) {
+  const normalized = String(code || "").trim().toLowerCase();
+  const messages = {
+    cc_rejected_bad_filled_security_code:
+      "O código de segurança (CVV) está incorreto. Preencha novamente os dados do cartão.",
+    cc_rejected_bad_filled_card_number:
+      "O número do cartão está incorreto. Confira e preencha novamente.",
+    cc_rejected_bad_filled_date:
+      "A validade do cartão está incorreta. Confira e preencha novamente.",
+    cc_rejected_bad_filled_other:
+      "Um ou mais dados do cartão estão incorretos. Confira e preencha novamente.",
+    cc_rejected_insufficient_amount:
+      "O cartão não possui limite disponível para esta cobrança. Use outro cartão ou Pix.",
+    cc_rejected_card_disabled:
+      "O cartão está bloqueado para esta compra. Fale com o banco emissor ou use outro cartão.",
+    cc_rejected_call_for_authorize:
+      "O banco precisa autorizar esta compra. Fale com o emissor do cartão e tente novamente.",
+    cc_rejected_invalid_installments:
+      "O cartão não aceitou as condições da cobrança. Use outro cartão ou Pix.",
+    cc_rejected_max_attempts:
+      "O cartão atingiu o limite de tentativas. Aguarde antes de tentar novamente ou use Pix.",
+    cc_rejected_duplicated_payment:
+      "O Mercado Pago identificou uma tentativa repetida. Aguarde alguns minutos ou use Pix.",
+    cc_rejected_high_risk:
+      "O Mercado Pago recusou esta tentativa por segurança. Use outro cartão ou Pix.",
+    cc_rejected_blacklist:
+      "O Mercado Pago recusou este cartão por segurança. Use outro cartão ou Pix.",
+    cc_rejected_other_reason:
+      "O banco ou o Mercado Pago recusou esta tentativa. Use outro cartão ou Pix.",
+  };
+
+  if (normalized.includes("card token was used")) {
+    return "A tentativa anterior expirou. Os campos foram renovados; preencha novamente os dados do cartão.";
+  }
+
+  return (
+    messages[normalized] ||
+    "O Mercado Pago não autorizou o cartão. Confira os dados, use outro cartão ou pague por Pix."
+  );
 }
 
 export function subscriptionChargeStart(trialEnd, now = new Date()) {

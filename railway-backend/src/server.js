@@ -14,10 +14,12 @@ import {
   addDays,
   billingAccess,
   billingReferenceType,
+  cardSubscriptionIdempotencyKey,
   isValidCpf,
   isValidCardToken,
   isValidPayerEmail,
   localPaymentStatus,
+  mercadoPagoCardErrorMessage,
   normalizeCpf,
   selectBestSubscription,
   subscriptionChargeStart,
@@ -877,6 +879,8 @@ app.post(
         });
       }
 
+      const attemptId = String(req.body?.attempt_id || randomUUID()).trim().slice(0, 128);
+
       const account = await ensureBillingAccount(req.user.uid, req.user.email);
       const failedPayment = ["rejected", "payment_failed", "charged_back", "refunded"].includes(
         String(account.subscription?.last_payment_status || "").toLowerCase()
@@ -923,7 +927,9 @@ app.post(
       }
       const { response, data } = await mercadoPagoRequest("/preapproval", {
         method: "POST",
-        headers: { "X-Idempotency-Key": randomUUID() },
+        headers: {
+          "X-Idempotency-Key": cardSubscriptionIdempotencyKey(req.user.uid, attemptId),
+        },
         body: JSON.stringify(mpPayload),
       });
       if (!response.ok) {
@@ -934,9 +940,10 @@ app.post(
           mercadoPagoCode: providerCode,
         });
         return res.status(response.status >= 500 ? 502 : 422).json({
-          error: "O Mercado Pago não autorizou o cartão. Confira os dados ou use outro cartão.",
+          error: mercadoPagoCardErrorMessage(providerCode),
           mercado_pago_status: response.status,
           mercado_pago_code: providerCode,
+          retry_with_new_card_token: true,
           request_id: req.requestId,
         });
       }

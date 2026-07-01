@@ -3,11 +3,13 @@ import test from "node:test";
 import {
   billingAccess,
   billingReferenceType,
+  cardSubscriptionIdempotencyKey,
   createWebhookSignature,
   isValidCpf,
   isValidCardToken,
   isValidPayerEmail,
   latestSubscriptionInvoice,
+  mercadoPagoCardErrorMessage,
   selectBestSubscription,
   subscriptionRecoveryMode,
   subscriptionChargeStart,
@@ -137,6 +139,27 @@ test("validates the payer email independently from the authenticated account", (
   assert.equal(isValidPayerEmail("cliente@example.com"), true);
   assert.equal(isValidPayerEmail("cliente sem email"), false);
   assert.equal(isValidPayerEmail("@example.com"), false);
+});
+
+test("keeps the Mercado Pago idempotency key stable for the same card attempt", () => {
+  const first = cardSubscriptionIdempotencyKey("user-1", "attempt-1");
+  const retry = cardSubscriptionIdempotencyKey("user-1", "attempt-1");
+  const nextAttempt = cardSubscriptionIdempotencyKey("user-1", "attempt-2");
+  assert.equal(first, retry);
+  assert.notEqual(first, nextAttempt);
+  assert.match(first, /^[a-f0-9]{64}$/);
+});
+
+test("translates Mercado Pago card rejection reasons", () => {
+  assert.match(
+    mercadoPagoCardErrorMessage("cc_rejected_bad_filled_security_code"),
+    /código de segurança/i
+  );
+  assert.match(
+    mercadoPagoCardErrorMessage("Card token was used, please generate new"),
+    /tentativa anterior expirou/i
+  );
+  assert.match(mercadoPagoCardErrorMessage("cc_rejected_high_risk"), /segurança/i);
 });
 
 test("schedules recurring charge at trial end or five minutes from now", () => {
