@@ -16,6 +16,7 @@ import {
   billingReferenceType,
   isValidCpf,
   isValidCardToken,
+  isValidPayerEmail,
   latestSubscriptionInvoice,
   localPaymentStatus,
   normalizeCpf,
@@ -792,6 +793,13 @@ app.post(
         });
       }
 
+      const payerEmail = String(req.body?.payer_email || req.user.email || "").trim().toLowerCase();
+      if (!isValidPayerEmail(payerEmail)) {
+        return res.status(400).json({
+          error: "Informe um e-mail válido para o responsável pelo pagamento.",
+        });
+      }
+
       const account = await ensureBillingAccount(req.user.uid, req.user.email);
       if (["authorized", "active"].includes(account.subscription?.status)) {
         return res.json({ success: true, already_active: true, ...account });
@@ -803,7 +811,7 @@ app.post(
       const externalReference = `studiosbook:subscription:${req.user.uid}:${Date.now()}`;
       const mpPayload = {
         card_token_id: cardTokenId,
-        payer_email: req.user.email,
+        payer_email: payerEmail,
         reason: `${PRODUCT_NAME} - assinatura mensal`,
         external_reference: externalReference,
         back_url: `${appOrigin}/?checkout=studiosbook`,
@@ -877,7 +885,7 @@ app.post(
           checkout_url: "",
           authorization_mode: "card_token",
           external_reference: externalReference,
-          payer_email: req.user.email,
+          payer_email: payerEmail,
           payment_method_id: data.payment_method_id || "",
           last_payment_status: data.status || "authorized",
           last_sync_date: now.toISOString(),

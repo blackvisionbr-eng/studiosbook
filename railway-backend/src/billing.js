@@ -7,6 +7,11 @@ export function isValidCardToken(value) {
   return /^[A-Za-z0-9_-]{16,256}$/.test(String(value || "").trim());
 }
 
+export function isValidPayerEmail(value) {
+  const email = String(value || "").trim();
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 export function subscriptionChargeStart(trialEnd, now = new Date()) {
   const current = new Date(now);
   const minimumStart = new Date(current.getTime() + 5 * 60 * 1000);

@@ -6,6 +6,7 @@ import {
   createWebhookSignature,
   isValidCpf,
   isValidCardToken,
+  isValidPayerEmail,
   latestSubscriptionInvoice,
   subscriptionRecoveryMode,
   subscriptionChargeStart,
@@ -90,6 +91,12 @@ test("validates Mercado Pago card tokens without accepting arbitrary input", () 
   assert.equal(isValidCardToken("e3ed6f098462036dd2cbabe314b9de2a"), true);
   assert.equal(isValidCardToken("short"), false);
   assert.equal(isValidCardToken("token with spaces and card data"), false);
+});
+
+test("validates the payer email independently from the authenticated account", () => {
+  assert.equal(isValidPayerEmail("cliente@example.com"), true);
+  assert.equal(isValidPayerEmail("cliente sem email"), false);
+  assert.equal(isValidPayerEmail("@example.com"), false);
 });
 
 test("schedules recurring charge at trial end or five minutes from now", () => {

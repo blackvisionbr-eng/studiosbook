@@ -24,6 +24,8 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
   const [fetching, setFetching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  const [payerEmail, setPayerEmail] = useState(userEmail || "");
+  const payerEmailRef = useRef(userEmail || "");
 
   useEffect(() => {
     authorizeRef.current = onAuthorize;
@@ -32,6 +34,12 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
   useEffect(() => {
     disabledRef.current = disabled;
   }, [disabled]);
+
+  useEffect(() => {
+    const nextEmail = userEmail || "";
+    payerEmailRef.current = nextEmail;
+    setPayerEmail(nextEmail);
+  }, [userEmail]);
 
   useEffect(() => {
     let disposed = false;
@@ -71,7 +79,7 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
               event.preventDefault();
               if (disposed || disabledRef.current || formRef.current?.dataset.submitting === "true") return;
 
-              const { token } = cardForm.getCardFormData();
+              const { token, cardholderEmail } = cardForm.getCardFormData();
               if (!token) {
                 setFormError("Confira os dados do cartão antes de continuar.");
                 return;
@@ -81,7 +89,10 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
               setSubmitting(true);
               setFormError("");
               try {
-                await authorizeRef.current({ card_token_id: token });
+                await authorizeRef.current({
+                  card_token_id: token,
+                  payer_email: String(cardholderEmail || payerEmailRef.current || "").trim(),
+                });
               } catch (error) {
                 setFormError(readableSdkError(error));
               } finally {
@@ -161,10 +172,16 @@ export function MercadoPagoCardForm({ userEmail, disabled = false, onAuthorize }
         <Input
           id="studiosbook-cardholder-email"
           type="email"
-          value={userEmail || ""}
-          readOnly
-          className="h-12 rounded-2xl bg-zinc-100 text-zinc-500"
+          value={payerEmail}
+          onChange={(event) => {
+            payerEmailRef.current = event.target.value;
+            setPayerEmail(event.target.value);
+          }}
+          autoComplete="email"
+          required
+          className="h-12 rounded-2xl bg-zinc-50"
         />
+        <span className="text-xs font-medium leading-5 text-zinc-500">Use o e-mail de quem realizará o pagamento.</span>
       </label>
 
       <select id="studiosbook-card-issuer" className="hidden" aria-hidden="true" />
