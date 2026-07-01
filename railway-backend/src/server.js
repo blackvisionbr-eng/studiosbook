@@ -689,7 +689,7 @@ function mercadoPagoErrorCode(data, fallback = "provider_error") {
   return String(data?.cause?.[0]?.code || data?.code || data?.message || fallback).slice(0, 80);
 }
 
-async function recoverPreviousSubscription(preapprovalId, updatePayload, requestId) {
+async function recoverPreviousSubscription(preapprovalId, requestId) {
   if (!preapprovalId) return { action: "create", previousPreapprovalId: "" };
 
   const current = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`);
@@ -710,33 +710,19 @@ async function recoverPreviousSubscription(preapprovalId, updatePayload, request
     throw error;
   }
 
-  const updated = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`, {
-    method: "PUT",
-    body: JSON.stringify(updatePayload),
-  });
-  if (updated.response.ok) {
-    const updatedMode = subscriptionRecoveryMode(updated.data?.status);
-    return {
-      action: updatedMode === "reuse" ? "reuse" : "pending",
-      subscription: updated.data,
-      recovered: true,
-    };
-  }
-
-  const providerCode = mercadoPagoErrorCode(updated.data, "pending_subscription_update_failed");
-  if (updated.response.status >= 500 || [401, 403].includes(updated.response.status)) {
-    const error = new Error("O Mercado Pago não conseguiu recuperar a assinatura anterior.");
-    error.status = 502;
-    error.providerCode = providerCode;
+  const previousCancelled = await cancelSupersededSubscription(preapprovalId, requestId);
+  if (!previousCancelled) {
+    const error = new Error("Não foi possível encerrar a tentativa de assinatura anterior. Atualize o status e tente novamente.");
+    error.status = 409;
+    error.providerCode = "previous_subscription_cleanup_failed";
     throw error;
   }
 
-  console.warn("Pending subscription recovery rejected; creating replacement", {
-    requestId,
-    mercadoPagoStatus: updated.response.status,
-    mercadoPagoCode: providerCode,
-  });
-  return { action: "create", previousPreapprovalId: preapprovalId };
+  return {
+    action: "create",
+    previousPreapprovalId: preapprovalId,
+    previousCancelled: true,
+  };
 }
 
 async function cancelSupersededSubscription(preapprovalId, requestId) {
@@ -833,7 +819,6 @@ app.post(
 
       const recovery = await recoverPreviousSubscription(
         account.subscription?.mercado_pago_preapproval_id,
-        mpPayload,
         req.requestId
       );
       if (recovery.action === "reuse") {
@@ -866,6 +851,11 @@ app.post(
       });
       if (!response.ok) {
         const providerCode = mercadoPagoErrorCode(data, "authorization_failed");
+        console.warn("Mercado Pago card subscription rejected", {
+          requestId: req.requestId,
+          mercadoPagoStatus: response.status,
+          mercadoPagoCode: providerCode,
+        });
         return res.status(response.status >= 500 ? 502 : 422).json({
           error: "O Mercado Pago não autorizou o cartão. Confira os dados ou use outro cartão.",
           mercado_pago_status: response.status,
@@ -875,7 +865,9 @@ app.post(
       }
 
       const previousPreapprovalId = recovery.previousPreapprovalId || "";
-      const previousCancelled = await cancelSupersededSubscription(previousPreapprovalId, req.requestId);
+      const previousCancelled = recovery.previousCancelled === true
+        ? true
+        : await cancelSupersededSubscription(previousPreapprovalId, req.requestId);
       await applySubscription(req.user.uid, data);
       const saved = await persistBillingState(
         req.user.uid,

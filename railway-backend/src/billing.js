@@ -17,7 +17,7 @@ export function subscriptionChargeStart(trialEnd, now = new Date()) {
 export function subscriptionRecoveryMode(status) {
   const normalized = String(status || "").toLowerCase();
   if (normalized === "authorized" || normalized === "active") return "reuse";
-  if (normalized === "pending" || normalized === "paused") return "update";
+  if (normalized === "pending" || normalized === "paused") return "replace";
   if (["canceled", "cancelled", "rejected", "expired"].includes(normalized)) return "create";
   return normalized ? "block" : "create";
 }

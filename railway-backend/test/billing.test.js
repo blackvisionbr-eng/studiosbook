@@ -106,8 +106,8 @@ test("schedules recurring charge at trial end or five minutes from now", () => {
 
 test("recovers a previous Mercado Pago subscription without creating duplicates", () => {
   assert.equal(subscriptionRecoveryMode("authorized"), "reuse");
-  assert.equal(subscriptionRecoveryMode("pending"), "update");
-  assert.equal(subscriptionRecoveryMode("paused"), "update");
+  assert.equal(subscriptionRecoveryMode("pending"), "replace");
+  assert.equal(subscriptionRecoveryMode("paused"), "replace");
   assert.equal(subscriptionRecoveryMode("canceled"), "create");
   assert.equal(subscriptionRecoveryMode(""), "create");
   assert.equal(subscriptionRecoveryMode("unknown_provider_state"), "block");
