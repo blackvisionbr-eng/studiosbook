@@ -149,14 +149,14 @@ export default function AdminApp() {
   };
 
   const updateSubscription = async (account) => {
-    if (!window.confirm("Consultar e aplicar o status confirmado diretamente pelo Mercado Pago?")) return;
+    if (!window.confirm("Consultar e aplicar o status confirmado diretamente pela Stripe?")) return;
     setLoading(`subscription-${account.uid}`);
     try {
       await invokeAdmin("admin-update-subscription", {
         uid: account.uid,
       });
       await loadOverview();
-      showNotice("Cobrança sincronizada com o Mercado Pago.");
+      showNotice("Cobrança sincronizada com a Stripe.");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -355,7 +355,7 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess 
       <div className="mt-4 grid gap-3">
         {users.map((account) => {
           const status = account.subscription?.status || "not_started";
-          const providerStatus = account.subscription?.mercado_pago_subscription_status || "not_started";
+          const providerStatus = account.subscription?.stripe_subscription_status || "not_started";
           const paymentStatus = account.subscription?.last_payment_status || account.latest_payment?.status || "not_started";
           return (
             <article key={account.uid} className="grid min-w-0 gap-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 xl:grid-cols-[1.2fr_0.8fr_auto] xl:items-center">
@@ -365,7 +365,7 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess 
                 <p className="mt-1 text-xs text-zinc-500">Último login: {dateTime(account.lastSignInTime)}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <LabeledStatus label="Acesso" value={account.access?.status || status} />
-                  <LabeledStatus label="Assinatura MP" value={providerStatus} />
+                  <LabeledStatus label="Assinatura Stripe" value={providerStatus} />
                   <LabeledStatus label="Pagamento" value={paymentStatus} />
                 </div>
               </div>
@@ -389,9 +389,9 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess 
 
 function Payments({ rows }) {
   return (
-    <Panel title="Pagamentos recentes" subtitle="Conciliação dos eventos recebidos do Mercado Pago.">
+    <Panel title="Pagamentos recentes" subtitle="Conciliação dos eventos assinados recebidos da Stripe.">
       <div className="mt-5 grid gap-3">
-        {rows.map((payment) => <div key={`${payment.uid}-${payment.mercado_pago_payment_id}`} className="grid min-w-0 gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 sm:grid-cols-[1fr_auto] sm:items-center"><div className="min-w-0"><p className="break-words font-black">{payment.business_name || payment.user_email || "Conta StudiosBook"}</p><p className="mt-1 break-all text-xs text-zinc-500">ID {payment.mercado_pago_payment_id} · {dateTime(payment.date_last_updated)}</p></div><div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end"><Status value={payment.status} /><strong className="break-words">{money(payment.amount)}</strong></div></div>)}
+        {rows.map((payment) => { const paymentId = payment.stripe_invoice_id || payment.stripe_payment_intent_id || payment.id; return <div key={`${payment.uid}-${paymentId}`} className="grid min-w-0 gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 sm:grid-cols-[1fr_auto] sm:items-center"><div className="min-w-0"><p className="break-words font-black">{payment.business_name || payment.user_email || "Conta StudiosBook"}</p><p className="mt-1 break-all text-xs text-zinc-500">ID {paymentId} · {dateTime(payment.date_last_updated)}</p></div><div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end"><Status value={payment.status} /><strong className="break-words">{money(payment.amount)}</strong></div></div>; })}
         {!rows.length && <p className="rounded-lg bg-zinc-50 p-8 text-center text-sm text-zinc-500">Nenhum pagamento registrado.</p>}
       </div>
     </Panel>
@@ -399,7 +399,7 @@ function Payments({ rows }) {
 }
 
 function System({ data, diagnostics, loading, onDiagnostics }) {
-  const checks = [["Backend Railway", Boolean(data)], ["Firebase Admin", data?.admin_ready === true], ["Mercado Pago", data?.mercado_pago_ready === true], ["Webhook assinado", data?.webhook_ready === true]];
+  const checks = [["Backend Railway", Boolean(data)], ["Firebase Admin", data?.admin_ready === true], ["Stripe", data?.stripe_ready === true], ["Webhook assinado", data?.webhook_ready === true]];
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Panel title="Saúde do sistema" subtitle="Detalhes disponíveis somente após autenticação administrativa.">
@@ -407,7 +407,7 @@ function System({ data, diagnostics, loading, onDiagnostics }) {
       </Panel>
       <Panel title="Pagamentos e webhooks" subtitle="Teste autenticado da integração financeira.">
         <Button type="button" onClick={onDiagnostics} disabled={loading === "diagnostics"} className="mt-5 h-11 w-full rounded-lg bg-zinc-950 text-white"><Activity className="mr-2 h-4 w-4" />{loading === "diagnostics" ? "Executando..." : "Executar diagnóstico"}</Button>
-        {diagnostics && <div className="mt-4 grid grid-cols-2 gap-2"><Mini label="API" value={diagnostics.mercado_pago_api === "online" ? "Online" : "Erro"} /><Mini label="Pix" value={diagnostics.pix_available ? "Ativo" : "Indisponível"} /><Mini label="Processados" value={diagnostics.webhook_processed || 0} /><Mini label="Falhas" value={diagnostics.webhook_failed || 0} /></div>}
+        {diagnostics && <div className="mt-4 grid grid-cols-2 gap-2"><Mini label="API Stripe" value={diagnostics.stripe_api === "online" ? "Online" : "Erro"} /><Mini label="Modo" value={diagnostics.stripe_mode === "live" ? "Produção" : "Teste"} /><Mini label="Processados" value={diagnostics.webhook_processed || 0} /><Mini label="Falhas" value={diagnostics.webhook_failed || 0} /></div>}
       </Panel>
     </div>
   );
@@ -418,7 +418,7 @@ function Panel({ title, subtitle, children }) { return <section className="min-w
 function Mini({ label, value }) { return <div className="min-w-0 rounded-lg bg-white p-3 text-center"><p className="break-words text-sm font-black">{value}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-400">{label}</p></div>; }
 function Alert({ tone, children }) { return <div className={`min-w-0 break-words rounded-lg border px-4 py-3 text-sm font-bold ${tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{children}</div>; }
 function LabeledStatus({ label, value }) { return <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2 py-1 text-[10px] font-bold uppercase text-zinc-500">{label}<Status value={value} /></span>; }
-function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", authorized: "Autorizado", trialing: "Em teste", paused: "Pausado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; const good = ["active", "authorized", "approved", "trialing"].includes(key); const bad = ["rejected", "payment_failed", "expired", "blocked", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
+function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", trialing: "Em teste", paused: "Pausado", past_due: "Em atraso", unpaid: "Não pago", incomplete: "Incompleto", incomplete_expired: "Expirado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; const good = ["active", "approved", "trialing"].includes(key); const bad = ["rejected", "payment_failed", "past_due", "unpaid", "incomplete", "incomplete_expired", "expired", "blocked", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
 function LoadingPanel() { return <div className="flex min-h-48 items-center justify-center rounded-lg border bg-white"><LoaderCircle className="h-6 w-6 animate-spin text-[#a84d68]" /></div>; }
 function AdminLoading() { return <div className="flex min-h-dvh items-center justify-center bg-[#f5f5f4]"><div className="text-center"><img src="/brand/studiosbook-mark.svg" alt="" className="mx-auto h-12 w-12" /><LoaderCircle className="mx-auto mt-5 h-5 w-5 animate-spin text-[#a84d68]" /></div></div>; }
 function dateTime(value) { if (!value) return "-"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "-" : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date); }

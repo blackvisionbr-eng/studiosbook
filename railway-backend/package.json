@@ -8,6 +8,9 @@
     "test": "node --test",
     "smoke:production": "node scripts/production-smoke.js",
     "smoke:admin": "node scripts/admin-smoke.js",
+    "setup:stripe": "node scripts/setup-stripe.js",
+    "verify:stripe-webhook": "node scripts/verify-stripe-webhook.js",
+    "e2e:stripe": "node scripts/e2e-stripe-sandbox.js",
     "bootstrap:admin": "node scripts/bootstrap-admin.js",
     "audit:billing": "node scripts/audit-billing-account.js",
     "reconcile:billing": "node scripts/reconcile-billing-account.js"
@@ -18,7 +21,8 @@
     "express": "^4.21.2",
     "express-rate-limit": "^8.5.2",
     "firebase-admin": "^14.0.0",
-    "helmet": "^8.2.0"
+    "helmet": "^8.2.0",
+    "stripe": "^20.4.1"
   },
   "engines": {
     "node": ">=20"

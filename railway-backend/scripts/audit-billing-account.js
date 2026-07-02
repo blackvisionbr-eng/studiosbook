@@ -1,6 +1,8 @@
 import { cert, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+import Stripe from "stripe";
+import { stripeInvoiceSubscriptionId } from "../src/billing.js";
 
 const targetEmail = String(process.argv[2] || "").trim().toLowerCase();
 if (!targetEmail) throw new Error("Informe o e-mail da conta a auditar.");
@@ -42,15 +44,7 @@ const serviceAccount = parseServiceAccount();
 initializeApp({ credential: cert(serviceAccount), projectId: process.env.FIREBASE_PROJECT_ID });
 const auth = getAuth();
 const db = getFirestore();
-const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN || process.env.MP_ACCESS_TOKEN || "";
-
-async function mercadoPago(path) {
-  const response = await fetch(`https://api.mercadopago.com${path}`, {
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-  });
-  const data = await response.json().catch(() => ({}));
-  return { ok: response.ok, status: response.status, data };
-}
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", { maxNetworkRetries: 2, timeout: 12000 });
 
 function rows(snapshot) {
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
@@ -60,23 +54,21 @@ function subscriptionSummary(item) {
   return {
     id: item?.id || "",
     status: item?.status || "",
-    payer_email: item?.payer_email || "",
-    external_reference: item?.external_reference || "",
-    payment_method_id: item?.payment_method_id || "",
-    next_payment_date: item?.next_payment_date || "",
-    date_created: item?.date_created || "",
-    last_modified: item?.last_modified || "",
+    customer: typeof item?.customer === "string" ? item.customer : item?.customer?.id || "",
+    price_id: item?.items?.data?.[0]?.price?.id || "",
+    current_period_end: item?.items?.data?.[0]?.current_period_end || item?.current_period_end || 0,
+    cancel_at_period_end: Boolean(item?.cancel_at_period_end),
+    created: item?.created || 0,
   };
 }
 
 function paymentSummary(item) {
   return {
-    id: String(item?.id || item?.mercado_pago_payment_id || ""),
+    id: String(item?.id || item?.stripe_invoice_id || item?.stripe_payment_intent_id || ""),
     status: item?.status || "",
     status_detail: item?.status_detail || "",
-    amount: Number(item?.transaction_amount || item?.amount || 0),
-    external_reference: item?.external_reference || "",
-    payment_method_id: item?.payment_method_id || item?.payment_method || "",
+    amount: Number(item?.amount_paid || item?.amount || 0),
+    payment_method_id: item?.payment_method || "",
     date_approved: item?.date_approved || "",
     date_last_updated: item?.date_last_updated || "",
   };
@@ -84,41 +76,25 @@ function paymentSummary(item) {
 
 const user = await auth.getUserByEmail(targetEmail);
 const userRef = db.collection("users").doc(user.uid);
-const [userDoc, subscriptionDocs, paymentDocs, searchResult] = await Promise.all([
+const [userDoc, subscriptionDocs, paymentDocs] = await Promise.all([
   userRef.get(),
   userRef.collection("BillingSubscription").get(),
   userRef.collection("BillingPayment").get(),
-  mercadoPago(`/preapproval/search?payer_email=${encodeURIComponent(targetEmail)}&limit=100`),
 ]);
-
-const mercadoPagoSubscriptions = Array.isArray(searchResult.data?.results)
-  ? searchResult.data.results
+const localSubscriptions = rows(subscriptionDocs);
+const storedCustomerId = localSubscriptions.find((item) => item.stripe_customer_id)?.stripe_customer_id || "";
+const customerList = storedCustomerId
+  ? { data: [await stripe.customers.retrieve(storedCustomerId)] }
+  : await stripe.customers.list({ email: targetEmail, limit: 100 });
+const customer = customerList.data.find(
+  (item) => !item.deleted && (item.metadata?.studiosbook_uid === user.uid || item.email === targetEmail)
+) || null;
+const stripeSubscriptions = customer
+  ? (await stripe.subscriptions.list({ customer: customer.id, status: "all", limit: 20 })).data
   : [];
-const invoiceGroups = [];
-for (const subscription of mercadoPagoSubscriptions) {
-  const invoiceResult = await mercadoPago(
-    `/authorized_payments/search?preapproval_id=${encodeURIComponent(subscription.id)}`
-  );
-  const invoices = Array.isArray(invoiceResult.data?.results) ? invoiceResult.data.results : [];
-  const payments = [];
-  for (const invoice of invoices) {
-    const paymentId = invoice?.payment?.id;
-    if (!paymentId) continue;
-    const paymentResult = await mercadoPago(`/v1/payments/${encodeURIComponent(paymentId)}`);
-    if (paymentResult.ok) payments.push(paymentSummary(paymentResult.data));
-  }
-  invoiceGroups.push({
-    preapproval_id: subscription.id,
-    invoice_status: invoiceResult.status,
-    invoices: invoices.map((invoice) => ({
-      id: invoice?.id || "",
-      status: invoice?.status || "",
-      payment_id: String(invoice?.payment?.id || ""),
-      last_modified: invoice?.last_modified || "",
-    })),
-    payments,
-  });
-}
+const stripeInvoices = customer
+  ? (await stripe.invoices.list({ customer: customer.id, limit: 25 })).data
+  : [];
 
 console.log(
   JSON.stringify(
@@ -129,11 +105,18 @@ console.log(
         created_at: user.metadata?.creationTime || "",
       },
       firebase_root: userDoc.exists ? userDoc.data() : null,
-      firebase_subscriptions: rows(subscriptionDocs),
+      firebase_subscriptions: localSubscriptions,
       firebase_payments: rows(paymentDocs).map(paymentSummary),
-      mercado_pago_search_status: searchResult.status,
-      mercado_pago_subscriptions: mercadoPagoSubscriptions.map(subscriptionSummary),
-      mercado_pago_invoices: invoiceGroups,
+      stripe_customer: customer && !customer.deleted ? { id: customer.id, email: customer.email, livemode: customer.livemode } : null,
+      stripe_subscriptions: stripeSubscriptions.map(subscriptionSummary),
+      stripe_invoices: stripeInvoices.map((invoice) => ({
+        id: invoice.id,
+        status: invoice.status,
+        amount_paid: Number(invoice.amount_paid || 0) / 100,
+        currency: invoice.currency,
+        subscription: stripeInvoiceSubscriptionId(invoice),
+        created: invoice.created,
+      })),
     },
     null,
     2

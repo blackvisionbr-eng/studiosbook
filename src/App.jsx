@@ -3,7 +3,6 @@ import { jsPDF } from "jspdf";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MercadoPagoCardForm } from "@/components/MercadoPagoCardForm";
 import {
   Activity,
   AlertTriangle,
@@ -415,6 +414,12 @@ function billingStatusLabel(status) {
     pending: "Pendente",
     authorized: "Autorizada",
     active: "Ativa",
+    past_due: "Pagamento atrasado",
+    unpaid: "Não paga",
+    incomplete: "Pagamento incompleto",
+    incomplete_expired: "Tentativa expirada",
+    processing: "Processando",
+    requires_action: "Ação necessária",
     paused: "Pausada",
     cancelled: "Cancelada",
     canceled: "Cancelada",
@@ -431,8 +436,8 @@ function billingStatusLabel(status) {
 
 function billingStatusTone(status) {
   if (status === "authorized" || status === "active" || status === "trialing" || status === "approved") return "green";
-  if (status === "pending") return "amber";
-  if (["cancelled", "canceled", "expired", "payment_failed", "rejected", "refunded", "charged_back"].includes(status)) return "red";
+  if (["pending", "processing", "requires_action", "incomplete"].includes(status)) return "amber";
+  if (["cancelled", "canceled", "expired", "payment_failed", "rejected", "refunded", "charged_back", "past_due", "unpaid", "incomplete_expired"].includes(status)) return "red";
   if (status === "setup_required") return "violet";
   return "slate";
 }
@@ -847,6 +852,7 @@ export default function App() {
   const [billingSubscription, setBillingSubscription] = useState(null);
   const [billingAccess, setBillingAccess] = useState(null);
   const [pixPayment, setPixPayment] = useState(null);
+  const [billingCapabilities, setBillingCapabilities] = useState({ card_recurring: true, pix: false });
   const [profileForm, setProfileForm] = useState(() => createProfileForm(null));
   const [searchTerm, setSearchTerm] = useState("");
   const [clientFilter, setClientFilter] = useState("all");
@@ -916,6 +922,7 @@ export default function App() {
       setBillingSubscription(ensuredBilling?.subscription || billingData?.[0] || null);
       setBillingAccess(ensuredBilling?.access || null);
       setPixPayment(ensuredBilling?.latest_payment || null);
+      setBillingCapabilities(ensuredBilling?.payment_capabilities || { card_recurring: true, pix: false });
       setProfile(normalizedProfile);
       setProfileForm(normalizedProfile || createProfileForm(user));
     } catch (error) {
@@ -1005,26 +1012,34 @@ export default function App() {
   useEffect(() => {
     if (!user || typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get("checkout") === "studiosbook" || params.has("preapproval_id")) {
+    if (params.get("checkout") === "cancelled") {
+      setActiveTab("billing");
+      window.history.replaceState({}, "", window.location.pathname);
+      showFeedback("Pagamento cancelado. Nenhuma cobrança foi realizada.", "error");
+      return;
+    }
+    if (params.get("checkout") === "stripe" && params.has("session_id")) {
+      const sessionId = params.get("session_id");
       setActiveTab("billing");
       window.history.replaceState({}, "", window.location.pathname);
       setActionLoading("billing-refresh");
       base44.functions
-        .invoke("sync-billing-status", {})
+        .invoke("sync-billing-status", { session_id: sessionId })
         .then((result) => {
           setBillingSubscription(result?.subscription || null);
           setBillingAccess(result?.access || null);
           setPixPayment(result?.payment || result?.latest_payment || null);
+          setBillingCapabilities(result?.payment_capabilities || { card_recurring: true, pix: false });
           const status = result?.subscription?.status;
-          if (["authorized", "active"].includes(status)) {
-            showFeedback("Assinatura confirmada pelo Mercado Pago.");
-          } else if (["cancelled", "canceled", "payment_failed", "rejected"].includes(status)) {
+          if (["trialing", "active"].includes(status)) {
+            showFeedback("Cobrança confirmada com segurança pela Stripe.");
+          } else if (["cancelled", "canceled", "payment_failed", "rejected", "past_due"].includes(status)) {
             showFeedback(
-              "Pagamento não aprovado pelo Mercado Pago. Tente novamente com outro cartão ou use Pix.",
+              "Pagamento não aprovado. Atualize o método de pagamento ou use Pix.",
               "error"
             );
           } else {
-            showFeedback("Assinatura ainda pendente. O acesso será atualizado após a confirmação do Mercado Pago.");
+            showFeedback("Pagamento em processamento. O status será atualizado automaticamente pela Stripe.");
           }
         })
         .catch((error) => {
@@ -1364,25 +1379,14 @@ export default function App() {
     }
   };
 
-  const authorizeCardSubscription = async ({ card_token_id, payer_email, attempt_id }) => {
+  const startSubscriptionCheckout = async () => {
     setActionLoading("billing-card");
     try {
-      const result = await base44.functions.invoke("create-card-subscription", {
-        card_token_id,
-        payer_email,
-        attempt_id,
-        app_url: OFFICIAL_APP_URL,
+      const result = await base44.functions.invoke("create-subscription-checkout", {
+        app_url: window.location.origin,
       });
-
-      setBillingSubscription(result?.subscription || billingSubscription);
-      setBillingAccess(result?.access || billingAccess);
-      showFeedback(
-        result?.pending_authorization
-          ? "Dados recebidos. O Mercado Pago está confirmando a autorização."
-          : result?.already_active
-          ? "Sua assinatura já está ativa."
-          : "Cartão autorizado. A primeira cobrança pode levar até 1 hora para ser processada."
-      );
+      if (!result?.url) throw new Error("A Stripe não retornou o endereço do checkout.");
+      window.location.assign(result.url);
       return result;
     } catch (error) {
       console.error(error);
@@ -1397,14 +1401,12 @@ export default function App() {
     }
   };
 
-  const createPixPayment = async (cpf) => {
+  const createPixPayment = async () => {
     setActionLoading("billing-pix");
     try {
-      const result = await base44.functions.invoke("create-pix-payment", { cpf });
-      setBillingSubscription(result?.subscription || billingSubscription);
-      setBillingAccess(result?.access || billingAccess);
-      setPixPayment(result?.payment || pixPayment);
-      showFeedback(result?.reused ? "Pix pendente recuperado." : "Pix gerado com segurança.");
+      const result = await base44.functions.invoke("create-pix-payment", { app_url: window.location.origin });
+      if (!result?.url) throw new Error("A Stripe não retornou o endereço do Pix.");
+      window.location.assign(result.url);
       return result;
     } catch (error) {
       console.error(error);
@@ -1419,6 +1421,20 @@ export default function App() {
     }
   };
 
+  const openBillingPortal = async () => {
+    setActionLoading("billing-portal");
+    try {
+      const result = await base44.functions.invoke("create-billing-portal", { app_url: window.location.origin });
+      if (!result?.url) throw new Error("A Stripe não retornou o portal de cobrança.");
+      window.location.assign(result.url);
+    } catch (error) {
+      console.error(error);
+      showFeedback(`Erro ao abrir cobrança: ${getErrorMessage(error)}`, "error");
+    } finally {
+      setActionLoading("");
+    }
+  };
+
   const refreshBillingStatus = async () => {
     setActionLoading("billing-refresh");
     try {
@@ -1426,6 +1442,7 @@ export default function App() {
       setBillingSubscription(result?.subscription || billingSubscription);
       setBillingAccess(result?.access || billingAccess);
       setPixPayment(result?.payment || result?.latest_payment || pixPayment);
+      setBillingCapabilities(result?.payment_capabilities || billingCapabilities);
       showFeedback("Status do pagamento atualizado.");
     } catch (error) {
       console.error(error);
@@ -1689,8 +1706,10 @@ export default function App() {
         billingSubscription={billingSubscription}
         billingAccess={billingAccess}
         pixPayment={pixPayment}
-        onAuthorizeCard={authorizeCardSubscription}
+        billingCapabilities={billingCapabilities}
+        onStartSubscription={startSubscriptionCheckout}
         onCreatePix={createPixPayment}
+        onManageBilling={openBillingPortal}
         onRefreshStatus={refreshBillingStatus}
         onLogout={handleLogout}
         actionLoading={actionLoading}
@@ -1843,8 +1862,10 @@ export default function App() {
                 billingSubscription={billingSubscription}
                 billingAccess={billingAccess}
                 pixPayment={pixPayment}
-                onAuthorizeCard={authorizeCardSubscription}
+                billingCapabilities={billingCapabilities}
+                onStartSubscription={startSubscriptionCheckout}
                 onCreatePix={createPixPayment}
+                onManageBilling={openBillingPortal}
                 onRefreshStatus={refreshBillingStatus}
                 actionLoading={actionLoading}
               />
@@ -3179,8 +3200,10 @@ function BillingAccessScreen({
   billingSubscription,
   billingAccess,
   pixPayment,
-  onAuthorizeCard,
+  billingCapabilities,
+  onStartSubscription,
   onCreatePix,
+  onManageBilling,
   onRefreshStatus,
   onLogout,
   actionLoading,
@@ -3212,8 +3235,10 @@ function BillingAccessScreen({
           billingSubscription={billingSubscription}
           billingAccess={billingAccess}
           pixPayment={pixPayment}
-          onAuthorizeCard={onAuthorizeCard}
+          billingCapabilities={billingCapabilities}
+          onStartSubscription={onStartSubscription}
           onCreatePix={onCreatePix}
+          onManageBilling={onManageBilling}
           onRefreshStatus={onRefreshStatus}
           actionLoading={actionLoading}
         />
@@ -3227,46 +3252,39 @@ function BillingView({
   billingSubscription,
   billingAccess,
   pixPayment,
-  onAuthorizeCard,
+  billingCapabilities,
+  onStartSubscription,
   onCreatePix,
+  onManageBilling,
   onRefreshStatus,
   actionLoading,
 }) {
-  const [cpf, setCpf] = useState("");
-  const [pixCopied, setPixCopied] = useState(false);
   const status = billingSubscription?.status || "not_started";
   const providerSubscriptionStatus =
-    billingSubscription?.mercado_pago_subscription_status ||
-    (["authorized", "active", "paused", "pending", "cancelled", "canceled"].includes(status)
+    billingSubscription?.stripe_subscription_status ||
+    (["trialing", "active", "past_due", "unpaid", "incomplete", "paused", "canceled"].includes(status)
       ? status
       : "not_started");
   const recurringPaymentStatus =
     (pixPayment?.billing_flow === "subscription" ? pixPayment?.status : "") ||
     billingSubscription?.last_payment_status ||
     "not_started";
-  const recurringPaymentFailed = ["rejected", "payment_failed", "charged_back", "refunded"].includes(
+  const recurringPaymentFailed = ["rejected", "payment_failed", "past_due", "unpaid", "charged_back", "refunded"].includes(
     recurringPaymentStatus
   );
-  const recurringAuthorized =
-    status === "active" ||
-    (["authorized", "active"].includes(providerSubscriptionStatus) && !recurringPaymentFailed);
+  const hasStripeSubscription = Boolean(billingSubscription?.stripe_subscription_id);
+  const recurringActive =
+    hasStripeSubscription &&
+    ["trialing", "active"].includes(providerSubscriptionStatus) &&
+    !recurringPaymentFailed;
   const statusTone = billingStatusTone(status);
   const trialEnd = billingSubscription?.trial_end_date;
-  const trialDaysLeft = billingAccess?.daysLeft ?? (trialEnd ? Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86400000)) : 7);
+  const trialDaysLeft =
+    billingAccess?.daysLeft ??
+    (trialEnd ? Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86400000)) : 7);
   const supportHref = supportWhatsAppLink("Oi, preciso de suporte para ativar minha assinatura do StudiosBook.");
-  const pixQrCode = pixPayment?.qr_code || "";
-  const pixQrImage = pixPayment?.qr_code_base64 || "";
-
-  const handleCopyPix = async () => {
-    if (!pixQrCode) return;
-    await navigator.clipboard.writeText(pixQrCode);
-    setPixCopied(true);
-    window.setTimeout(() => setPixCopied(false), 2200);
-  };
-
-  const scrollToCardForm = () => {
-    document.getElementById("studiosbook-card-form")?.scrollIntoView({ behavior: "smooth", block: "center" });
-  };
+  const hasStripeCustomer = Boolean(billingSubscription?.stripe_customer_id);
+  const pixAvailable = billingCapabilities?.pix === true;
 
   return (
     <div className="grid gap-6">
@@ -3281,18 +3299,32 @@ function BillingView({
               7 dias grátis desde o cadastro. Depois {PRODUCT_PRICE}.
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
-              Escolha cartão para cobrança recorrente automática ou Pix para liberar 30 dias de acesso por pagamento.
+              {pixAvailable
+                ? "Checkout protegido pela Stripe, com cartão recorrente ou Pix avulso para 30 dias de acesso."
+                : "Checkout protegido pela Stripe para assinatura mensal recorrente no cartão."}
             </p>
-            <div className="mt-6 grid gap-3 sm:flex sm:flex-row">
-              {!recurringAuthorized && (
+            <div className="mt-6 grid gap-3 sm:flex sm:flex-wrap">
+              {!recurringActive && (
                 <Button
                   type="button"
-                  onClick={scrollToCardForm}
+                  onClick={onStartSubscription}
                   disabled={actionLoading === "billing-card"}
                   className="h-12 w-full rounded-full bg-rose-500 px-4 text-white hover:bg-rose-600 sm:w-auto sm:px-6"
                 >
                   <CreditCard className="mr-2 h-4 w-4" />
-                  Preencher cartão
+                  {actionLoading === "billing-card" ? "Abrindo Stripe..." : "Assinar com cartão"}
+                </Button>
+              )}
+              {hasStripeCustomer && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={onManageBilling}
+                  disabled={actionLoading === "billing-portal"}
+                  className="h-12 w-full rounded-full bg-white/10 px-4 text-white hover:bg-white/15 sm:w-auto sm:px-6"
+                >
+                  <Settings className="mr-2 h-4 w-4" />
+                  {actionLoading === "billing-portal" ? "Abrindo..." : "Gerenciar cobrança"}
                 </Button>
               )}
               <Button
@@ -3308,7 +3340,7 @@ function BillingView({
             </div>
           </div>
 
-          <div className="min-w-0 rounded-2xl border border-white/10 bg-white/10 p-4 sm:rounded-[1.75rem] sm:bg-white/8 sm:p-5 sm:backdrop-blur">
+          <div className="min-w-0 rounded-2xl border border-white/10 bg-white/10 p-4 sm:rounded-[1.75rem] sm:p-5 sm:backdrop-blur">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-white/55">Status da conta</p>
@@ -3319,7 +3351,7 @@ function BillingView({
             <div className="mt-5 grid gap-3">
               <MiniMetric label="Profissional" value={user?.email || "-"} />
               <MiniMetric label="Plano" value={billingSubscription?.plan_name || "StudiosBook Intermediário"} />
-              <MiniMetric label="Assinatura Mercado Pago" value={billingStatusLabel(providerSubscriptionStatus)} />
+              <MiniMetric label="Assinatura Stripe" value={billingStatusLabel(providerSubscriptionStatus)} />
               <MiniMetric label="Último pagamento" value={billingStatusLabel(recurringPaymentStatus)} />
               <MiniMetric label="Teste grátis" value={trialEnd ? `${trialDaysLeft} dia(s) restantes` : "7 dias desde o cadastro"} />
               <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
@@ -3328,127 +3360,78 @@ function BillingView({
         </div>
       </section>
 
-      <section className="grid min-w-0 gap-4 sm:gap-6 lg:grid-cols-2">
+      <section className={`grid min-w-0 gap-4 sm:gap-6 ${pixAvailable ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
         <Panel>
           <PanelHeader
             title="Cartão recorrente"
-            subtitle="Autorize uma vez e o Mercado Pago processa R$ 26,90 mensalmente."
+            subtitle="A Stripe processa R$ 26,90 por mês e trata autenticação bancária com segurança."
           />
           <div className="mt-5 grid gap-4">
             {[
-              ["Teste vinculado ao cadastro", "Os 7 dias começam na criação da conta, mesmo que o checkout seja aberto depois.", Sparkles],
-              ["Cobrança automática", "A recorrência mensal é processada pelo Mercado Pago após autorização.", CreditCard],
+              ["Teste preservado", "Os 7 dias continuam contados desde a criação da conta.", Sparkles],
+              ["Controle completo", "Troque o cartão, consulte faturas ou cancele pelo portal da Stripe.", CreditCard],
             ].map(([title, text, Icon]) => (
               <div key={title} className="flex items-start gap-3 rounded-[1.25rem] bg-zinc-50 p-4">
                 <Icon className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" />
-                <div>
+                <div className="min-w-0">
                   <p className="font-black text-zinc-950">{title}</p>
                   <p className="mt-1 text-sm leading-6 text-zinc-500">{text}</p>
                 </div>
               </div>
             ))}
-            {recurringAuthorized ? (
+            {recurringActive ? (
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
                 <p className="font-black">
-                  {recurringPaymentStatus === "approved"
-                    ? "Pagamento confirmado"
-                    : recurringPaymentStatus === "pending"
-                    ? "Pagamento em análise pelo Mercado Pago"
-                    : "Cartão autorizado com segurança"}
+                  {recurringPaymentStatus === "approved" ? "Pagamento confirmado" : "Assinatura protegida pela Stripe"}
                 </p>
                 <p className="mt-1 text-emerald-900/75">
-                  {recurringPaymentStatus === "approved"
-                    ? "A mensalidade foi confirmada e a recorrência está ativa."
-                    : recurringPaymentStatus === "pending"
-                    ? "Não envie outro cartão. A análise será atualizada automaticamente."
-                    : "A primeira cobrança pode levar até 1 hora. Use Atualizar status para acompanhar."}
+                  A situação financeira é atualizada automaticamente pelos eventos assinados da Stripe.
                 </p>
               </div>
             ) : (
-              <MercadoPagoCardForm
-                userEmail={user?.email || ""}
+              <Button
+                id="studiosbook-card-form"
+                type="button"
+                onClick={onStartSubscription}
                 disabled={actionLoading === "billing-card"}
-                onAuthorize={onAuthorizeCard}
-              />
+                className="h-12 w-full rounded-full bg-zinc-950 px-4 text-white hover:bg-zinc-800"
+              >
+                <CreditCard className="mr-2 h-4 w-4" />
+                {actionLoading === "billing-card" ? "Abrindo checkout..." : "Continuar para a Stripe"}
+              </Button>
             )}
           </div>
         </Panel>
 
-        <Panel>
+        {pixAvailable && <Panel>
           <PanelHeader
             title="Pagamento por Pix"
-            subtitle="Pagamento avulso de R$ 26,90 que libera 30 dias após a aprovação."
+            subtitle="Pagamento avulso de R$ 26,90, sem renovação automática, para liberar 30 dias."
           />
-          <div className="mt-5 grid gap-3">
-            <label className="grid gap-2 text-sm font-black text-zinc-700">
-              CPF do pagador
-              <Input
-                value={cpf}
-                onChange={(event) => setCpf(event.target.value)}
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder="000.000.000-00"
-                className="h-12 rounded-2xl bg-zinc-50"
-              />
-            </label>
-            <p className="text-xs leading-5 text-zinc-500">
-              O CPF é enviado diretamente ao Mercado Pago para gerar a cobrança e não é armazenado pelo StudiosBook.
-            </p>
+          <div className="mt-5 grid gap-4">
+            <div className="flex min-w-0 items-start gap-3 rounded-[1.25rem] bg-emerald-50 p-4">
+              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+              <p className="min-w-0 text-sm leading-6 text-emerald-950">
+                O QR Code e a confirmação são exibidos no ambiente protegido da Stripe.
+              </p>
+            </div>
             <Button
               type="button"
-              onClick={() => onCreatePix(cpf)}
+              onClick={onCreatePix}
               disabled={actionLoading === "billing-pix"}
               className="h-12 w-full rounded-full bg-emerald-600 px-4 text-white hover:bg-emerald-700"
             >
               <QrCode className="mr-2 h-4 w-4" />
-              {actionLoading === "billing-pix" ? "Gerando Pix..." : "Gerar Pix de R$ 26,90"}
+              {actionLoading === "billing-pix" ? "Abrindo Stripe..." : "Pagar R$ 26,90 por Pix"}
             </Button>
           </div>
-
-          {pixQrCode && (
-            <div className="mt-5 min-w-0 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 sm:rounded-[1.5rem] sm:p-4">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                {pixQrImage && (
-                  <img
-                    src={`data:image/png;base64,${pixQrImage}`}
-                    alt="QR Code Pix do StudiosBook"
-                    className="h-auto w-full max-w-36 self-center rounded-xl bg-white p-2"
-                  />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={billingStatusTone(pixPayment?.status)}>{billingStatusLabel(pixPayment?.status)}</Badge>
-                    <span className="text-xs font-bold text-emerald-900">Válido até {formatDateTime(pixPayment?.date_of_expiration)}</span>
-                  </div>
-                  <p className="mt-3 line-clamp-3 break-all text-xs leading-5 text-emerald-950">{pixQrCode}</p>
-                  <div className="mt-3 grid gap-2 sm:flex sm:flex-wrap">
-                    <Button type="button" onClick={handleCopyPix} className="w-full rounded-full bg-zinc-950 px-3 text-white sm:w-auto">
-                      <Copy className="mr-2 h-4 w-4" />
-                      {pixCopied ? "Copiado" : "Copiar código Pix"}
-                    </Button>
-                    {pixPayment?.ticket_url && (
-                      <a
-                        href={pixPayment.ticket_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-white px-3 text-center text-sm font-black text-zinc-900 sm:w-auto sm:px-4"
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                        Abrir no Mercado Pago
-                      </a>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </Panel>
+        </Panel>}
       </section>
 
       <Panel>
         <PanelHeader
           title="Resumo da assinatura"
-          subtitle="Acompanhe o período gratuito, vencimento e status do seu plano."
+          subtitle="Acompanhe período gratuito, vencimento e situação financeira."
         />
         <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
           <InfoCard title="Início do teste" value={formatDateTime(billingSubscription?.trial_start_date)} />
@@ -3456,23 +3439,28 @@ function BillingView({
           <InfoCard title="Acesso válido até" value={formatDateTime(billingSubscription?.current_period_end)} />
           <InfoCard title="Próxima cobrança" value={formatDateTime(billingSubscription?.next_payment_date)} />
           <InfoCard title="Última sincronização" value={formatDateTime(billingSubscription?.last_sync_date)} />
-          <InfoCard title="Assinatura Mercado Pago" value={billingStatusLabel(providerSubscriptionStatus)} />
+          <InfoCard title="Assinatura Stripe" value={billingStatusLabel(providerSubscriptionStatus)} />
           <InfoCard title="Último pagamento" value={billingStatusLabel(recurringPaymentStatus)} />
         </div>
 
-        <div className="mt-5 grid gap-3 sm:flex sm:flex-row">
-            <a
-              href={supportHref}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-emerald-500 px-4 text-sm font-black text-white transition hover:bg-emerald-600 sm:w-auto sm:px-5"
-            >
-              <MessageCircle className="h-4 w-4" />
-              Suporte no WhatsApp
-            </a>
+        <div className="mt-5 grid gap-3 sm:flex sm:flex-wrap">
+          {hasStripeCustomer && (
+            <Button type="button" onClick={onManageBilling} className="h-11 w-full rounded-full bg-zinc-950 px-5 text-white sm:w-auto">
+              <Settings className="mr-2 h-4 w-4" />
+              Gerenciar na Stripe
+            </Button>
+          )}
+          <a
+            href={supportHref}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-emerald-500 px-4 text-sm font-black text-white transition hover:bg-emerald-600 sm:w-auto sm:px-5"
+          >
+            <MessageCircle className="h-4 w-4" />
+            Suporte no WhatsApp
+          </a>
         </div>
       </Panel>
-
     </div>
   );
 }
@@ -3512,7 +3500,7 @@ function PrivacyPolicyView() {
               "Dados da conta: nome, e-mail e autenticação da profissional.",
               "Dados do negócio: nome do studio, categorias, serviços, agenda e configurações.",
               "Dados de clientes cadastradas pela profissional: nome, WhatsApp, preferências, histórico de atendimento e observações operacionais.",
-              "Dados de cobrança: status de assinatura, referência de checkout e identificadores retornados pelo Mercado Pago.",
+              "Dados de cobrança: status de assinatura, referência de checkout e identificadores retornados pela Stripe.",
             ]}
           />
         </Panel>
@@ -3523,7 +3511,7 @@ function PrivacyPolicyView() {
             items={[
               "Permitir cadastro de clientes, agenda, atendimentos, retornos e relatórios.",
               "Gerar backups, exportações CSV/JSON/PDF e documentos de procedimento.",
-              "Processar assinatura mensal e suporte financeiro via Mercado Pago.",
+              "Processar assinatura mensal e suporte financeiro via Stripe.",
               "Melhorar segurança, estabilidade, experiência do produto e atendimento de suporte.",
             ]}
           />
@@ -3545,7 +3533,7 @@ function PrivacyPolicyView() {
           <PanelHeader title="4. Compartilhamento" subtitle="Quando dados podem ser enviados a terceiros." />
           <PolicyList
             items={[
-              "Dados de pagamento podem ser enviados ao Mercado Pago para assinatura e cobrança recorrente.",
+              "Dados de pagamento são processados pela Stripe para assinatura, Pix e cobrança recorrente.",
               "Prestadores de infraestrutura podem processar dados apenas para hospedagem, autenticação e funcionamento do app.",
               "Dados podem ser apresentados quando houver obrigação legal, ordem de autoridade competente ou defesa de direitos.",
               "A BlackVision não vende listas de clientes cadastradas pelas profissionais.",

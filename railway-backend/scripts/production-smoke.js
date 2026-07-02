@@ -1,63 +1,55 @@
-import { randomUUID } from "node:crypto";
-import { createWebhookSignature } from "../src/billing.js";
+import Stripe from "stripe";
+import { stripeKeyMode } from "../src/billing.js";
 
-const apiUrl =
-  process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
-const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN || process.env.MP_ACCESS_TOKEN || "";
-const webhookSecret = process.env.MERCADO_PAGO_WEBHOOK_SECRET || process.env.MP_WEBHOOK_SECRET || "";
+const apiUrl = process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
+const secretKey = process.env.STRIPE_SECRET_KEY || "";
+const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
+const priceId = process.env.STRIPE_PRICE_ID || "";
 
-if (!accessToken || !webhookSecret) {
-  throw new Error("Variáveis de produção do Mercado Pago incompletas.");
+if (!secretKey || !webhookSecret || !priceId) {
+  throw new Error("Variáveis da Stripe incompletas.");
 }
 
-const healthResponse = await fetch(`${apiUrl}/health`);
+const stripe = new Stripe(secretKey, { maxNetworkRetries: 2, timeout: 12000 });
+const [healthResponse, balance, price] = await Promise.all([
+  fetch(`${apiUrl}/health`),
+  stripe.balance.retrieve(),
+  stripe.prices.retrieve(priceId),
+]);
 const health = await healthResponse.json();
 
-const paymentMethodsResponse = await fetch("https://api.mercadopago.com/v1/payment_methods", {
-  headers: { Authorization: `Bearer ${accessToken}` },
-});
-const paymentMethods = await paymentMethodsResponse.json();
-const pix = Array.isArray(paymentMethods)
-  ? paymentMethods.find((method) => method.id === "pix")
-  : null;
-
-const webhookUrl = `${apiUrl}/functions/mercado-pago-webhook`;
-const invalidResponse = await fetch(`${webhookUrl}?data.id=invalid-smoke`, {
+const webhookUrl = `${apiUrl}/functions/stripe-webhook`;
+const invalidResponse = await fetch(webhookUrl, {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ id: randomUUID(), type: "studiosbook_smoke_test", data: { id: "invalid-smoke" } }),
+  headers: { "Content-Type": "application/json", "stripe-signature": "invalid" },
+  body: JSON.stringify({ id: `evt_invalid_${Date.now()}`, type: "studiosbook.smoke" }),
 });
 
-const dataId = `smoke-${Date.now()}`;
-const requestId = randomUUID();
-const timestamp = String(Date.now());
-const eventId = randomUUID();
-const signature = createWebhookSignature({ dataId, requestId, timestamp, secret: webhookSecret });
-const headers = {
-  "Content-Type": "application/json",
-  "x-request-id": requestId,
-  "x-signature": `ts=${timestamp},v1=${signature}`,
+const event = {
+  id: `evt_smoke_${Date.now()}`,
+  object: "event",
+  api_version: null,
+  created: Math.floor(Date.now() / 1000),
+  data: { object: { id: "smoke", object: "studiosbook_smoke" } },
+  livemode: stripeKeyMode(secretKey) === "live",
+  pending_webhooks: 1,
+  request: { id: null, idempotency_key: null },
+  type: "studiosbook.smoke",
 };
-const event = { id: eventId, type: "studiosbook_smoke_test", action: "test", data: { id: dataId } };
-const validResponse = await fetch(`${webhookUrl}?data.id=${encodeURIComponent(dataId)}`, {
-  method: "POST",
-  headers,
-  body: JSON.stringify(event),
-});
+const payload = JSON.stringify(event);
+const signature = Stripe.webhooks.generateTestHeaderString({ payload, secret: webhookSecret });
+const headers = { "Content-Type": "application/json", "stripe-signature": signature };
+const validResponse = await fetch(webhookUrl, { method: "POST", headers, body: payload });
 const validBody = await validResponse.json();
-const duplicateResponse = await fetch(`${webhookUrl}?data.id=${encodeURIComponent(dataId)}`, {
-  method: "POST",
-  headers,
-  body: JSON.stringify(event),
-});
+const duplicateResponse = await fetch(webhookUrl, { method: "POST", headers, body: payload });
 const duplicateBody = await duplicateResponse.json();
 
 const result = {
   backend_health: healthResponse.ok && health.ok,
-  mercado_pago_token: paymentMethodsResponse.ok,
-  pix_available: pix?.status === "active",
+  stripe_api: balance?.object === "balance",
+  recurring_price: price?.active === true && price?.currency === "brl" && price?.unit_amount === 2690,
   webhook_secret_configured: Boolean(webhookSecret),
-  invalid_signature_rejected: invalidResponse.status === 401,
+  invalid_signature_rejected: invalidResponse.status === 400,
   valid_signature_accepted: validResponse.ok && validBody.received === true,
   duplicate_event_detected: duplicateResponse.ok && duplicateBody.duplicate === true,
 };

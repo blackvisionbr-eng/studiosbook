@@ -82,8 +82,8 @@ const result = {
   users_visible: Number(overview.data?.metrics?.users || 0) >= 1,
   recent_payments_available: Array.isArray(overview.data?.recent_payments),
   payment_diagnostics: diagnostics.response.ok && diagnostics.data.success === true,
-  mercado_pago_api: diagnostics.data?.mercado_pago_api === "online",
-  pix_available: diagnostics.data?.pix_available === true,
+  stripe_api: diagnostics.data?.stripe_api === "online",
+  recurring_price_ready: diagnostics.data?.recurring_price_ready === true,
   webhook_ready: diagnostics.data?.webhook_ready === true,
 };
 

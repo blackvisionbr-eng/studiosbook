@@ -8,29 +8,23 @@ import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import Stripe from "stripe";
 import {
   PIX_ACCESS_DAYS,
   TRIAL_DAYS,
   addDays,
   billingAccess,
-  billingReferenceType,
-  cardSubscriptionIdempotencyKey,
-  isValidCpf,
-  isValidCardToken,
-  isValidPayerEmail,
-  localPaymentStatus,
-  mercadoPagoCardErrorMessage,
-  normalizeCpf,
-  selectBestSubscription,
-  subscriptionChargeStart,
-  subscriptionRecoveryMode,
+  stripeInvoicePaymentIntentId,
+  stripeInvoicePaymentStatus,
+  stripeInvoiceSubscriptionId,
+  stripeKeyMode,
+  stripeObjectUid,
+  stripeSubscriptionPeriod,
+  stripeTimestampToIso,
   trialFromAccountCreation,
-  uidFromExternalReference,
-  validateWebhookSignature,
 } from "./billing.js";
 
 const app = express();
-const MP_API = "https://api.mercadopago.com";
 const PRODUCT_NAME = "StudiosBook";
 const PLAN_NAME = "StudiosBook Intermediário";
 const MONTHLY_AMOUNT = 26.9;
@@ -38,8 +32,8 @@ const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "blackvision-27f1
 const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || "https://studiosbook.com.br";
 const PUBLIC_API_URL =
   process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
-const MERCADO_PAGO_WEBHOOK_URL =
-  process.env.MERCADO_PAGO_WEBHOOK_URL || `${PUBLIC_API_URL}/functions/mercado-pago-webhook`;
+const STRIPE_WEBHOOK_URL =
+  process.env.STRIPE_WEBHOOK_URL || `${PUBLIC_API_URL}/functions/stripe-webhook`;
 const EXTRA_FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -53,6 +47,8 @@ const allowedOrigins = new Set(
     "https://blackvision-27f1c.web.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:4177",
+    "http://127.0.0.1:4177",
     ...EXTRA_FRONTEND_ORIGINS,
   ].filter(Boolean)
 );
@@ -153,9 +149,14 @@ app.use(
     limit: 300,
     standardHeaders: "draft-7",
     legacyHeaders: false,
-    skip: (req) => req.path === "/functions/mercado-pago-webhook",
+    skip: (req) => req.path === "/functions/stripe-webhook",
     message: { error: "Muitas solicitações. Aguarde alguns minutos." },
   })
+);
+app.post(
+  "/functions/stripe-webhook",
+  express.raw({ type: "application/json", limit: "256kb" }),
+  stripeWebhookHandler
 );
 app.use(express.json({ limit: "256kb" }));
 
@@ -181,43 +182,74 @@ app.use((req, res, next) => {
 function safeOrigin(value) {
   try {
     const parsed = new URL(value || PUBLIC_APP_URL);
-    return `${parsed.protocol}//${parsed.host}`;
+    const origin = `${parsed.protocol}//${parsed.host}`;
+    return allowedOrigins.has(origin) ? origin : PUBLIC_APP_URL;
   } catch {
     return PUBLIC_APP_URL;
   }
 }
 
-function mercadoPagoStatusToLocal(status) {
-  if (status === "authorized") return "authorized";
-  if (status === "paused") return "paused";
-  if (status === "cancelled" || status === "canceled") return "cancelled";
-  if (status === "pending") return "pending";
-  return status || "pending";
+function stripeSecretKey() {
+  return process.env.STRIPE_SECRET_KEY || "";
 }
 
-function apiAccessToken() {
-  return process.env.MERCADO_PAGO_ACCESS_TOKEN || process.env.MP_ACCESS_TOKEN || "";
+function stripeWebhookSecret() {
+  return process.env.STRIPE_WEBHOOK_SECRET || "";
 }
 
-function webhookSecret() {
-  return process.env.MERCADO_PAGO_WEBHOOK_SECRET || process.env.MP_WEBHOOK_SECRET || "";
+function stripePriceId() {
+  return process.env.STRIPE_PRICE_ID || "";
 }
 
-async function readMercadoPagoResponse(response) {
-  const text = await response.text();
-  if (!text) return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { raw: text };
+function stripePortalConfigurationId() {
+  return process.env.STRIPE_PORTAL_CONFIGURATION_ID || "";
+}
+
+function stripeMode() {
+  return stripeKeyMode(stripeSecretKey());
+}
+
+let stripeInstance = null;
+let stripeCapabilitiesCache = { expiresAt: 0, value: null };
+function stripeClient() {
+  const secret = stripeSecretKey();
+  if (!secret) {
+    const error = new Error("Stripe não configurada.");
+    error.missingSecret = "STRIPE_SECRET_KEY";
+    throw error;
   }
+  if (!stripeInstance) stripeInstance = new Stripe(secret, { maxNetworkRetries: 2, timeout: 12000 });
+  return stripeInstance;
+}
+
+async function stripePaymentCapabilities(force = false) {
+  if (!force && stripeCapabilitiesCache.value && stripeCapabilitiesCache.expiresAt > Date.now()) {
+    return stripeCapabilitiesCache.value;
+  }
+  const value = { card_recurring: Boolean(stripeSecretKey() && stripePriceId()), pix: false };
+  if (stripeSecretKey()) {
+    try {
+      const configurations = await stripeClient().paymentMethodConfigurations.list({ limit: 100 });
+      value.pix = configurations.data.some(
+        (configuration) =>
+          configuration.active &&
+          configuration.pix?.available === true &&
+          configuration.pix?.display_preference?.value !== "off"
+      );
+    } catch (error) {
+      console.warn("Stripe payment capabilities unavailable", { message: error?.message || "capability_check_failed" });
+    }
+  }
+  stripeCapabilitiesCache = { expiresAt: Date.now() + 5 * 60 * 1000, value };
+  return value;
 }
 
 function adminStatusPayload() {
   return {
     admin_ready: firebaseAdminReady,
-    mercado_pago_ready: Boolean(apiAccessToken()),
-    webhook_ready: Boolean(webhookSecret()),
+    stripe_ready: Boolean(stripeSecretKey() && stripePriceId()),
+    stripe_mode: stripeMode(),
+    webhook_ready: Boolean(stripeWebhookSecret()),
   };
 }
 
@@ -385,6 +417,8 @@ async function ensureBillingAccount(uid, email = "") {
   const trial = trialFromAccountCreation(authUser.metadata?.creationTime || new Date());
   const current = await currentSubscription(uid);
   const existing = current.data || {};
+  const migratingToStripe = existing.billing_provider !== "stripe";
+  const paidPeriodActive = new Date(existing.current_period_end || 0).getTime() > Date.now();
   const result = await persistBillingState(
     uid,
     {
@@ -392,10 +426,20 @@ async function ensureBillingAccount(uid, email = "") {
       plan_name: PLAN_NAME,
       monthly_amount: MONTHLY_AMOUNT,
       currency_id: "BRL",
+      billing_provider: "stripe",
       trial_start_date: trial.start.toISOString(),
       trial_end_date: trial.end.toISOString(),
       status: existing.status || (trial.active ? "trialing" : "expired"),
-      notes: existing.notes || "Teste gratuito iniciado na data de criação da conta.",
+      ...(migratingToStripe
+        ? {
+            stripe_subscription_status: "not_started",
+            last_payment_status: paidPeriodActive ? existing.last_payment_status || "approved" : "not_started",
+            last_payment_detail: "",
+          }
+        : {}),
+      notes: migratingToStripe
+        ? "Cobrança migrada para a Stripe; teste gratuito preservado desde o cadastro."
+        : existing.notes || "Teste gratuito iniciado na data de criação da conta.",
     },
     { email: accountEmail, forceAccess: authUser.customClaims?.platform_admin === true }
   );
@@ -405,27 +449,6 @@ async function ensureBillingAccount(uid, email = "") {
     latest_payment: await latestBillingPayment(uid),
     account_created_at: trial.start.toISOString(),
   };
-}
-
-async function mercadoPagoRequest(path, options = {}) {
-  const accessToken = apiAccessToken();
-  if (!accessToken) {
-    const error = new Error("Token do Mercado Pago não configurado.");
-    error.missingSecret = "MERCADO_PAGO_ACCESS_TOKEN";
-    throw error;
-  }
-
-  const response = await fetch(`${MP_API}${path}`, {
-    ...options,
-    signal: options.signal || AbortSignal.timeout(12000),
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
-  const data = await readMercadoPagoResponse(response);
-  return { response, data };
 }
 
 const USER_ENTITY_NAMES = [
@@ -493,315 +516,439 @@ async function listAuthUsers() {
   return users;
 }
 
-function paymentRecordFromMercadoPago(uid, payment) {
-  const transactionData = payment?.point_of_interaction?.transaction_data || {};
+function stripeResourceId(value) {
+  return typeof value === "string" ? value : value?.id || "";
+}
+
+function stripeSubscriptionScore(status) {
   return {
-    user_uid: uid,
-    user_email: payment?.payer?.email || "",
-    provider: "mercado_pago",
-    payment_method: payment?.payment_method_id || "",
-    payment_type: payment?.payment_type_id || "",
-    mercado_pago_payment_id: String(payment?.id || ""),
-    external_reference: payment?.external_reference || "",
-    status: localPaymentStatus(payment?.status),
-    status_detail: payment?.status_detail || "",
-    amount: Number(payment?.transaction_amount || MONTHLY_AMOUNT),
-    net_received_amount: Number(payment?.transaction_details?.net_received_amount || 0),
-    currency_id: payment?.currency_id || "BRL",
-    date_created: payment?.date_created || new Date().toISOString(),
-    date_approved: payment?.date_approved || "",
-    date_last_updated: payment?.date_last_updated || new Date().toISOString(),
-    date_of_expiration: payment?.date_of_expiration || "",
-    qr_code: transactionData.qr_code || "",
-    qr_code_base64: transactionData.qr_code_base64 || "",
-    ticket_url: transactionData.ticket_url || "",
-    live_mode: Boolean(payment?.live_mode),
-    updated_date: new Date().toISOString(),
+    active: 7,
+    trialing: 6,
+    past_due: 5,
+    incomplete: 4,
+    paused: 3,
+    unpaid: 2,
+    canceled: 1,
+    incomplete_expired: 0,
+  }[String(status || "").toLowerCase()] ?? -1;
+}
+
+function stripePaymentIntentStatus(status) {
+  if (status === "succeeded") return "approved";
+  if (["processing", "requires_action", "requires_confirmation"].includes(status)) return "pending";
+  return "rejected";
+}
+
+async function resolveStripeUid(object = {}) {
+  const direct = stripeObjectUid(object);
+  if (direct) return direct;
+
+  const subscriptionId = stripeInvoiceSubscriptionId(object) || stripeResourceId(object.subscription);
+  if (subscriptionId) {
+    const subscription = await stripeClient().subscriptions.retrieve(subscriptionId);
+    const fromSubscription = stripeObjectUid(subscription);
+    if (fromSubscription) return fromSubscription;
+  }
+
+  const customerId = stripeResourceId(object.customer);
+  if (customerId) {
+    const customer = await stripeClient().customers.retrieve(customerId);
+    if (!customer.deleted && customer.metadata?.studiosbook_uid) {
+      return String(customer.metadata.studiosbook_uid);
+    }
+  }
+  return "";
+}
+
+async function ensureStripeCustomer(uid, email, name = "") {
+  const account = await ensureBillingAccount(uid, email);
+  const storedId = account.subscription?.stripe_customer_id || "";
+  if (storedId) {
+    try {
+      const stored = await stripeClient().customers.retrieve(storedId);
+      if (!stored.deleted) return stored;
+    } catch (error) {
+      if (error?.statusCode !== 404) throw error;
+    }
+  }
+
+  const listed = email ? await stripeClient().customers.list({ email, limit: 100 }) : { data: [] };
+  let customer = listed.data.find((item) => item.metadata?.studiosbook_uid === uid);
+  if (!customer) {
+    customer = await stripeClient().customers.create(
+      {
+        email: email || undefined,
+        name: name || undefined,
+        metadata: { studiosbook_uid: uid, product: PRODUCT_NAME },
+      },
+      { idempotencyKey: `studiosbook-customer-${createHash("sha256").update(uid).digest("hex")}` }
+    );
+  }
+
+  await persistBillingState(
+    uid,
+    { billing_provider: "stripe", stripe_customer_id: customer.id, last_sync_date: new Date().toISOString() },
+    { email, forceAccess: await isPlatformAdminUid(uid) }
+  );
+  return customer;
+}
+
+async function applyStripeSubscription(uid, subscription) {
+  const ownerUid = stripeObjectUid(subscription);
+  if (!uid || (ownerUid && ownerUid !== uid)) throw new Error("Assinatura Stripe não pertence à conta informada.");
+
+  const account = await ensureBillingAccount(uid);
+  const period = stripeSubscriptionPeriod(subscription);
+  const providerStatus = String(subscription.status || "pending").toLowerCase();
+  const firstItem = subscription.items?.data?.[0];
+  const failed = ["past_due", "unpaid", "incomplete", "incomplete_expired"].includes(providerStatus);
+  const patch = {
+    billing_provider: "stripe",
+    stripe_customer_id: stripeResourceId(subscription.customer) || account.subscription?.stripe_customer_id || "",
+    stripe_subscription_id: subscription.id || "",
+    stripe_price_id: stripeResourceId(firstItem?.price) || stripePriceId(),
+    stripe_subscription_status: providerStatus,
+    cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+    canceled_at: stripeTimestampToIso(subscription.canceled_at),
+    ...(period.start ? { current_period_start: period.start } : {}),
+    ...(period.end ? { current_period_end: period.end, next_payment_date: period.end } : {}),
+    ...(subscription.trial_end ? { trial_end_date: stripeTimestampToIso(subscription.trial_end) } : {}),
+    last_sync_date: new Date().toISOString(),
+    notes: `Assinatura Stripe ${providerStatus} sincronizada.`,
+  };
+  if (failed) {
+    patch.last_payment_status = "rejected";
+    patch.last_payment_detail = providerStatus;
+  } else if (providerStatus === "canceled") {
+    patch.last_payment_status = account.subscription?.last_payment_status || "cancelled";
+  } else if (providerStatus === "trialing" && account.subscription?.last_payment_status !== "approved") {
+    patch.last_payment_status = "pending";
+  }
+
+  return persistBillingState(uid, patch, {
+    email: account.subscription?.user_email || "",
+    forceAccess: await isPlatformAdminUid(uid),
+  });
+}
+
+function stripeInvoicePeriod(invoice = {}) {
+  const periods = (invoice.lines?.data || []).map((line) => line?.period || {}).filter(Boolean);
+  const starts = periods.map((period) => Number(period.start)).filter((value) => value > 0);
+  const ends = periods.map((period) => Number(period.end)).filter((value) => value > 0);
+  return {
+    start: starts.length ? stripeTimestampToIso(Math.min(...starts)) : stripeTimestampToIso(invoice.period_start),
+    end: ends.length ? stripeTimestampToIso(Math.max(...ends)) : stripeTimestampToIso(invoice.period_end),
   };
 }
 
-async function applyPixPayment(uid, payment) {
-  const referenceUid = uidFromExternalReference(payment?.external_reference);
-  const referenceType = billingReferenceType(payment?.external_reference);
-  if (
-    !uid ||
-    (referenceUid && referenceUid !== uid) ||
-    (referenceType && referenceType !== "pix") ||
-    (!referenceType && payment?.payment_method_id !== "pix")
-  ) {
-    throw new Error("Pagamento Pix não pertence à conta informada.");
-  }
-
-  const account = await ensureBillingAccount(uid, payment?.payer?.email || "");
-  const record = paymentRecordFromMercadoPago(uid, payment);
-  const paymentId = record.mercado_pago_payment_id;
-  if (!paymentId) throw new Error("Pagamento Mercado Pago sem identificador.");
-
-  await paymentCollection(uid).doc(paymentId).set(record, { merge: true });
+async function applyStripeInvoice(uid, invoice, forcedStatus = "") {
+  if (!uid) throw new Error("Fatura Stripe sem vínculo com a conta StudiosBook.");
+  const account = await ensureBillingAccount(uid, invoice.customer_email || "");
+  const status = forcedStatus || stripeInvoicePaymentStatus(invoice);
+  const period = stripeInvoicePeriod(invoice);
+  const now = new Date().toISOString();
+  const paymentIntentId = stripeInvoicePaymentIntentId(invoice);
+  const subscriptionId = stripeInvoiceSubscriptionId(invoice);
+  const record = {
+    user_uid: uid,
+    user_email: invoice.customer_email || account.subscription?.user_email || "",
+    provider: "stripe",
+    billing_flow: "subscription",
+    stripe_invoice_id: invoice.id,
+    stripe_payment_intent_id: paymentIntentId,
+    stripe_subscription_id: subscriptionId,
+    status,
+    status_detail: invoice.status || forcedStatus || "",
+    amount: Number(invoice.amount_paid || invoice.total || 0) / 100,
+    net_received_amount: Number(invoice.amount_paid || 0) / 100,
+    currency_id: String(invoice.currency || "brl").toUpperCase(),
+    date_created: stripeTimestampToIso(invoice.created) || now,
+    date_approved: status === "approved" ? stripeTimestampToIso(invoice.status_transitions?.paid_at) || now : "",
+    date_last_updated: now,
+    live_mode: Boolean(invoice.livemode),
+    updated_date: now,
+  };
+  await paymentCollection(uid).doc(invoice.id).set(record, { merge: true });
 
   const patch = {
-    pix_payment_id: paymentId,
-    payment_method_id: record.payment_method || "pix",
-    last_payment_status: record.status,
-    last_payment_date: record.date_approved || record.date_last_updated,
-    last_sync_date: new Date().toISOString(),
-    external_reference: record.external_reference,
-    notes: `Pagamento Pix ${record.status} sincronizado pelo Mercado Pago.`,
+    billing_provider: "stripe",
+    stripe_customer_id: stripeResourceId(invoice.customer) || account.subscription?.stripe_customer_id || "",
+    stripe_subscription_id: subscriptionId || account.subscription?.stripe_subscription_id || "",
+    stripe_invoice_id: invoice.id,
+    stripe_payment_intent_id: paymentIntentId,
+    last_payment_status: status,
+    last_payment_detail: record.status_detail,
+    last_payment_date: record.date_approved || now,
+    last_sync_date: now,
+    notes: `Fatura Stripe ${status} sincronizada.`,
   };
+  if (status === "approved") {
+    if (period.start) patch.current_period_start = period.start;
+    if (period.end) {
+      patch.current_period_end = period.end;
+      patch.next_payment_date = period.end;
+    }
+    patch.last_approved_payment_id = invoice.id;
+    patch.last_approved_payment_date = record.date_approved;
+  } else if (status === "pending" && !forcedStatus) {
+    delete patch.last_payment_status;
+    delete patch.last_payment_detail;
+    delete patch.last_payment_date;
+  }
 
-  if (record.status === "approved") {
-    const now = new Date(record.date_approved || new Date());
-    const possibleStarts = [
+  const billing = await persistBillingState(uid, patch, {
+    email: account.subscription?.user_email || record.user_email,
+    forceAccess: await isPlatformAdminUid(uid),
+  });
+  return { ...billing, payment: { id: invoice.id, ...record } };
+}
+
+async function applyStripePixPayment(uid, paymentIntent) {
+  const ownerUid = stripeObjectUid(paymentIntent);
+  if (!uid || (ownerUid && ownerUid !== uid)) throw new Error("Pagamento Pix Stripe não pertence à conta informada.");
+  const account = await ensureBillingAccount(uid);
+  const now = new Date();
+  const status = stripePaymentIntentStatus(paymentIntent.status);
+  const record = {
+    user_uid: uid,
+    user_email: account.subscription?.user_email || "",
+    provider: "stripe",
+    billing_flow: "pix",
+    payment_method: "pix",
+    stripe_payment_intent_id: paymentIntent.id,
+    status,
+    status_detail: paymentIntent.last_payment_error?.code || paymentIntent.status || "",
+    amount: Number(paymentIntent.amount_received || paymentIntent.amount || 0) / 100,
+    net_received_amount: Number(paymentIntent.amount_received || 0) / 100,
+    currency_id: String(paymentIntent.currency || "brl").toUpperCase(),
+    date_created: stripeTimestampToIso(paymentIntent.created) || now.toISOString(),
+    date_approved: status === "approved" ? now.toISOString() : "",
+    date_last_updated: now.toISOString(),
+    live_mode: Boolean(paymentIntent.livemode),
+    updated_date: now.toISOString(),
+  };
+  await paymentCollection(uid).doc(paymentIntent.id).set(record, { merge: true });
+
+  const patch = {
+    billing_provider: "stripe",
+    stripe_customer_id: stripeResourceId(paymentIntent.customer) || account.subscription?.stripe_customer_id || "",
+    stripe_payment_intent_id: paymentIntent.id,
+    last_payment_status: status,
+    last_payment_detail: record.status_detail,
+    last_payment_date: record.date_approved || record.date_last_updated,
+    last_sync_date: now.toISOString(),
+    notes: `Pagamento Pix Stripe ${status} sincronizado.`,
+  };
+  if (status === "approved") {
+    const starts = [
       now,
       new Date(account.subscription?.trial_end_date || 0),
       new Date(account.subscription?.current_period_end || 0),
     ].filter((date) => Number.isFinite(date.getTime()));
-    const periodStart = new Date(Math.max(...possibleStarts.map((date) => date.getTime())));
-    patch.status = "active";
+    const periodStart = new Date(Math.max(...starts.map((date) => date.getTime())));
     patch.current_period_start = periodStart.toISOString();
     patch.current_period_end = addDays(periodStart, PIX_ACCESS_DAYS).toISOString();
     patch.next_payment_date = patch.current_period_end;
-  } else if (!account.access.allowed) {
-    patch.status = record.status === "pending" ? "pending" : "payment_failed";
+    patch.last_approved_payment_id = paymentIntent.id;
+    patch.last_approved_payment_date = now.toISOString();
   }
-
   const billing = await persistBillingState(uid, patch, {
-    email: account.subscription?.user_email || payment?.payer?.email || "",
+    email: account.subscription?.user_email || "",
     forceAccess: await isPlatformAdminUid(uid),
   });
-  return { ...billing, payment: { id: paymentId, ...record } };
+  return { ...billing, payment: { id: paymentIntent.id, ...record } };
 }
 
-async function applySubscriptionPayment(uid, payment) {
-  const referenceUid = uidFromExternalReference(payment?.external_reference);
-  if (
-    !uid ||
-    billingReferenceType(payment?.external_reference) !== "subscription" ||
-    referenceUid !== uid
-  ) {
-    throw new Error("Pagamento recorrente não pertence à conta informada.");
-  }
-
-  const account = await ensureBillingAccount(uid, payment?.payer?.email || "");
-  const record = {
-    ...paymentRecordFromMercadoPago(uid, payment),
-    billing_flow: "subscription",
-  };
-  const paymentId = record.mercado_pago_payment_id;
-  if (!paymentId) throw new Error("Pagamento Mercado Pago sem identificador.");
-
-  await paymentCollection(uid).doc(paymentId).set(record, { merge: true });
-  const patch = {
-    subscription_payment_id: paymentId,
-    payment_method_id: record.payment_method || account.subscription?.payment_method_id || "",
-    last_payment_status: record.status,
-    last_payment_detail: record.status_detail,
-    last_payment_date: record.date_approved || record.date_last_updated,
-    last_sync_date: new Date().toISOString(),
-    notes: `Pagamento recorrente ${record.status} sincronizado pelo Mercado Pago.`,
-  };
-
-  if (record.status === "approved") {
-    const approvedAt = new Date(record.date_approved || record.date_last_updated || new Date());
-    const configuredNextPayment = new Date(account.subscription?.next_payment_date || 0);
-    const periodEnd =
-      Number.isFinite(configuredNextPayment.getTime()) && configuredNextPayment > approvedAt
-        ? configuredNextPayment
-        : addDays(approvedAt, PIX_ACCESS_DAYS);
-    patch.current_period_start = approvedAt.toISOString();
-    patch.current_period_end = periodEnd.toISOString();
-    patch.last_approved_payment_id = paymentId;
-    patch.last_approved_payment_date = approvedAt.toISOString();
-  }
-
-  const billing = await persistBillingState(
-    uid,
-    patch,
-    {
-      email: account.subscription?.user_email || payment?.payer?.email || "",
-      forceAccess: await isPlatformAdminUid(uid),
+async function findStripeSubscription(customerId, preferredId = "") {
+  if (preferredId) {
+    try {
+      return await stripeClient().subscriptions.retrieve(preferredId, { expand: ["latest_invoice"] });
+    } catch (error) {
+      if (error?.statusCode !== 404) throw error;
     }
-  );
-  return { ...billing, payment: { id: paymentId, ...record } };
+  }
+  if (!customerId) return null;
+  const subscriptions = await stripeClient().subscriptions.list({ customer: customerId, status: "all", limit: 20 });
+  return [...subscriptions.data].sort((left, right) => {
+    const statusDifference = stripeSubscriptionScore(right.status) - stripeSubscriptionScore(left.status);
+    return statusDifference || Number(right.created || 0) - Number(left.created || 0);
+  })[0] || null;
 }
 
-async function applySubscription(uid, subscription) {
-  const referenceUid = uidFromExternalReference(subscription?.external_reference);
-  if (!uid || (referenceUid && referenceUid !== uid)) {
-    throw new Error("Assinatura não pertence à conta informada.");
+async function syncStripeBilling(uid, options = {}) {
+  let account = await ensureBillingAccount(uid, options.email || "");
+  if (options.checkoutSessionId) {
+    const session = await stripeClient().checkout.sessions.retrieve(options.checkoutSessionId, {
+      expand: ["subscription", "payment_intent", "setup_intent"],
+    });
+    if (stripeObjectUid(session) !== uid) throw new Error("Checkout Stripe não pertence à conta informada.");
+    await processStripeCheckoutSession(session);
+    account = await ensureBillingAccount(uid, options.email || "");
   }
 
-  const account = await ensureBillingAccount(uid, subscription?.payer_email || "");
-  return persistBillingState(
+  const subscription = await findStripeSubscription(
+    account.subscription?.stripe_customer_id,
+    account.subscription?.stripe_subscription_id
+  );
+  if (!subscription) return { ...account, latest_payment: await latestBillingPayment(uid) };
+
+  let result = await applyStripeSubscription(uid, subscription);
+  const invoices = await stripeClient().invoices.list({
+    subscription: subscription.id,
+    limit: 10,
+    expand: ["data.payments"],
+  });
+  for (const invoice of [...invoices.data].reverse()) result = await applyStripeInvoice(uid, invoice);
+  return { ...result, latest_payment: await latestBillingPayment(uid) };
+}
+
+async function createSubscriptionFromSetupSession(session, uid) {
+  const account = await ensureBillingAccount(uid);
+  const existing = await findStripeSubscription(
+    stripeResourceId(session.customer) || account.subscription?.stripe_customer_id,
+    account.subscription?.stripe_subscription_id
+  );
+  if (existing && !["canceled", "incomplete_expired"].includes(existing.status)) return existing;
+
+  const setupIntent = typeof session.setup_intent === "object"
+    ? session.setup_intent
+    : await stripeClient().setupIntents.retrieve(session.setup_intent);
+  const trialEnd = Number(session.metadata?.trial_end || 0);
+  const params = {
+    customer: stripeResourceId(session.customer),
+    items: [{ price: stripePriceId() }],
+    default_payment_method: stripeResourceId(setupIntent.payment_method),
+    payment_behavior: "default_incomplete",
+    payment_settings: { save_default_payment_method: "on_subscription" },
+    metadata: { studiosbook_uid: uid, product: PRODUCT_NAME },
+  };
+  if (trialEnd > Math.floor(Date.now() / 1000) + 60) params.trial_end = trialEnd;
+  return stripeClient().subscriptions.create(params, {
+    idempotencyKey: `studiosbook-subscription-${session.id}`,
+  });
+}
+
+async function processStripeCheckoutSession(session) {
+  const uid = stripeObjectUid(session);
+  if (!uid) throw new Error("Checkout Stripe sem vínculo com o StudiosBook.");
+  const flow = session.metadata?.billing_flow || "";
+  await persistBillingState(
     uid,
     {
-      mercado_pago_subscription_status: mercadoPagoStatusToLocal(subscription?.status),
-      current_period_start: subscription?.auto_recurring?.start_date || "",
-      ...(subscription?.auto_recurring?.end_date
-        ? { current_period_end: subscription.auto_recurring.end_date }
-        : {}),
-      next_payment_date: subscription?.next_payment_date || "",
-      mercado_pago_preapproval_id: subscription?.id || "",
-      mercado_pago_plan_id: subscription?.preapproval_plan_id || "",
-      checkout_url: subscription?.init_point || "",
-      external_reference: subscription?.external_reference || "",
-      payer_email: subscription?.payer_email || account.subscription?.user_email || "",
-      payment_method_id: subscription?.payment_method_id || "",
+      billing_provider: "stripe",
+      stripe_customer_id: stripeResourceId(session.customer),
+      stripe_checkout_session_id: session.id,
       last_sync_date: new Date().toISOString(),
-      notes: "Assinatura recorrente sincronizada com o Mercado Pago.",
     },
-    {
-      email: subscription?.payer_email || account.subscription?.user_email || "",
-      forceAccess: await isPlatformAdminUid(uid),
-    }
+    { email: session.customer_details?.email || session.customer_email || "", forceAccess: await isPlatformAdminUid(uid) }
   );
+
+  if (flow === "subscription_setup") {
+    const subscription = await createSubscriptionFromSetupSession(session, uid);
+    return applyStripeSubscription(uid, subscription);
+  }
+  if (flow === "subscription" && session.subscription) {
+    const subscription = typeof session.subscription === "object"
+      ? session.subscription
+      : await stripeClient().subscriptions.retrieve(session.subscription);
+    return applyStripeSubscription(uid, subscription);
+  }
+  if (flow === "pix" && session.payment_status === "paid" && session.payment_intent) {
+    const paymentIntent = typeof session.payment_intent === "object"
+      ? session.payment_intent
+      : await stripeClient().paymentIntents.retrieve(session.payment_intent);
+    return applyStripePixPayment(uid, paymentIntent);
+  }
+  return ensureBillingAccount(uid, session.customer_details?.email || session.customer_email || "");
 }
 
-async function syncPixPayment(uid, paymentId) {
-  const { response, data } = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(paymentId)}`);
-  if (!response.ok) {
-    const error = new Error("Não foi possível consultar o pagamento Pix no Mercado Pago.");
-    error.status = response.status;
-    error.providerResponse = data;
-    throw error;
-  }
-  return applyPixPayment(uid, data);
+async function claimStripeWebhookEvent(event) {
+  const ref = adminDb.collection("StripeWebhookEvent").doc(event.id);
+  return adminDb.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    const current = snapshot.exists ? snapshot.data() : null;
+    if (current?.status === "processed") return false;
+    const lastAttempt = new Date(current?.updated_date || 0).getTime();
+    if (current?.status === "processing" && Date.now() - lastAttempt < 5 * 60 * 1000) return false;
+    transaction.set(
+      ref,
+      {
+        event_id: event.id,
+        event_type: event.type,
+        live_mode: Boolean(event.livemode),
+        status: "processing",
+        attempts: Number(current?.attempts || 0) + 1,
+        created_date: current?.created_date || new Date().toISOString(),
+        updated_date: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+    return true;
+  });
 }
 
-async function syncSubscription(uid, preapprovalId) {
-  const { response, data } = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`);
-  if (!response.ok) {
-    const error = new Error("Não foi possível consultar a assinatura no Mercado Pago.");
-    error.status = response.status;
-    error.providerResponse = data;
-    throw error;
+async function handleStripeEvent(event) {
+  const object = event.data.object;
+  if (["checkout.session.completed", "checkout.session.async_payment_succeeded"].includes(event.type)) {
+    return processStripeCheckoutSession(object);
   }
-  return { ...(await applySubscription(uid, data)), mercado_pago_status: data.status || "" };
+  if (event.type === "checkout.session.async_payment_failed") {
+    const uid = await resolveStripeUid(object);
+    return uid
+      ? persistBillingState(uid, {
+          billing_provider: "stripe",
+          last_payment_status: "rejected",
+          last_payment_detail: event.type,
+          last_sync_date: new Date().toISOString(),
+        })
+      : null;
+  }
+  if (event.type.startsWith("customer.subscription.")) {
+    const uid = await resolveStripeUid(object);
+    return uid ? syncStripeBilling(uid) : null;
+  }
+  if (["invoice.paid", "invoice.payment_failed", "invoice.payment_action_required"].includes(event.type)) {
+    const uid = await resolveStripeUid(object);
+    if (!uid) return null;
+    const forcedStatus = event.type === "invoice.paid" ? "approved" : event.type === "invoice.payment_failed" ? "rejected" : "pending";
+    await applyStripeInvoice(uid, object, forcedStatus);
+    return syncStripeBilling(uid);
+  }
+  if (event.type.startsWith("payment_intent.") && object.metadata?.billing_flow === "pix") {
+    const uid = await resolveStripeUid(object);
+    return uid ? applyStripePixPayment(uid, object) : null;
+  }
+  return null;
 }
 
-async function syncLatestSubscriptionPayment(uid, preapprovalId) {
-  const invoiceResult = await mercadoPagoRequest(
-    `/authorized_payments/search?preapproval_id=${encodeURIComponent(preapprovalId)}`
-  );
-  if (!invoiceResult.response.ok) {
-    const error = new Error("Não foi possível consultar as faturas da assinatura no Mercado Pago.");
-    error.status = invoiceResult.response.status;
-    error.providerResponse = invoiceResult.data;
-    throw error;
-  }
-
-  const invoices = [...(invoiceResult.data?.results || [])]
-    .sort((left, right) => {
-      const leftDate = new Date(left?.last_modified || left?.date_created || 0).getTime();
-      const rightDate = new Date(right?.last_modified || right?.date_created || 0).getTime();
-      return leftDate - rightDate;
-    })
-    .slice(-24);
-  const paymentIds = [...new Set(invoices.map((invoice) => invoice?.payment?.id).filter(Boolean))];
-  let latestResult = null;
-
-  for (const paymentId of paymentIds) {
-    const paymentResult = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(paymentId)}`);
-    if (!paymentResult.response.ok) {
-      const error = new Error("Não foi possível consultar o pagamento recorrente no Mercado Pago.");
-      error.status = paymentResult.response.status;
-      error.providerResponse = paymentResult.data;
-      throw error;
-    }
-    latestResult = await applySubscriptionPayment(uid, paymentResult.data);
-  }
-
-  return latestResult;
-}
-
-async function findBestMercadoPagoSubscription(uid, preferredId = "") {
-  const search = await mercadoPagoRequest("/preapproval/search?limit=100&offset=0");
-  const candidates = (search.response.ok && Array.isArray(search.data?.results)
-    ? search.data.results
-    : []
-  ).filter((subscription) => uidFromExternalReference(subscription?.external_reference) === uid);
-
-  if (preferredId && !candidates.some((subscription) => subscription.id === preferredId)) {
-    const preferred = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preferredId)}`);
-    if (
-      preferred.response.ok &&
-      uidFromExternalReference(preferred.data?.external_reference) === uid
-    ) {
-      candidates.push(preferred.data);
-    }
-  }
-
-  return selectBestSubscription(candidates);
-}
-
-async function reconcileSubscription(uid, preferredId = "") {
-  const selected = await findBestMercadoPagoSubscription(uid, preferredId);
-  const preapprovalId = selected?.id || preferredId;
-  if (!preapprovalId) return null;
-
-  let result = await syncSubscription(uid, preapprovalId);
-  const paymentResult = await syncLatestSubscriptionPayment(uid, preapprovalId);
-  if (paymentResult) result = { ...result, ...paymentResult };
-  return { ...result, reconciled_preapproval_id: preapprovalId };
-}
-
-function mercadoPagoErrorCode(data, fallback = "provider_error") {
-  return String(data?.cause?.[0]?.code || data?.code || data?.message || fallback).slice(0, 80);
-}
-
-async function recoverPreviousSubscription(preapprovalId, requestId, options = {}) {
-  if (!preapprovalId) return { action: "create", previousPreapprovalId: "" };
-
-  const current = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`);
-  if (current.response.status === 404) return { action: "create", previousPreapprovalId: "" };
-  if (!current.response.ok) {
-    const error = new Error("Não foi possível consultar a assinatura anterior no Mercado Pago.");
-    error.status = current.response.status >= 500 ? 502 : 409;
-    error.providerCode = mercadoPagoErrorCode(current.data, "subscription_lookup_failed");
-    throw error;
-  }
-
-  const recoveryMode = subscriptionRecoveryMode(current.data?.status);
-  if (recoveryMode === "reuse" && options.forceReplace !== true) {
-    return { action: "reuse", subscription: current.data };
-  }
-  if (recoveryMode === "reuse" && options.forceReplace === true) {
-    return { action: "create", previousPreapprovalId: preapprovalId };
-  }
-  if (recoveryMode === "create") return { action: "create", previousPreapprovalId: "" };
-  if (recoveryMode === "block") {
-    const error = new Error("A assinatura anterior está sendo processada. Atualize o status antes de tentar novamente.");
-    error.status = 409;
-    throw error;
-  }
-
-  return {
-    action: "create",
-    previousPreapprovalId: preapprovalId,
-  };
-}
-
-async function cancelSupersededSubscription(preapprovalId, requestId) {
-  if (!preapprovalId) return true;
+async function stripeWebhookHandler(req, res) {
+  if (!stripeWebhookSecret()) return res.status(503).json({ error: "Webhook Stripe não configurado." });
+  let event;
   try {
-    const cancelled = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`, {
-      method: "PUT",
-      body: JSON.stringify({ status: "canceled" }),
-    });
-    if (cancelled.response.ok || cancelled.response.status === 404) return true;
+    event = stripeClient().webhooks.constructEvent(
+      req.body,
+      String(req.headers["stripe-signature"] || ""),
+      stripeWebhookSecret()
+    );
+  } catch {
+    return res.status(400).json({ error: "Assinatura do webhook Stripe inválida." });
+  }
+  if (!firebaseAdminReady || !adminDb) return res.status(503).json({ error: "Banco temporariamente indisponível." });
 
-    console.warn("Superseded pending subscription could not be canceled", {
-      requestId,
-      mercadoPagoStatus: cancelled.response.status,
-      mercadoPagoCode: mercadoPagoErrorCode(cancelled.data, "subscription_cleanup_failed"),
-    });
-    return false;
+  const eventRef = adminDb.collection("StripeWebhookEvent").doc(event.id);
+  try {
+    const claimed = await claimStripeWebhookEvent(event);
+    if (!claimed) return res.json({ received: true, duplicate: true });
+    await handleStripeEvent(event);
+    await eventRef.set({ status: "processed", updated_date: new Date().toISOString() }, { merge: true });
+    return res.json({ received: true });
   } catch (error) {
-    console.warn("Superseded pending subscription cleanup unavailable", {
-      requestId,
-      message: error?.message || "cleanup_unavailable",
-    });
-    return false;
+    console.error("Stripe webhook processing error", { eventId: event.id, eventType: event.type, message: error?.message });
+    await eventRef.set(
+      { status: "failed", error: String(error?.message || "processing_failed").slice(0, 240), updated_date: new Date().toISOString() },
+      { merge: true }
+    ).catch(() => {});
+    return res.status(500).json({ error: "Falha ao processar evento Stripe." });
   }
 }
 
@@ -814,7 +961,7 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "StudiosBook API" });
+  res.json({ ok: true, service: "StudiosBook API", ...adminStatusPayload() });
 });
 
 app.post("/functions/ensure-billing-account", requireFirebaseUser, async (req, res) => {
@@ -824,16 +971,13 @@ app.post("/functions/ensure-billing-account", requireFirebaseUser, async (req, r
     const lastSyncAt = new Date(billing.subscription?.last_sync_date || 0).getTime();
     const providerSyncStale =
       !Number.isFinite(lastSyncAt) || Date.now() - lastSyncAt > 5 * 60 * 1000;
-    const shouldSearchProvider =
-      Boolean(billing.subscription?.mercado_pago_preapproval_id) ||
-      ["pending", "payment_failed", "expired"].includes(billing.subscription?.status);
+    const shouldSearchProvider = Boolean(
+      billing.subscription?.stripe_customer_id || billing.subscription?.stripe_subscription_id
+    );
 
     if (providerSyncStale && shouldSearchProvider) {
       try {
-        const reconciled = await reconcileSubscription(
-          req.user.uid,
-          billing.subscription?.mercado_pago_preapproval_id || ""
-        );
+        const reconciled = await syncStripeBilling(req.user.uid, { email: req.user.email });
         if (reconciled) {
           billing = { ...reconciled, latest_payment: await latestBillingPayment(req.user.uid) };
         }
@@ -845,233 +989,209 @@ app.post("/functions/ensure-billing-account", requireFirebaseUser, async (req, r
         });
       }
     }
-    res.json({ success: true, ...billing });
+    res.json({ success: true, ...billing, payment_capabilities: await stripePaymentCapabilities() });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Erro ao iniciar período gratuito.", request_id: req.requestId });
   }
 });
 
-app.post("/functions/create-subscription-checkout", requireFirebaseUser, (_req, res) => {
-  return res.status(410).json({
-    error: "Este checkout foi substituído por uma autorização segura dentro do StudiosBook. Atualize o aplicativo.",
-  });
-});
-
 app.post(
-  "/functions/create-card-subscription",
+  "/functions/create-subscription-checkout",
   billingPaymentRateLimit,
   requireFirebaseUser,
   async (req, res) => {
     if (!requireFirebaseAdminSdk(res)) return;
     try {
-      const cardTokenId = String(req.body?.card_token_id || "").trim();
-      if (!isValidCardToken(cardTokenId)) {
-        return res.status(400).json({
-          error: "Token do cartão inválido ou expirado. Confira os dados e tente novamente.",
-        });
+      if (!stripeSecretKey() || !stripePriceId()) {
+        return res.status(503).json({ error: "Cobrança Stripe temporariamente indisponível." });
       }
-
-      const payerEmail = String(req.body?.payer_email || req.user.email || "").trim().toLowerCase();
-      if (!isValidPayerEmail(payerEmail)) {
-        return res.status(400).json({
-          error: "Informe um e-mail válido para o responsável pelo pagamento.",
-        });
-      }
-
-      const attemptId = String(req.body?.attempt_id || randomUUID()).trim().slice(0, 128);
-
       const account = await ensureBillingAccount(req.user.uid, req.user.email);
-      const failedPayment = ["rejected", "payment_failed", "charged_back", "refunded"].includes(
-        String(account.subscription?.last_payment_status || "").toLowerCase()
+      const existing = await findStripeSubscription(
+        account.subscription?.stripe_customer_id,
+        account.subscription?.stripe_subscription_id
       );
-      if (account.access?.allowed && account.subscription?.status === "active" && !failedPayment) {
-        return res.json({ success: true, already_active: true, ...account });
+      if (existing && !["canceled", "incomplete_expired"].includes(existing.status)) {
+        const customerId = stripeResourceId(existing.customer);
+        const portal = await stripeClient().billingPortal.sessions.create({
+          customer: customerId,
+          return_url: `${safeOrigin(req.body?.app_url)}/?billing=return`,
+          ...(stripePortalConfigurationId() ? { configuration: stripePortalConfigurationId() } : {}),
+        });
+        return res.json({ success: true, already_exists: true, url: portal.url, ...account });
       }
 
-      const now = new Date();
-      const chargeStart = subscriptionChargeStart(account.subscription?.trial_end_date, now);
-      const appOrigin = safeOrigin(req.body?.app_url || PUBLIC_APP_URL);
-      const externalReference = `studiosbook:subscription:${req.user.uid}:${Date.now()}`;
-      const mpPayload = {
-        card_token_id: cardTokenId,
-        payer_email: payerEmail,
-        reason: `${PRODUCT_NAME} - assinatura mensal`,
-        external_reference: externalReference,
-        back_url: `${appOrigin}/?checkout=studiosbook`,
-        status: "authorized",
-        auto_recurring: {
-          frequency: 1,
-          frequency_type: "months",
-          start_date: chargeStart.toISOString(),
-          transaction_amount: MONTHLY_AMOUNT,
-          currency_id: "BRL",
-        },
+      const customer = await ensureStripeCustomer(req.user.uid, req.user.email, req.user.name);
+      const appOrigin = safeOrigin(req.body?.app_url);
+      const trialEndSeconds = Math.floor(new Date(account.subscription?.trial_end_date || 0).getTime() / 1000);
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const hasRemainingTrial = Number.isFinite(trialEndSeconds) && trialEndSeconds > nowSeconds;
+      const exactTrialSupported = trialEndSeconds >= nowSeconds + 48 * 60 * 60;
+      const useSetupCheckout = hasRemainingTrial && !exactTrialSupported;
+      const metadata = {
+        studiosbook_uid: req.user.uid,
+        product: PRODUCT_NAME,
+        billing_flow: useSetupCheckout ? "subscription_setup" : "subscription",
+        ...(hasRemainingTrial ? { trial_end: String(trialEndSeconds) } : {}),
       };
-
-      const recovery = await recoverPreviousSubscription(
-        account.subscription?.mercado_pago_preapproval_id,
-        req.requestId,
-        { forceReplace: failedPayment }
-      );
-      if (recovery.action === "reuse") {
-        const recoveredBilling = await applySubscription(req.user.uid, recovery.subscription);
-        return res.json({
-          success: true,
-          already_active: !recovery.recovered,
-          recovered: Boolean(recovery.recovered),
-          ...recoveredBilling,
-          trial_days: TRIAL_DAYS,
-          trial_end_date: account.subscription.trial_end_date,
-        });
-      }
-      const { response, data } = await mercadoPagoRequest("/preapproval", {
-        method: "POST",
-        headers: {
-          "X-Idempotency-Key": cardSubscriptionIdempotencyKey(req.user.uid, attemptId),
-        },
-        body: JSON.stringify(mpPayload),
+      const common = {
+        customer: customer.id,
+        client_reference_id: req.user.uid,
+        locale: "pt-BR",
+        success_url: `${appOrigin}/?checkout=stripe&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${appOrigin}/?checkout=cancelled`,
+        metadata,
+      };
+      const params = useSetupCheckout
+        ? {
+            ...common,
+            mode: "setup",
+            payment_method_types: ["card"],
+            setup_intent_data: { metadata },
+          }
+        : {
+            ...common,
+            mode: "subscription",
+            payment_method_types: ["card"],
+            payment_method_collection: "always",
+            line_items: [{ price: stripePriceId(), quantity: 1 }],
+            subscription_data: {
+              metadata,
+              ...(exactTrialSupported ? { trial_end: trialEndSeconds } : {}),
+            },
+          };
+      const session = await stripeClient().checkout.sessions.create(params, {
+        idempotencyKey: `studiosbook-checkout-${req.user.uid}-${Math.floor(Date.now() / 600000)}`,
       });
-      if (!response.ok) {
-        const providerCode = mercadoPagoErrorCode(data, "authorization_failed");
-        console.warn("Mercado Pago card subscription rejected", {
-          requestId: req.requestId,
-          mercadoPagoStatus: response.status,
-          mercadoPagoCode: providerCode,
-        });
-        return res.status(response.status >= 500 ? 502 : 422).json({
-          error: mercadoPagoCardErrorMessage(providerCode),
-          mercado_pago_status: response.status,
-          mercado_pago_code: providerCode,
-          retry_with_new_card_token: true,
-          request_id: req.requestId,
-        });
-      }
-
-      const previousPreapprovalId = recovery.previousPreapprovalId || "";
-      const previousCancelled = recovery.previousCancelled === true
-        ? true
-        : await cancelSupersededSubscription(previousPreapprovalId, req.requestId);
-      await applySubscription(req.user.uid, data);
-      const saved = await persistBillingState(
+      await persistBillingState(
         req.user.uid,
         {
-          mercado_pago_preapproval_id: data.id || "",
-          mercado_pago_plan_id: data.preapproval_plan_id || "",
-          checkout_url: "",
-          authorization_mode: "card_token",
-          external_reference: externalReference,
-          payer_email: payerEmail,
-          payment_method_id: data.payment_method_id || "",
-          mercado_pago_subscription_status: data.status || "authorized",
-          last_payment_status: "pending",
-          last_payment_detail: "",
-          subscription_payment_id: "",
-          last_sync_date: now.toISOString(),
-          notes: "Assinatura autorizada com token descartável do Mercado Pago.",
-          superseded_preapproval_id: previousPreapprovalId,
-          superseded_preapproval_cancelled: previousPreapprovalId ? previousCancelled : true,
+          billing_provider: "stripe",
+          stripe_customer_id: customer.id,
+          stripe_checkout_session_id: session.id,
+          checkout_url: session.url,
+          last_payment_status: hasRemainingTrial ? "pending" : "not_started",
+          last_sync_date: new Date().toISOString(),
+          notes: "Checkout seguro criado na Stripe.",
         },
         { email: req.user.email, forceAccess: req.user.platformAdmin === true }
       );
-
-      return res.json({
-        success: true,
-        ...saved,
-        trial_days: TRIAL_DAYS,
-        trial_end_date: account.subscription.trial_end_date,
-      });
+      return res.json({ success: true, url: session.url, checkout_mode: params.mode });
     } catch (error) {
-      console.error("Card subscription error", {
-        requestId: req.requestId,
-        message: error?.message,
-        providerCode: error?.providerCode || "",
-      });
-      return res.status(error?.status || 500).json({
-        error: error?.status === 409 ? error.message : "Erro interno ao autorizar assinatura.",
+      console.error("Stripe checkout error", { requestId: req.requestId, type: error?.type, code: error?.code, message: error?.message });
+      return res.status(error?.statusCode && error.statusCode < 500 ? 422 : 500).json({
+        error: "Não foi possível abrir o checkout da Stripe. Tente novamente ou fale com o suporte.",
         request_id: req.requestId,
       });
     }
   }
 );
 
+app.post("/functions/create-billing-portal", requireFirebaseUser, async (req, res) => {
+  if (!requireFirebaseAdminSdk(res)) return;
+  try {
+    const account = await ensureBillingAccount(req.user.uid, req.user.email);
+    if (!account.subscription?.stripe_customer_id) {
+      return res.status(400).json({ error: "Nenhum cadastro de cobrança Stripe foi localizado." });
+    }
+    const session = await stripeClient().billingPortal.sessions.create({
+      customer: account.subscription.stripe_customer_id,
+      return_url: `${safeOrigin(req.body?.app_url)}/?billing=return`,
+      ...(stripePortalConfigurationId() ? { configuration: stripePortalConfigurationId() } : {}),
+    });
+    return res.json({ success: true, url: session.url });
+  } catch (error) {
+    console.error("Stripe portal error", { requestId: req.requestId, message: error?.message });
+    return res.status(500).json({ error: "Não foi possível abrir o portal de cobrança.", request_id: req.requestId });
+  }
+});
+
+app.post("/functions/create-card-subscription", requireFirebaseUser, (_req, res) => {
+  return res.status(410).json({
+    error: "O formulário antigo foi desativado. Use o checkout seguro da Stripe.",
+  });
+});
+
 app.post("/functions/create-pix-payment", requireFirebaseUser, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
-    const cpf = normalizeCpf(req.body?.cpf);
-    if (!isValidCpf(cpf)) return res.status(400).json({ error: "Informe um CPF válido para gerar o Pix." });
-
+    const capabilities = await stripePaymentCapabilities();
+    if (!capabilities.pix) {
+      return res.status(503).json({
+        error: "Pagamento Pix ainda não está disponível nesta conta Stripe.",
+        code: "pix_unavailable",
+      });
+    }
     const account = await ensureBillingAccount(req.user.uid, req.user.email);
-    const pendingPayment = account.latest_payment;
-    if (
-      pendingPayment?.status === "pending" &&
-      pendingPayment?.qr_code &&
-      new Date(pendingPayment.date_of_expiration || 0).getTime() > Date.now()
-    ) {
-      return res.json({
-        success: true,
-        reused: true,
-        subscription: account.subscription,
-        access: account.access,
-        payment: pendingPayment,
-      });
-    }
-
-    const now = new Date();
-    const expiration = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    const externalReference = `studiosbook:pix:${req.user.uid}:${Date.now()}`;
-    const names = String(req.user.name || "Profissional StudiosBook").trim().split(/\s+/);
-    const payload = {
-      transaction_amount: MONTHLY_AMOUNT,
-      description: `${PRODUCT_NAME} - acesso por ${PIX_ACCESS_DAYS} dias`,
-      payment_method_id: "pix",
-      external_reference: externalReference,
-      notification_url: MERCADO_PAGO_WEBHOOK_URL,
-      date_of_expiration: expiration.toISOString(),
-      payer: {
-        email: req.user.email,
-        first_name: names[0] || "Profissional",
-        last_name: names.slice(1).join(" ") || "StudiosBook",
-        identification: { type: "CPF", number: cpf },
-      },
-      metadata: { studiosbook_uid: req.user.uid, product: PRODUCT_NAME },
+    const customer = await ensureStripeCustomer(req.user.uid, req.user.email, req.user.name);
+    const appOrigin = safeOrigin(req.body?.app_url);
+    const metadata = {
+      studiosbook_uid: req.user.uid,
+      product: PRODUCT_NAME,
+      billing_flow: "pix",
     };
-
-    const { response, data } = await mercadoPagoRequest("/v1/payments", {
-      method: "POST",
-      headers: { "X-Idempotency-Key": randomUUID() },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      return res.status(502).json({
-        error: "Mercado Pago recusou a criação do Pix.",
-        mercado_pago_status: response.status,
-        request_id: req.requestId,
-      });
-    }
-
-    const billing = await applyPixPayment(req.user.uid, data);
-    return res.json({ success: true, ...billing });
+    const session = await stripeClient().checkout.sessions.create(
+      {
+        mode: "payment",
+        customer: customer.id,
+        client_reference_id: req.user.uid,
+        locale: "pt-BR",
+        payment_method_types: ["pix"],
+        line_items: [
+          {
+            quantity: 1,
+            price_data: {
+              currency: "brl",
+              unit_amount: Math.round(MONTHLY_AMOUNT * 100),
+              product_data: {
+                name: `${PRODUCT_NAME} - 30 dias de acesso`,
+                description: "Pagamento avulso sem renovação automática.",
+                metadata,
+              },
+            },
+          },
+        ],
+        payment_intent_data: { metadata },
+        metadata,
+        success_url: `${appOrigin}/?checkout=stripe&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${appOrigin}/?checkout=cancelled`,
+      },
+      { idempotencyKey: `studiosbook-pix-${req.user.uid}-${Math.floor(Date.now() / 600000)}` }
+    );
+    await persistBillingState(
+      req.user.uid,
+      {
+        billing_provider: "stripe",
+        stripe_customer_id: customer.id,
+        stripe_checkout_session_id: session.id,
+        checkout_url: session.url,
+        last_payment_status: "pending",
+        last_sync_date: new Date().toISOString(),
+        notes: "Checkout Pix criado na Stripe.",
+      },
+      { email: req.user.email, forceAccess: req.user.platformAdmin === true }
+    );
+    return res.json({ success: true, url: session.url, subscription: account.subscription, access: account.access });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Erro interno ao gerar Pix.", request_id: req.requestId });
+    console.error("Stripe Pix checkout error", { requestId: req.requestId, type: error?.type, code: error?.code, message: error?.message });
+    return res.status(error?.statusCode && error.statusCode < 500 ? 422 : 500).json({
+      error: "Não foi possível abrir o pagamento Pix na Stripe. Use cartão ou fale com o suporte.",
+      request_id: req.requestId,
+    });
   }
 });
 
 app.post("/functions/sync-subscription-status", requireFirebaseUser, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
-    const account = await ensureBillingAccount(req.user.uid, req.user.email);
-    const preapprovalId =
-      req.body?.preapproval_id ||
-      req.body?.mercado_pago_preapproval_id ||
-      account.subscription?.mercado_pago_preapproval_id;
-    const result = await reconcileSubscription(req.user.uid, preapprovalId);
-    if (!result) return res.status(400).json({ error: "Assinatura Mercado Pago não encontrada." });
-    res.json({ success: true, ...result });
+    const result = await syncStripeBilling(req.user.uid, {
+      email: req.user.email,
+      checkoutSessionId: String(req.body?.session_id || "").trim(),
+    });
+    res.json({ success: true, ...result, payment_capabilities: await stripePaymentCapabilities() });
   } catch (error) {
     console.error(error);
-    res.status(error?.status || 500).json({
+    res.status(error?.statusCode && error.statusCode < 500 ? 422 : 500).json({
       error: "Erro interno ao sincronizar assinatura.",
       request_id: req.requestId,
     });
@@ -1081,143 +1201,28 @@ app.post("/functions/sync-subscription-status", requireFirebaseUser, async (req,
 app.post("/functions/sync-billing-status", requireFirebaseUser, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
-    const account = await ensureBillingAccount(req.user.uid, req.user.email);
-    let result = account;
-    if (
-      account.latest_payment?.mercado_pago_payment_id &&
-      (billingReferenceType(account.latest_payment.external_reference) === "pix" ||
-        account.latest_payment.payment_method === "pix")
-    ) {
-      result = await syncPixPayment(req.user.uid, account.latest_payment.mercado_pago_payment_id);
-    }
-    const subscriptionResult = await reconcileSubscription(
-      req.user.uid,
-      account.subscription?.mercado_pago_preapproval_id || ""
-    );
-    if (subscriptionResult) {
-      result = subscriptionResult;
-      result.latest_payment = await latestBillingPayment(req.user.uid);
-    }
-    res.json({ success: true, ...result });
+    const result = await syncStripeBilling(req.user.uid, {
+      email: req.user.email,
+      checkoutSessionId: String(req.body?.session_id || "").trim(),
+    });
+    res.json({ success: true, ...result, payment_capabilities: await stripePaymentCapabilities() });
   } catch (error) {
     console.error(error);
-    res.status(error?.status || 500).json({
+    res.status(error?.statusCode && error.statusCode < 500 ? 422 : 500).json({
       error: "Erro ao sincronizar cobrança.",
       request_id: req.requestId,
     });
   }
 });
 
-app.get("/functions/mercado-pago-webhook", (_req, res) => {
+app.get("/functions/stripe-webhook", (_req, res) => {
   res.json({
     ok: true,
-    service: "StudiosBook Mercado Pago webhook",
+    service: "StudiosBook Stripe webhook",
     signature_required: true,
-    webhook_ready: Boolean(webhookSecret()),
+    webhook_ready: Boolean(stripeWebhookSecret()),
+    stripe_mode: stripeMode(),
   });
-});
-
-app.post("/functions/mercado-pago-webhook", async (req, res) => {
-  if (!firebaseAdminReady) return res.status(503).json({ error: "Firebase Admin indisponível." });
-  const secret = webhookSecret();
-  if (!secret) return res.status(503).json({ error: "Chave secreta do webhook não configurada." });
-
-  const body = req.body || {};
-  const dataId = String(req.query?.["data.id"] || body?.data?.id || "").toLowerCase();
-  const xRequestId = String(req.headers["x-request-id"] || "");
-  const xSignature = String(req.headers["x-signature"] || "");
-  if (!validateWebhookSignature({ xSignature, xRequestId, dataId, secret })) {
-    return res.status(401).json({ error: "Assinatura do webhook inválida." });
-  }
-
-  const eventType = String(body.type || req.query?.type || req.query?.topic || "unknown");
-  const eventIdentity = String(body.id || `${eventType}:${dataId}:${body.action || "event"}`);
-  const eventId = createHash("sha256").update(eventIdentity).digest("hex");
-  const eventRef = adminDb.collection("MercadoPagoWebhookEvent").doc(eventId);
-
-  try {
-    const existing = await eventRef.get();
-    if (existing.exists && existing.data()?.status === "processed") {
-      return res.json({ ok: true, received: true, duplicate: true });
-    }
-
-    await eventRef.set(
-      {
-        event_id: eventIdentity,
-        type: eventType,
-        action: body.action || "",
-        data_id: dataId,
-        live_mode: Boolean(body.live_mode),
-        request_id: xRequestId,
-        status: "processing",
-        attempts: FieldValue.increment(1),
-        received_at: new Date().toISOString(),
-        payload: toJsonSafe(body),
-      },
-      { merge: true }
-    );
-
-    let result = { ignored: true };
-    if (eventType === "payment") {
-      const { response, data } = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(dataId)}`);
-      if (!response.ok) throw new Error(`Mercado Pago retornou ${response.status} ao consultar pagamento.`);
-      const referenceType = billingReferenceType(data.external_reference);
-      const referenceUid = uidFromExternalReference(data.external_reference);
-      const metadataUid = data?.metadata?.studiosbook_uid || "";
-      if (referenceType === "subscription" && referenceUid) {
-        result = await applySubscriptionPayment(referenceUid, data);
-      } else if (
-        (referenceType === "pix" && referenceUid) ||
-        (!referenceType && data.payment_method_id === "pix" && metadataUid)
-      ) {
-        result = await applyPixPayment(referenceUid || metadataUid, data);
-      } else {
-        result = { ignored: true, reason: "foreign_payment" };
-      }
-    } else if (eventType === "subscription_preapproval") {
-      const { response, data } = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(dataId)}`);
-      if (!response.ok) throw new Error(`Mercado Pago retornou ${response.status} ao consultar assinatura.`);
-      const uid = uidFromExternalReference(data.external_reference);
-      result = uid ? await applySubscription(uid, data) : { ignored: true, reason: "foreign_subscription" };
-    } else if (eventType === "subscription_authorized_payment") {
-      const { response, data } = await mercadoPagoRequest(`/authorized_payments/${encodeURIComponent(dataId)}`);
-      if (!response.ok) throw new Error(`Mercado Pago retornou ${response.status} ao consultar fatura.`);
-      const preapprovalId = data.preapproval_id || data.subscription_id || "";
-      if (preapprovalId) {
-        const subscriptionResult = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(preapprovalId)}`);
-        if (!subscriptionResult.response.ok) throw new Error("Não foi possível consultar a assinatura da fatura.");
-        const uid = uidFromExternalReference(subscriptionResult.data.external_reference);
-        if (uid) {
-          result = await applySubscription(uid, subscriptionResult.data);
-          const paymentId = data?.payment?.id;
-          if (paymentId) {
-            const paymentResult = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(paymentId)}`);
-            if (!paymentResult.response.ok) throw new Error("Não foi possível consultar o pagamento da fatura.");
-            result = { ...result, ...(await applySubscriptionPayment(uid, paymentResult.data)) };
-          }
-        } else {
-          result = { ignored: true, reason: "foreign_invoice" };
-        }
-      }
-    }
-
-    await eventRef.set(
-      {
-        status: "processed",
-        processed_at: new Date().toISOString(),
-        result: toJsonSafe(result),
-      },
-      { merge: true }
-    );
-    return res.json({ ok: true, received: true, type: eventType });
-  } catch (error) {
-    console.error("Mercado Pago webhook error", error);
-    await eventRef.set(
-      { status: "failed", error: error?.message || "Erro no webhook.", failed_at: new Date().toISOString() },
-      { merge: true }
-    );
-    return res.status(500).json({ error: "Erro ao processar webhook." });
-  }
 });
 
 app.post("/functions/admin-session", requirePlatformAdmin, async (req, res) => {
@@ -1332,19 +1337,23 @@ app.post("/functions/admin-overview", requirePlatformAdmin, async (req, res) => 
 app.post("/functions/admin-payment-diagnostics", requirePlatformAdmin, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
-    const { response, data } = await mercadoPagoRequest("/v1/payment_methods");
-    const pix = Array.isArray(data) ? data.find((method) => method.id === "pix") : null;
-    const webhookEvents = await adminDb.collection("MercadoPagoWebhookEvent").limit(50).get();
+    const [balance, price, webhookEvents, paymentCapabilities] = await Promise.all([
+      stripeClient().balance.retrieve(),
+      stripeClient().prices.retrieve(stripePriceId()),
+      adminDb.collection("StripeWebhookEvent").limit(50).get(),
+      stripePaymentCapabilities(true),
+    ]);
     const eventRows = webhookEvents.docs.map((doc) => doc.data());
     await safeAdminAudit(req, "admin.payments.diagnostics");
     res.json({
-      success: response.ok,
-      mercado_pago_api: response.ok ? "online" : "error",
-      mercado_pago_status: response.status,
-      pix_available: pix?.status === "active",
-      pix_status: pix?.status || "not_found",
-      webhook_ready: Boolean(webhookSecret()),
-      webhook_url: MERCADO_PAGO_WEBHOOK_URL,
+      success: true,
+      stripe_api: balance?.object === "balance" ? "online" : "error",
+      stripe_mode: stripeMode(),
+      recurring_price_ready: price?.active === true && price?.currency === "brl",
+      recurring_amount: Number(price?.unit_amount || 0) / 100,
+      pix_available: paymentCapabilities.pix,
+      webhook_ready: Boolean(stripeWebhookSecret()),
+      webhook_url: STRIPE_WEBHOOK_URL,
       webhook_events: eventRows.length,
       webhook_processed: eventRows.filter((event) => event.status === "processed").length,
       webhook_failed: eventRows.filter((event) => event.status === "failed").length,
@@ -1392,23 +1401,19 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, async (re
     }
 
     const current = await currentSubscription(uid);
-    const preapprovalId = current.data?.mercado_pago_preapproval_id || "";
     const previousStatus = current.data?.status || "";
-    const result = await reconcileSubscription(uid, preapprovalId);
-    if (!result) {
-      return res.status(404).json({ error: "Nenhuma assinatura Mercado Pago foi localizada para esta conta." });
-    }
+    const result = await syncStripeBilling(uid, { email: current.data?.user_email || "" });
 
     await safeAdminAudit(req, "admin.subscription.updated", {
       target_uid: uid,
       metadata: {
-        source: "mercado_pago",
+        source: "stripe",
         previous_status: previousStatus,
         confirmed_status: result.subscription?.status || "",
       },
     });
 
-    res.json({ success: true, source: "mercado_pago", ...result });
+    res.json({ success: true, source: "stripe", ...result });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Erro ao atualizar assinatura.", request_id: req.requestId });

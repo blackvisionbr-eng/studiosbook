@@ -94,15 +94,15 @@ console.log(
     success: true,
     uid: targetUser.uid,
     email: targetUser.email || targetEmail,
-    preapproval_id: data.reconciled_preapproval_id || "",
+    stripe_subscription_id: data.subscription?.stripe_subscription_id || "",
     access_status: data.access?.status || "",
     access_allowed: data.access?.allowed === true,
-    subscription_status: data.subscription?.mercado_pago_subscription_status || "",
+    subscription_status: data.subscription?.stripe_subscription_status || "",
     payment_status: data.subscription?.last_payment_status || "",
     payment_detail: data.subscription?.last_payment_detail || "",
     current_period_end: data.subscription?.current_period_end || "",
     admin_access_status: adminAccount?.access?.status || "",
-    admin_subscription_status: adminAccount?.subscription?.mercado_pago_subscription_status || "",
+    admin_subscription_status: adminAccount?.subscription?.stripe_subscription_status || "",
     admin_payment_status: adminAccount?.subscription?.last_payment_status || "",
   })
 );

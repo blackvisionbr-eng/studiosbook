@@ -9,7 +9,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@mercadopago/sdk-js": "^0.0.3",
     "firebase": "^12.14.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.475.0",
