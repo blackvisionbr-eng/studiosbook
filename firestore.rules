@@ -14,6 +14,18 @@ service cloud.firestore {
       return signedIn() && request.auth.token.platform_admin == true;
     }
 
+    function isAllowedUserEntity(entityName) {
+      return entityName in [
+        'Client',
+        'ServiceRecord',
+        'Appointment',
+        'StudioProfile',
+        'BackupSnapshot',
+        'BillingSubscription',
+        'BillingPayment'
+      ];
+    }
+
     function hasActiveAccess(userId) {
       return isPlatformAdmin() || (
         exists(/databases/$(database)/documents/users/$(userId)) &&
@@ -26,8 +38,9 @@ service cloud.firestore {
     }
 
     match /users/{userId}/{entityName}/{documentId} {
-      allow read: if ownsUserScope(userId);
+      allow read: if ownsUserScope(userId) && isAllowedUserEntity(entityName);
       allow create, update, delete: if ownsUserScope(userId) &&
+        isAllowedUserEntity(entityName) &&
         entityName != 'BillingSubscription' &&
         entityName != 'BillingPayment' &&
         hasActiveAccess(userId);

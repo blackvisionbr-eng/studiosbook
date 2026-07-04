@@ -194,7 +194,7 @@ export default function AdminApp() {
   if (!user || !authorized) return <AdminLogin onSubmit={handleLogin} loading={loading === "login"} error={error} />;
 
   return (
-    <div className="min-h-dvh bg-[#f5f5f4] text-zinc-950">
+    <div className="min-h-dvh bg-brand-ivory text-brand-charcoal">
       <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white sm:bg-white/95 sm:backdrop-blur">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-2 px-3 py-3 sm:gap-3 sm:px-6">
           <Brand />
@@ -217,7 +217,7 @@ export default function AdminApp() {
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
                 className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-lg px-3 text-sm font-bold transition ${
-                  activeTab === tab.id ? "bg-zinc-950 text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                  activeTab === tab.id ? "bg-brand-plum text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
                 }`}
               >
                 <Icon className="h-4 w-4" />
@@ -243,7 +243,7 @@ export default function AdminApp() {
               <RefreshCw className={`mr-2 h-4 w-4 ${loading === "overview" ? "animate-spin" : ""}`} />
               Atualizar
             </Button>
-            <Button type="button" onClick={handleExport} disabled={loading === "export"} className="h-10 rounded-lg bg-zinc-950 text-white">
+            <Button type="button" onClick={handleExport} disabled={loading === "export"} className="h-10 rounded-lg bg-brand-plum text-white">
               <Download className="mr-2 h-4 w-4" />
               Exportar
             </Button>
@@ -273,12 +273,12 @@ export default function AdminApp() {
 function AdminLogin({ onSubmit, loading, error }) {
   const [showPassword, setShowPassword] = useState(false);
   return (
-    <main className="grid min-h-dvh bg-[#f5f5f4] lg:grid-cols-[0.9fr_1.1fr]">
+    <main className="grid min-h-dvh bg-brand-ivory lg:grid-cols-[0.9fr_1.1fr]">
       <section className="flex items-center justify-center px-3 py-6 sm:px-8 sm:py-10">
         <form onSubmit={onSubmit} className="w-full min-w-0 max-w-md overflow-hidden rounded-lg border border-zinc-200 bg-white p-4 shadow-xl sm:p-8">
           <Brand />
           <div className="mt-8">
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-zinc-950 text-white">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-brand-plum text-white">
               <LockKeyhole className="h-5 w-5" />
             </div>
             <h1 className="mt-5 text-2xl font-black tracking-normal">Acesso administrativo</h1>
@@ -299,7 +299,7 @@ function AdminLogin({ onSubmit, loading, error }) {
                 </button>
               </div>
             </label>
-            <Button type="submit" disabled={loading} className="h-12 rounded-lg bg-zinc-950 text-white">
+            <Button type="submit" disabled={loading} className="h-12 rounded-lg bg-brand-plum text-white">
               {loading ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
               {loading ? "Validando..." : "Entrar com segurança"}
             </Button>
@@ -307,7 +307,7 @@ function AdminLogin({ onSubmit, loading, error }) {
           <a href="/" className="mt-6 block text-center text-sm font-bold text-zinc-500 hover:text-zinc-950">Voltar ao StudiosBook</a>
         </form>
       </section>
-      <section className="hidden bg-zinc-950 p-10 text-white lg:flex lg:flex-col lg:justify-between">
+      <section className="hidden bg-brand-plum p-10 text-white lg:flex lg:flex-col lg:justify-between">
         <img src="/brand/studiosbook-mark-reversed.svg" alt="" className="h-14 w-14" />
         <div className="max-w-xl">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-rose-200">Ambiente restrito</p>
@@ -375,7 +375,7 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess 
                 <Mini label="Agenda" value={account.counts?.Appointment || 0} />
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
-                <Button type="button" disabled={loading === `subscription-${account.uid}`} onClick={() => onSubscription(account)} className="h-10 rounded-lg bg-zinc-950 px-3 text-white"><RefreshCw className={`mr-2 h-4 w-4 ${loading === `subscription-${account.uid}` ? "animate-spin" : ""}`} />Sincronizar</Button>
+                <Button type="button" disabled={loading === `subscription-${account.uid}`} onClick={() => onSubscription(account)} className="h-10 rounded-lg bg-brand-plum px-3 text-white"><RefreshCw className={`mr-2 h-4 w-4 ${loading === `subscription-${account.uid}` ? "animate-spin" : ""}`} />Sincronizar</Button>
                 <Button type="button" disabled={loading === `access-${account.uid}`} onClick={() => onAccess(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3">{account.disabled ? <UserCheck className="mr-2 h-4 w-4" /> : <UserX className="mr-2 h-4 w-4" />}{account.disabled ? "Liberar" : "Bloquear"}</Button>
               </div>
             </article>
@@ -406,20 +406,20 @@ function System({ data, diagnostics, loading, onDiagnostics }) {
         <div className="mt-5 grid gap-2">{checks.map(([label, ok]) => <div key={label} className="flex min-w-0 flex-col gap-2 rounded-lg bg-zinc-50 px-4 py-3 min-[360px]:flex-row min-[360px]:items-center min-[360px]:justify-between"><span className="break-words text-sm font-bold">{label}</span><span className={`inline-flex shrink-0 items-center gap-2 text-xs font-black ${ok ? "text-emerald-700" : "text-amber-700"}`}>{ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}{ok ? "Operacional" : "Atenção"}</span></div>)}</div>
       </Panel>
       <Panel title="Pagamentos e webhooks" subtitle="Teste autenticado da integração financeira.">
-        <Button type="button" onClick={onDiagnostics} disabled={loading === "diagnostics"} className="mt-5 h-11 w-full rounded-lg bg-zinc-950 text-white"><Activity className="mr-2 h-4 w-4" />{loading === "diagnostics" ? "Executando..." : "Executar diagnóstico"}</Button>
+        <Button type="button" onClick={onDiagnostics} disabled={loading === "diagnostics"} className="mt-5 h-11 w-full rounded-lg bg-brand-plum text-white"><Activity className="mr-2 h-4 w-4" />{loading === "diagnostics" ? "Executando..." : "Executar diagnóstico"}</Button>
         {diagnostics && <div className="mt-4 grid grid-cols-2 gap-2"><Mini label="API Stripe" value={diagnostics.stripe_api === "online" ? "Online" : "Erro"} /><Mini label="Modo" value={diagnostics.stripe_mode === "live" ? "Produção" : "Teste"} /><Mini label="Processados" value={diagnostics.webhook_processed || 0} /><Mini label="Falhas" value={diagnostics.webhook_failed || 0} /></div>}
       </Panel>
     </div>
   );
 }
 
-function Brand() { return <div className="flex min-w-0 items-center gap-2 sm:gap-3"><img src="/brand/studiosbook-mark.svg" alt="" className="h-9 w-9 shrink-0" /><div className="min-w-0"><p className="text-lg font-black leading-none">Studios<span className="font-medium text-[#a84d68]">Book</span></p><p className="mt-1 break-words text-[9px] font-bold uppercase tracking-[0.08em] text-zinc-400 sm:text-[10px] sm:tracking-[0.12em]">Admin BlackVision</p></div></div>; }
+function Brand() { return <div className="min-w-0"><img src="/brand/studiosbook-logo.svg" alt="StudiosBook" className="h-9 w-auto max-w-[176px]" /><p className="mt-1 break-words text-[9px] font-bold uppercase tracking-[0.08em] text-zinc-400 sm:text-[10px] sm:tracking-[0.12em]">Admin BlackVision</p></div>; }
 function Panel({ title, subtitle, children }) { return <section className="min-w-0 overflow-hidden rounded-lg border border-zinc-200 bg-white p-4 sm:p-5"><h2 className="break-words text-lg font-black">{title}</h2><p className="mt-1 break-words text-sm text-zinc-500">{subtitle}</p>{children}</section>; }
 function Mini({ label, value }) { return <div className="min-w-0 rounded-lg bg-white p-3 text-center"><p className="break-words text-sm font-black">{value}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-400">{label}</p></div>; }
 function Alert({ tone, children }) { return <div className={`min-w-0 break-words rounded-lg border px-4 py-3 text-sm font-bold ${tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{children}</div>; }
 function LabeledStatus({ label, value }) { return <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2 py-1 text-[10px] font-bold uppercase text-zinc-500">{label}<Status value={value} /></span>; }
-function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", trialing: "Em teste", paused: "Pausado", past_due: "Em atraso", unpaid: "Não pago", incomplete: "Incompleto", incomplete_expired: "Expirado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; const good = ["active", "approved", "trialing"].includes(key); const bad = ["rejected", "payment_failed", "past_due", "unpaid", "incomplete", "incomplete_expired", "expired", "blocked", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
+function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", trialing: "Em teste", paused: "Pausado", past_due: "Em atraso", unpaid: "Não pago", incomplete: "Incompleto", incomplete_expired: "Expirado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", partially_refunded: "Parcialmente estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; const good = ["active", "approved", "trialing"].includes(key); const bad = ["rejected", "payment_failed", "past_due", "unpaid", "incomplete", "incomplete_expired", "expired", "blocked", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
 function LoadingPanel() { return <div className="flex min-h-48 items-center justify-center rounded-lg border bg-white"><LoaderCircle className="h-6 w-6 animate-spin text-[#a84d68]" /></div>; }
-function AdminLoading() { return <div className="flex min-h-dvh items-center justify-center bg-[#f5f5f4]"><div className="text-center"><img src="/brand/studiosbook-mark.svg" alt="" className="mx-auto h-12 w-12" /><LoaderCircle className="mx-auto mt-5 h-5 w-5 animate-spin text-[#a84d68]" /></div></div>; }
+function AdminLoading() { return <div className="flex min-h-dvh items-center justify-center bg-brand-ivory"><div className="text-center"><img src="/brand/studiosbook-mark.svg" alt="" className="mx-auto h-12 w-12" /><LoaderCircle className="mx-auto mt-5 h-5 w-5 animate-spin text-[#a84d68]" /></div></div>; }
 function dateTime(value) { if (!value) return "-"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "-" : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date); }
 function money(value) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0)); }

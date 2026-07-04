@@ -7,5 +7,5 @@
     <path d="M59.5 59.5C43 59.2 30.7 54.4 22.6 45.6C15.9 38.4 13.5 29.4 14.5 15C29.1 14.2 38.4 17 45.9 23.6C54.8 31.5 59.3 43.5 59.5 59.5Z" fill="#F2B7C7" transform="translate(0 128) scale(1 -1)"/>
     <path d="M59.5 59.5C43 59.2 30.7 54.4 22.6 45.6C15.9 38.4 13.5 29.4 14.5 15C29.1 14.2 38.4 17 45.9 23.6C54.8 31.5 59.3 43.5 59.5 59.5Z" fill="#FFF9FA" transform="translate(128 128) scale(-1 -1)"/>
   </g>
-  <text x="174" y="102" fill="#FFF9FA" font-family="DM Sans, Inter, Arial, sans-serif" font-size="67" font-weight="700" letter-spacing="-2">Studios<tspan fill="#F2B7C7" font-weight="500">Book</tspan></text>
+  <text x="174" y="102" fill="#FFF9FA" font-family="DM Sans, Inter, Arial, sans-serif" font-size="67" font-weight="700" letter-spacing="0">Studios<tspan fill="#F2B7C7" font-weight="500">Book</tspan></text>
 </svg>

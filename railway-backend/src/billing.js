@@ -38,6 +38,18 @@ export function billingAccess(subscription = {}, now = new Date()) {
   const trialActive = Number.isFinite(trialEnd) && trialEnd > currentTime;
   const paidPeriodActive = Number.isFinite(periodEnd) && periodEnd > currentTime;
 
+  const revokedStatuses = new Set(["refunded", "charged_back", "blocked", "revoked"]);
+  const revokedStatus = [
+    subscription.access_revoked_reason,
+    paymentStatus,
+    status,
+    providerStatus,
+  ].find((value) => revokedStatuses.has(String(value || "").toLowerCase()));
+  if (revokedStatus) {
+    const normalized = String(revokedStatus).toLowerCase();
+    return { allowed: false, reason: normalized, status: normalized, daysLeft: 0 };
+  }
+
   if (paidPeriodActive) {
     return {
       allowed: true,
@@ -68,10 +80,6 @@ export function billingAccess(subscription = {}, now = new Date()) {
   ]);
   if (failedStatuses.has(paymentStatus) || failedStatuses.has(status) || failedStatuses.has(providerStatus)) {
     return { allowed: false, reason: "payment_failed", status: "payment_failed", daysLeft: 0 };
-  }
-
-  if (paymentStatus === "approved" || providerStatus === "active") {
-    return { allowed: true, reason: "approved_payment", status: "active", daysLeft: null };
   }
 
   if (paymentStatus === "pending" || ["pending", "trialing", "paused"].includes(providerStatus)) {
@@ -117,6 +125,22 @@ export function stripeObjectUid(object = {}) {
   ).trim();
 }
 
+export function validatePixPayment(paymentIntent = {}, options = {}) {
+  const expectedAmount = Number(options.expectedAmountCents || 0);
+  const amount = Number(paymentIntent.amount || 0);
+  const amountReceived = Number(paymentIntent.amount_received || 0);
+  const currency = String(paymentIntent.currency || "").toLowerCase();
+  const product = String(paymentIntent.metadata?.product || "");
+
+  if (paymentIntent.status !== "succeeded") return { valid: false, reason: "payment_not_succeeded" };
+  if (!Number.isInteger(expectedAmount) || expectedAmount <= 0) return { valid: false, reason: "invalid_expected_amount" };
+  if (amount !== expectedAmount || amountReceived !== expectedAmount) return { valid: false, reason: "amount_mismatch" };
+  if (currency !== String(options.currency || "brl").toLowerCase()) return { valid: false, reason: "currency_mismatch" };
+  if (options.productName && product !== options.productName) return { valid: false, reason: "product_mismatch" };
+  if (options.requireLiveMode === true && paymentIntent.livemode !== true) return { valid: false, reason: "live_mode_required" };
+  return { valid: true, reason: "verified" };
+}
+
 function stripeResourceId(value) {
   return typeof value === "string" ? value : value?.id || "";
 }
@@ -137,4 +161,21 @@ export function stripeInvoicePaymentIntentId(invoice = {}) {
     payments.find((payment) => payment?.is_default && payment?.payment?.payment_intent) ||
     payments.find((payment) => payment?.payment?.payment_intent);
   return stripeResourceId(invoicePayment?.payment?.payment_intent) || stripeResourceId(invoice.payment_intent);
+}
+
+export function stripeChargeRefundState(charge = {}) {
+  const amount = Math.max(0, Number(charge.amount || 0));
+  const amountRefunded = Math.max(0, Number(charge.amount_refunded || 0));
+  if (amountRefunded <= 0) {
+    return { status: "none", full: false, amount, amountRefunded, netAmount: amount };
+  }
+
+  const full = charge.refunded === true || (amount > 0 && amountRefunded >= amount);
+  return {
+    status: full ? "refunded" : "partially_refunded",
+    full,
+    amount,
+    amountRefunded,
+    netAmount: Math.max(0, amount - amountRefunded),
+  };
 }

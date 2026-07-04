@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   billingAccess,
+  stripeChargeRefundState,
   stripeInvoicePaymentIntentId,
   stripeInvoicePaymentStatus,
   stripeInvoiceSubscriptionId,
@@ -10,6 +11,7 @@ import {
   stripeSubscriptionPeriod,
   stripeTimestampToIso,
   trialFromAccountCreation,
+  validatePixPayment,
 } from "../src/billing.js";
 
 test("trial starts at Firebase account creation", () => {
@@ -29,13 +31,30 @@ test("expired trial blocks access", () => {
   assert.equal(access.status, "expired");
 });
 
-test("active Stripe subscription grants access after trial", () => {
+test("active Stripe subscription grants access only during a confirmed paid period", () => {
   const access = billingAccess(
-    { stripe_subscription_status: "active", trial_end_date: "2026-06-08T12:00:00.000Z" },
+    {
+      stripe_subscription_status: "active",
+      trial_end_date: "2026-06-08T12:00:00.000Z",
+      current_period_end: "2026-07-08T12:00:00.000Z",
+    },
     new Date("2026-06-09T12:00:00.000Z")
   );
   assert.equal(access.allowed, true);
   assert.equal(access.status, "active");
+});
+
+test("stale approved status does not grant access after the paid period", () => {
+  const access = billingAccess(
+    {
+      stripe_subscription_status: "active",
+      last_payment_status: "approved",
+      current_period_end: "2026-06-08T12:00:00.000Z",
+    },
+    new Date("2026-06-09T12:00:00.000Z")
+  );
+  assert.equal(access.allowed, false);
+  assert.equal(access.status, "expired");
 });
 
 test("past due Stripe subscription blocks access", () => {
@@ -58,6 +77,32 @@ test("paid period remains active during a later failed attempt", () => {
   );
   assert.equal(access.allowed, true);
   assert.equal(access.status, "active");
+});
+
+test("full refund revokes access even when the stored paid period is still in the future", () => {
+  const access = billingAccess(
+    {
+      stripe_subscription_status: "active",
+      last_payment_status: "refunded",
+      current_period_end: "2026-07-08T12:00:00.000Z",
+    },
+    new Date("2026-06-09T12:00:00.000Z")
+  );
+  assert.equal(access.allowed, false);
+  assert.equal(access.status, "refunded");
+});
+
+test("persistent refund revocation cannot be overwritten by a stale approved invoice", () => {
+  const access = billingAccess(
+    {
+      access_revoked_reason: "refunded",
+      last_payment_status: "approved",
+      current_period_end: "2026-07-08T12:00:00.000Z",
+    },
+    new Date("2026-06-09T12:00:00.000Z")
+  );
+  assert.equal(access.allowed, false);
+  assert.equal(access.reason, "refunded");
 });
 
 test("maps Stripe invoice states to local payment states", () => {
@@ -111,4 +156,50 @@ test("recognizes standard and restricted Stripe key modes", () => {
   assert.equal(stripeKeyMode("sk_test_example"), "test");
   assert.equal(stripeKeyMode("rk_test_example"), "test");
   assert.equal(stripeKeyMode(""), "unconfigured");
+});
+
+test("accepts only a succeeded Pix with the expected product, currency and amount", () => {
+  const validPayment = {
+    status: "succeeded",
+    amount: 2690,
+    amount_received: 2690,
+    currency: "brl",
+    livemode: true,
+    metadata: { product: "StudiosBook" },
+  };
+  const options = {
+    expectedAmountCents: 2690,
+    currency: "brl",
+    productName: "StudiosBook",
+    requireLiveMode: true,
+  };
+  assert.deepEqual(validatePixPayment(validPayment, options), { valid: true, reason: "verified" });
+  assert.equal(validatePixPayment({ ...validPayment, amount_received: 100 }, options).reason, "amount_mismatch");
+  assert.equal(validatePixPayment({ ...validPayment, currency: "usd" }, options).reason, "currency_mismatch");
+  assert.equal(validatePixPayment({ ...validPayment, livemode: false }, options).reason, "live_mode_required");
+  assert.equal(validatePixPayment({ ...validPayment, metadata: { product: "Outro" } }, options).reason, "product_mismatch");
+});
+
+test("classifies Stripe charge refunds without revoking on a partial refund", () => {
+  assert.deepEqual(stripeChargeRefundState({ amount: 2690, amount_refunded: 0 }), {
+    status: "none",
+    full: false,
+    amount: 2690,
+    amountRefunded: 0,
+    netAmount: 2690,
+  });
+  assert.deepEqual(stripeChargeRefundState({ amount: 2690, amount_refunded: 1000 }), {
+    status: "partially_refunded",
+    full: false,
+    amount: 2690,
+    amountRefunded: 1000,
+    netAmount: 1690,
+  });
+  assert.deepEqual(stripeChargeRefundState({ amount: 2690, amount_refunded: 2690, refunded: true }), {
+    status: "refunded",
+    full: true,
+    amount: 2690,
+    amountRefunded: 2690,
+    netAmount: 0,
+  });
 });

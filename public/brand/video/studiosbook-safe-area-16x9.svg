@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Guia de área segura 16 por 9</title>
+  <desc id="desc">Sobreposição para posicionar textos e elementos sem cortes em vídeos.</desc>
+  <rect width="1920" height="1080" fill="none" stroke="#E97F91" stroke-width="8"/>
+  <rect x="96" y="72" width="1728" height="936" rx="24" fill="none" stroke="#E97F91" stroke-width="4" stroke-dasharray="18 14"/>
+  <path d="M960 0V1080M0 540H1920" stroke="#C77D94" stroke-width="2" stroke-dasharray="10 12"/>
+  <g fill="#402239" font-family="DM Sans, Inter, Arial, sans-serif" font-size="28" font-weight="700">
+    <text x="116" y="118">ÁREA SEGURA</text>
+    <text x="1680" y="1040">16:9</text>
+  </g>
+</svg>

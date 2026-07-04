@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import {
-  browserLocalPersistence,
+  browserSessionPersistence,
   getAuth,
   setPersistence,
   signInWithEmailAndPassword,
@@ -27,9 +27,10 @@ const apiBaseUrls = (
 
 const app = initializeApp(firebaseConfig, "studiosbook-admin");
 export const adminAuth = getAuth(app);
+const adminPersistenceReady = setPersistence(adminAuth, browserSessionPersistence);
 
 export async function signInAdmin(email, password) {
-  await setPersistence(adminAuth, browserLocalPersistence);
+  await adminPersistenceReady;
   const credential = await signInWithEmailAndPassword(adminAuth, email, password);
   await credential.user.getIdToken(true);
   return credential.user;

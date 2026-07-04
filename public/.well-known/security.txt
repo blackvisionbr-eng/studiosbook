@@ -1,0 +1,5 @@
+Contact: mailto:getblackvision.br@gmail.com
+Expires: 2027-07-03T23:59:59Z
+Preferred-Languages: pt-BR, en
+Canonical: https://studiosbook.com.br/.well-known/security.txt
+Policy: https://studiosbook.com.br/privacy.html

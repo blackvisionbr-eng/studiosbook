@@ -15,6 +15,10 @@ firebase-debug.log
 firestore-debug.log
 ui-debug.log
 .railway
+stripe-e2e-state.json
+stripe-setup-output.json
+railway-backend/stripe-e2e-state.json
+railway-backend/stripe-setup-output.json
 
 # Editor
 .vscode

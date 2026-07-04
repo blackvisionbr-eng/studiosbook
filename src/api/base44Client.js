@@ -16,6 +16,13 @@ import {
   getFirestore,
   updateDoc,
 } from "firebase/firestore";
+import {
+  deleteObject,
+  getBlob,
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+} from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs",
@@ -33,6 +40,10 @@ const apiBaseUrls = (import.meta.env.VITE_API_BASE_URLS || import.meta.env.VITE_
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const storage = getStorage(app);
+
+const MAX_PROCEDURE_PHOTO_BYTES = 8 * 1024 * 1024;
+const ALLOWED_PROCEDURE_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 let lastRedirectError = null;
 const redirectResultReady = getRedirectResult(auth).catch((error) => {
@@ -142,6 +153,56 @@ function createEntity(entityName) {
   };
 }
 
+function assertProcedurePhoto(file) {
+  if (!(file instanceof File)) throw new Error("Selecione uma imagem válida.");
+  if (!ALLOWED_PROCEDURE_PHOTO_TYPES.has(file.type)) {
+    throw new Error("Use uma imagem JPG, PNG ou WebP.");
+  }
+  if (file.size > MAX_PROCEDURE_PHOTO_BYTES) {
+    throw new Error("A imagem deve ter no máximo 8 MB.");
+  }
+}
+
+function photoExtension(contentType) {
+  if (contentType === "image/png") return "png";
+  if (contentType === "image/webp") return "webp";
+  return "jpg";
+}
+
+async function uploadProcedurePhoto(recordId, slot, file) {
+  const user = await requireUser();
+  assertProcedurePhoto(file);
+  if (!recordId || !["before", "after"].includes(slot)) {
+    throw new Error("Destino da foto inválido.");
+  }
+  const extension = photoExtension(file.type);
+  const path = `users/${user.uid}/procedures/${recordId}/${slot}-${Date.now()}.${extension}`;
+  const target = storageRef(storage, path);
+  await uploadBytes(target, file, {
+    contentType: file.type,
+    cacheControl: "private,max-age=3600",
+    customMetadata: { ownerId: user.uid, procedureId: recordId, slot },
+  });
+  return path;
+}
+
+async function getPrivatePhotoObjectUrl(path) {
+  const user = await requireUser();
+  const expectedPrefix = `users/${user.uid}/procedures/`;
+  if (!String(path || "").startsWith(expectedPrefix)) {
+    throw new Error("Foto fora do espaço privado da conta.");
+  }
+  const blob = await getBlob(storageRef(storage, path));
+  return URL.createObjectURL(blob);
+}
+
+async function deleteProcedurePhoto(path) {
+  const user = await requireUser();
+  const expectedPrefix = `users/${user.uid}/procedures/`;
+  if (!String(path || "").startsWith(expectedPrefix)) return;
+  await deleteObject(storageRef(storage, path));
+}
+
 async function invokeFunction(name, data = {}) {
   if (!apiBaseUrls.length) {
     throw new Error("Serviço temporariamente indisponível.");
@@ -213,5 +274,11 @@ export const base44 = {
   },
   functions: {
     invoke: invokeFunction,
+  },
+  storage: {
+    uploadProcedurePhoto,
+    getPrivatePhotoObjectUrl,
+    deleteProcedurePhoto,
+    maxProcedurePhotoBytes: MAX_PROCEDURE_PHOTO_BYTES,
   },
 };

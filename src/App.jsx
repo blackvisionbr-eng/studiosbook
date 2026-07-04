@@ -1,8 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
-import { jsPDF } from "jspdf";
+import { useEffect, useId, useMemo, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  normalizeServiceCatalog,
+  reconcileServiceCatalog,
+  serviceBelongsToCatalog,
+} from "@/lib/serviceCatalog";
+import { toCsv } from "@/lib/csv";
+import { hasBillingAccessNow } from "@/lib/billingAccess";
 import {
   Activity,
   AlertTriangle,
@@ -30,6 +36,7 @@ import {
   LogOut,
   MessageCircle,
   Paintbrush,
+  Pencil,
   Plus,
   QrCode,
   ReceiptText,
@@ -146,6 +153,54 @@ const PROFESSIONAL_CATEGORIES = [
   },
 ];
 
+const CATEGORY_PROCEDURE_FIELDS = {
+  lash_design: {
+    technique: "Técnica",
+    detail: "Curvatura",
+    measure: "Espessura",
+    sizing: "Tamanhos",
+    product: "Cola / produto usado",
+    notes: "Mapeamento e detalhes",
+    notesPlaceholder: "Ex: técnica, combinações, curvaturas, produtos e cuidados...",
+  },
+  nails_design: {
+    technique: "Técnica / acabamento",
+    detail: "Formato",
+    measure: "Comprimento",
+    sizing: "Cor / coleção",
+    product: "Produtos usados",
+    notes: "Detalhes do procedimento",
+    notesPlaceholder: "Ex: preparação, acabamento, decoração, produtos e cuidados...",
+  },
+  brow_design: {
+    technique: "Técnica aplicada",
+    detail: "Formato",
+    measure: "Tonalidade",
+    sizing: "Medidas / proporção",
+    product: "Produto usado",
+    notes: "Mapeamento e detalhes",
+    notesPlaceholder: "Ex: simetria, tonalidade, produto, tempo de ação e cuidados...",
+  },
+  hairdresser: {
+    technique: "Técnica aplicada",
+    detail: "Comprimento",
+    measure: "Tipo / curvatura",
+    sizing: "Cor / tonalidade",
+    product: "Produtos usados",
+    notes: "Diagnóstico e detalhes",
+    notesPlaceholder: "Ex: diagnóstico do fio, técnica, fórmula, produtos e cuidados...",
+  },
+  massage_therapy: {
+    technique: "Técnica aplicada",
+    detail: "Região trabalhada",
+    measure: "Intensidade",
+    sizing: "Tempo por região",
+    product: "Óleo / produto usado",
+    notes: "Evolução e detalhes da sessão",
+    notesPlaceholder: "Ex: regiões trabalhadas, pressão, resposta corporal, produtos e orientações...",
+  },
+};
+
 const tabs = [
   { id: "dashboard", label: "Dashboard", icon: Sparkles },
   { id: "clients", label: "Clientes", icon: Users },
@@ -175,6 +230,7 @@ const emptyClient = {
 const emptyService = {
   client_id: "",
   procedure_date: todayISO(),
+  catalog_service_id: "",
   service_type: "other",
   service_category: "",
   service_name: "",
@@ -194,6 +250,8 @@ const emptyService = {
   notes: "",
   before_photo_url: "",
   after_photo_url: "",
+  before_photo_path: "",
+  after_photo_path: "",
 };
 
 const emptyAppointment = {
@@ -229,18 +287,7 @@ function defaultServicesForCategories(categories = []) {
 }
 
 function normalizeServices(services = [], categories = []) {
-  const selected = new Set(categories);
-  return (services || [])
-    .filter((service) => service?.name)
-    .map((service, index) => ({
-      id: service.id || `custom-${index}-${Date.now()}`,
-      category: selected.has(service.category) ? service.category : categories[0] || "lash_design",
-      name: String(service.name || "").trim(),
-      price: Number(service.price || 0),
-      duration_minutes: Number(service.duration_minutes || 60),
-      maintenance_days: Number(service.maintenance_days ?? 20),
-      active: service.active !== false,
-    }));
+  return normalizeServiceCatalog(services, categories);
 }
 
 function createProfileForm(user) {
@@ -259,8 +306,9 @@ function createProfileForm(user) {
 function normalizeProfile(profile, user) {
   if (!profile) return null;
   const categories = profile.categories?.length ? profile.categories : ["lash_design"];
-  const services = profile.services?.length
-    ? normalizeServices(profile.services, categories)
+  const normalizedServices = normalizeServices(profile.services || [], categories);
+  const services = normalizedServices.length
+    ? normalizedServices
     : defaultServicesForCategories(categories);
   return {
     ...profile,
@@ -280,10 +328,23 @@ function categoryLabel(categoryId) {
   return PROFESSIONAL_CATEGORIES.find((category) => category.id === categoryId)?.label || "Outro";
 }
 
+function procedureFieldLabels(categoryId) {
+  return CATEGORY_PROCEDURE_FIELDS[categoryId] || {
+    technique: "Técnica",
+    detail: "Detalhe técnico",
+    measure: "Medida / característica",
+    sizing: "Tamanhos / referências",
+    product: "Produto usado",
+    notes: "Detalhes do procedimento",
+    notesPlaceholder: "Descreva os detalhes relevantes do procedimento.",
+  };
+}
+
 function activeServicesFromProfile(profile) {
   const categories = profile?.categories?.length ? profile.categories : ["lash_design"];
-  const services = profile?.services?.length ? profile.services : defaultServicesForCategories(categories);
-  return normalizeServices(services, categories).filter((service) => service.active !== false);
+  const normalizedServices = normalizeServices(profile?.services || [], categories);
+  const services = normalizedServices.length ? normalizedServices : defaultServicesForCategories(categories);
+  return services.filter((service) => service.active !== false);
 }
 
 function buildServiceFormFromService(service, clientId = "", procedureDate = todayISO()) {
@@ -292,6 +353,7 @@ function buildServiceFormFromService(service, clientId = "", procedureDate = tod
     ...emptyService,
     client_id: clientId,
     procedure_date: procedureDate,
+    catalog_service_id: service?.id || "",
     service_type: service?.category || "other",
     service_category: service?.category || "",
     service_name: service?.name || "",
@@ -428,6 +490,7 @@ function billingStatusLabel(status) {
     approved: "Aprovado",
     rejected: "Recusado",
     refunded: "Estornado",
+    partially_refunded: "Parcialmente estornado",
     charged_back: "Contestado",
     setup_required: "Configuração necessária",
   };
@@ -442,15 +505,6 @@ function billingStatusTone(status) {
   return "slate";
 }
 
-function hasBillingAccessNow(subscription, access, now = Date.now()) {
-  if (!access) return true;
-  const periodEnd = new Date(subscription?.current_period_end || 0).getTime();
-  if (Number.isFinite(periodEnd) && periodEnd > now) return true;
-  const trialEnd = new Date(subscription?.trial_end_date || 0).getTime();
-  if (Number.isFinite(trialEnd) && trialEnd > now) return true;
-  return access.allowed === true;
-}
-
 function downloadBlob(filename, content, type = "text/plain;charset=utf-8") {
   const blob = content instanceof Blob ? content : new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -461,18 +515,6 @@ function downloadBlob(filename, content, type = "text/plain;charset=utf-8") {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
-}
-
-function csvValue(value) {
-  const text = value === null || value === undefined ? "" : String(value);
-  return `"${text.replace(/"/g, '""')}"`;
-}
-
-function toCsv(headers, rows) {
-  return [
-    headers.map((header) => csvValue(header.label)).join(","),
-    ...rows.map((row) => headers.map((header) => csvValue(header.value(row))).join(",")),
-  ].join("\n");
 }
 
 function buildBackupPayload({ profile, clients, records, appointments }) {
@@ -528,7 +570,8 @@ function exportFullBackupJson(payload) {
   );
 }
 
-function exportMonthlySafetyPdf({ profile, clients, records, appointments, backupSnapshots }) {
+async function exportMonthlySafetyPdf({ profile, clients, records, appointments, backupSnapshots }) {
+  const { jsPDF } = await import("jspdf");
   const month = todayISO().slice(0, 7);
   const monthRecords = records.filter((record) => String(record.procedure_date || "").startsWith(month));
   const monthAppointments = appointments.filter((appointment) => String(appointment.appointment_date || "").startsWith(month));
@@ -601,11 +644,13 @@ function addPdfLine(doc, label, value, y) {
   return y + Math.max(lines.length, 1) * 7;
 }
 
-function buildProcedurePdf(record, client, profile) {
+async function buildProcedurePdf(record, client, profile) {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const studioName = profile?.business_name || PRODUCT_NAME;
   const serviceName = record.service_name || record.effect || record.service_type || "Procedimento";
   const category = record.service_category || record.service_type;
+  const fieldLabels = procedureFieldLabels(category);
 
   doc.setFillColor(24, 24, 27);
   doc.rect(0, 0, 210, 34, "F");
@@ -629,8 +674,8 @@ function buildProcedurePdf(record, client, profile) {
   y = addPdfLine(doc, "Data", formatDate(record.procedure_date), y);
   y = addPdfLine(doc, "Categoria", categoryLabel(category), y);
   y = addPdfLine(doc, "Serviço", serviceName, y);
-  y = addPdfLine(doc, "Técnica", record.technique, y);
-  y = addPdfLine(doc, "Produto usado", record.adhesive, y);
+  y = addPdfLine(doc, fieldLabels.technique, record.technique, y);
+  y = addPdfLine(doc, fieldLabels.product, record.adhesive, y);
   y = addPdfLine(doc, "Duração", record.duration_minutes ? `${record.duration_minutes} minutos` : "", y);
   y = addPdfLine(doc, "Valor", record.amount ? money(record.amount) : "", y);
   y = addPdfLine(doc, "Pagamento", statusLabel(record.payment_status), y);
@@ -641,11 +686,13 @@ function buildProcedurePdf(record, client, profile) {
   doc.text("Ficha técnica", 16, y + 8);
   y += 20;
   doc.setFontSize(10);
-  y = addPdfLine(doc, "Curvatura", record.curl, y);
-  y = addPdfLine(doc, "Espessura", record.thickness, y);
-  y = addPdfLine(doc, "Tamanhos / numeração", record.lengths, y);
-  y = addPdfLine(doc, "Mapeamento", record.mapping_notes, y);
-  y = addPdfLine(doc, "Retenção", record.retention_percent ? `${record.retention_percent}%` : "", y);
+  y = addPdfLine(doc, fieldLabels.detail, record.curl, y);
+  y = addPdfLine(doc, fieldLabels.measure, record.thickness, y);
+  y = addPdfLine(doc, fieldLabels.sizing, record.lengths, y);
+  y = addPdfLine(doc, fieldLabels.notes, record.mapping_notes, y);
+  if (category === "lash_design") {
+    y = addPdfLine(doc, "Retenção", record.retention_percent ? `${record.retention_percent}%` : "", y);
+  }
   y = addPdfLine(doc, "Observações", record.notes, y);
 
   doc.setTextColor(113, 113, 122);
@@ -656,7 +703,7 @@ function buildProcedurePdf(record, client, profile) {
 }
 
 async function exportProcedurePdf(record, client, profile, mode = "download") {
-  const doc = buildProcedurePdf(record, client, profile);
+  const doc = await buildProcedurePdf(record, client, profile);
   const serviceName = record.service_name || record.effect || "procedimento";
   const filename = `${safeFileName(client?.full_name || record.client_name)}-${safeFileName(serviceName)}.pdf`;
 
@@ -814,27 +861,25 @@ function EmptyState({ text, action }) {
 
 function BrandLockup({ size = "compact", tone = "dark", heading = false, subtitle = "" }) {
   const sizes = {
-    compact: { mark: "h-9 w-9", text: "text-xl", gap: "gap-2.5" },
-    header: { mark: "h-10 w-10", text: "text-xl sm:text-2xl", gap: "gap-3" },
-    hero: { mark: "h-12 w-12 sm:h-20 sm:w-20", text: "text-3xl sm:text-6xl", gap: "gap-3 sm:gap-5" },
+    compact: "h-8 max-w-[156px]",
+    header: "h-9 max-w-[176px] sm:h-10 sm:max-w-[194px]",
+    hero: "h-14 max-w-[218px] sm:h-24 sm:max-w-[372px]",
   };
   const current = sizes[size] || sizes.compact;
   const TextTag = heading ? "h1" : "span";
-  const markSrc = tone === "light" ? "/brand/studiosbook-mark-reversed.svg" : "/brand/studiosbook-mark.svg";
+  const logoSrc = tone === "light" ? "/brand/studiosbook-logo-reversed.svg" : "/brand/studiosbook-logo.svg";
 
   return (
-    <div className={`inline-flex min-w-0 items-center ${current.gap}`} aria-label={PRODUCT_NAME}>
-      <img src={markSrc} alt="" className={`${current.mark} shrink-0`} />
-      <div className="min-w-0 max-w-full">
-        <TextTag className={`${current.text} block whitespace-nowrap font-bold leading-none tracking-normal ${tone === "light" ? "text-[#fff9fa]" : "text-[#171417]"}`}>
-          Studios<span className={`font-medium ${tone === "light" ? "text-[#f2b7c7]" : "text-[#a84d68]"}`}>Book</span>
+    <div className="inline-flex min-w-0 max-w-full flex-col" aria-label={PRODUCT_NAME}>
+      <TextTag className="block max-w-full leading-none">
+        <span className="sr-only">{PRODUCT_NAME}</span>
+        <img src={logoSrc} alt="" aria-hidden="true" className={`${current} w-auto max-w-full`} />
         </TextTag>
-        {subtitle && (
-          <span className={`mt-1 block text-xs font-semibold tracking-normal ${tone === "light" ? "text-white/55" : "text-zinc-500"}`}>
-            {subtitle}
-          </span>
-        )}
-      </div>
+      {subtitle && (
+        <span className={`mt-1 block text-xs font-semibold tracking-normal ${tone === "light" ? "text-white/60" : "text-zinc-500"}`}>
+          {subtitle}
+        </span>
+      )}
     </div>
   );
 }
@@ -860,6 +905,8 @@ export default function App() {
   const [selectedClientId, setSelectedClientId] = useState("");
   const [clientForm, setClientForm] = useState(emptyClient);
   const [serviceForm, setServiceForm] = useState(emptyService);
+  const [servicePhotoFiles, setServicePhotoFiles] = useState({ before: null, after: null });
+  const [servicePhotoPreviews, setServicePhotoPreviews] = useState({ before: "", after: "" });
   const [appointmentForm, setAppointmentForm] = useState(emptyAppointment);
   const [feedback, setFeedback] = useState("");
   const [feedbackType, setFeedbackType] = useState("success");
@@ -873,6 +920,38 @@ export default function App() {
     setFeedbackType(type);
     setFeedback(message);
     window.setTimeout(() => setFeedback(""), 4200);
+  };
+
+  const clearServicePhotoDrafts = () => {
+    setServicePhotoPreviews((current) => {
+      Object.values(current).filter(Boolean).forEach((url) => URL.revokeObjectURL(url));
+      return { before: "", after: "" };
+    });
+    setServicePhotoFiles({ before: null, after: null });
+  };
+
+  const updateServicePhotoDraft = (slot, file) => {
+    if (!file) {
+      setServicePhotoFiles((current) => ({ ...current, [slot]: null }));
+      setServicePhotoPreviews((current) => {
+        if (current[slot]) URL.revokeObjectURL(current[slot]);
+        return { ...current, [slot]: "" };
+      });
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      showFeedback("Use uma foto JPG, PNG ou WebP.", "error");
+      return;
+    }
+    if (file.size > base44.storage.maxProcedurePhotoBytes) {
+      showFeedback("Cada foto deve ter no máximo 8 MB.", "error");
+      return;
+    }
+    setServicePhotoFiles((current) => ({ ...current, [slot]: file }));
+    setServicePhotoPreviews((current) => {
+      if (current[slot]) URL.revokeObjectURL(current[slot]);
+      return { ...current, [slot]: URL.createObjectURL(file) };
+    });
   };
 
   const getErrorMessage = (error) =>
@@ -1065,21 +1144,40 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!primaryService) return;
-    setClientForm((current) => ({
-      ...current,
-      preferred_category: current.preferred_category || primaryService.category,
-      preferred_service: current.preferred_service || primaryService.name,
-    }));
-    setServiceForm((current) => {
-      if (current.effect || current.service_name) return current;
-      return buildServiceFormFromService(primaryService, current.client_id || selectedClientId);
+    setClientForm((current) => {
+      if (!primaryService) return { ...current, preferred_category: "", preferred_service: "" };
+      const preferredExists = serviceCatalog.some(
+        (service) => service.category === current.preferred_category && service.name === current.preferred_service
+      );
+      return preferredExists
+        ? current
+        : { ...current, preferred_category: primaryService.category, preferred_service: primaryService.name };
     });
-    setAppointmentForm((current) => ({
-      ...current,
-      service_name: current.service_name || primaryService.name,
-    }));
-  }, [primaryService, selectedClientId]);
+    setServiceForm((current) => {
+      if (primaryService && serviceBelongsToCatalog(current, serviceCatalog)) {
+        const selectedService = serviceCatalog.find((service) => service.id === current.catalog_service_id)
+          || serviceCatalog.find(
+            (service) => service.category === current.service_category && service.name === current.service_name
+          );
+        return selectedService
+          ? buildServiceFormFromService(selectedService, current.client_id, current.procedure_date || todayISO())
+          : current;
+      }
+      if (!primaryService) {
+        return { ...emptyService, client_id: current.client_id };
+      }
+      return buildServiceFormFromService(
+        primaryService,
+        current.client_id,
+        current.procedure_date || todayISO()
+      );
+    });
+    setAppointmentForm((current) => {
+      if (!primaryService) return { ...current, service_name: "" };
+      const serviceExists = serviceCatalog.some((service) => service.name === current.service_name);
+      return serviceExists ? current : { ...current, service_name: primaryService.name };
+    });
+  }, [primaryService, serviceCatalog]);
 
   useEffect(() => {
     if (!selectedClientId) return;
@@ -1224,18 +1322,13 @@ export default function App() {
   const updateProfileCategories = (categories) => {
     setProfileForm((current) => {
       const selected = categories.length ? categories : current.categories;
-      const retained = (current.services || []).filter((service) => selected.includes(service.category));
-      const defaults = defaultServicesForCategories(selected);
-      const merged = [...retained];
-      defaults.forEach((service) => {
-        const exists = merged.some(
-          (item) =>
-            item.category === service.category &&
-            String(item.name || "").trim().toLowerCase() === service.name.toLowerCase()
-        );
-        if (!exists) merged.push(service);
+      const services = reconcileServiceCatalog({
+        services: current.services || [],
+        currentCategories: current.categories || [],
+        nextCategories: selected,
+        defaultsForCategories: defaultServicesForCategories,
       });
-      return { ...current, categories: selected, services: merged };
+      return { ...current, categories: selected, services };
     });
   };
 
@@ -1248,9 +1341,12 @@ export default function App() {
     }));
   };
 
-  const addProfileService = () => {
+  const addProfileService = (serviceDraft = {}) => {
     setProfileForm((current) => {
-      const category = current.categories?.[0] || "lash_design";
+      const selectedCategories = current.categories?.length ? current.categories : ["lash_design"];
+      const category = selectedCategories.includes(serviceDraft.category)
+        ? serviceDraft.category
+        : selectedCategories[0];
       return {
         ...current,
         services: [
@@ -1258,11 +1354,11 @@ export default function App() {
           {
             id: `custom-${Date.now()}`,
             category,
-            name: "Novo serviço",
-            price: 0,
-            duration_minutes: 60,
-            maintenance_days: 20,
-            active: true,
+            name: String(serviceDraft.name || "Novo serviço").trim(),
+            price: Number(serviceDraft.price || 0),
+            duration_minutes: Number(serviceDraft.duration_minutes || 60),
+            maintenance_days: Number(serviceDraft.maintenance_days || 0),
+            active: serviceDraft.active !== false,
           },
         ],
       };
@@ -1287,6 +1383,9 @@ export default function App() {
     const services = normalizeServices(profileForm.services, profileForm.categories);
     if (!services.length) {
       return showFeedback("Mantenha pelo menos um serviço no catálogo.", "error");
+    }
+    if (!services.some((service) => service.active !== false)) {
+      return showFeedback("Mantenha pelo menos um serviço ativo para registrar atendimentos.", "error");
     }
 
     setActionLoading("profile");
@@ -1352,9 +1451,14 @@ export default function App() {
     showFeedback("Backup completo em JSON baixado.");
   };
 
-  const handleExportMonthlySafetyPdf = () => {
-    exportMonthlySafetyPdf({ profile, clients, records, appointments, backupSnapshots });
-    showFeedback("PDF mensal do modo segurança gerado.");
+  const handleExportMonthlySafetyPdf = async () => {
+    try {
+      await exportMonthlySafetyPdf({ profile, clients, records, appointments, backupSnapshots });
+      showFeedback("PDF mensal do modo segurança gerado.");
+    } catch (error) {
+      console.error(error);
+      showFeedback("Não foi possível gerar o PDF mensal.", "error");
+    }
   };
 
   const handleCreateCloudSnapshot = async () => {
@@ -1516,16 +1620,24 @@ export default function App() {
     event.preventDefault();
     const client = clients.find((item) => item.id === serviceForm.client_id);
     if (!client) return showFeedback("Selecione uma cliente para salvar.", "error");
+    const selectedService = serviceCatalog.find((service) => service.id === serviceForm.catalog_service_id)
+      || serviceCatalog.find(
+        (service) => service.category === serviceForm.service_category && service.name === serviceForm.effect
+      );
+    if (!selectedService) {
+      return showFeedback("Selecione um serviço ativo do catálogo.", "error");
+    }
     setActionLoading("service");
     try {
-      const selectedService = serviceCatalog.find((service) => service.name === serviceForm.effect);
       const maintenanceDays = Number(
-        serviceForm.maintenance_days || selectedService?.maintenance_days || 20
+        serviceForm.maintenance_days === "" || serviceForm.maintenance_days === null
+          ? selectedService.maintenance_days ?? 0
+          : serviceForm.maintenance_days
       );
       const nextMaintenance =
         serviceForm.next_maintenance_date ||
         (maintenanceDays > 0 ? addDays(serviceForm.procedure_date, maintenanceDays) : "");
-      await ServiceRecord.create({
+      const createdRecord = await ServiceRecord.create({
         ...serviceForm,
         client_name: client.full_name,
         service_type: serviceForm.service_category || selectedService?.category || serviceForm.service_type || "other",
@@ -1542,6 +1654,29 @@ export default function App() {
           : undefined,
         next_maintenance_date: nextMaintenance,
       });
+      const photoPaths = {};
+      let photoUploadFailed = false;
+      for (const slot of ["before", "after"]) {
+        const file = servicePhotoFiles[slot];
+        if (!file) continue;
+        try {
+          photoPaths[`${slot}_photo_path`] = await base44.storage.uploadProcedurePhoto(createdRecord.id, slot, file);
+        } catch (photoError) {
+          photoUploadFailed = true;
+          console.error(`Procedure ${slot} photo upload error`, photoError);
+        }
+      }
+      if (Object.keys(photoPaths).length) {
+        try {
+          await ServiceRecord.update(createdRecord.id, photoPaths);
+        } catch (photoUpdateError) {
+          photoUploadFailed = true;
+          await Promise.allSettled(
+            Object.values(photoPaths).map((path) => base44.storage.deleteProcedurePhoto(path))
+          );
+          console.error("Procedure photo metadata update error", photoUpdateError);
+        }
+      }
       await Client.update(client.id, {
         last_service_date: serviceForm.procedure_date,
         next_maintenance_date: nextMaintenance,
@@ -1550,8 +1685,14 @@ export default function App() {
         status: "active",
       });
       setServiceForm(buildServiceFormFromService(primaryService, client.id));
+      clearServicePhotoDrafts();
       await loadData();
-      showFeedback("Atendimento salvo e retorno calculado.");
+      showFeedback(
+        photoUploadFailed
+          ? "Atendimento salvo, mas uma das fotos não foi enviada. Tente novamente no próximo registro."
+          : "Atendimento salvo, fotos protegidas e retorno calculado.",
+        photoUploadFailed ? "error" : "success"
+      );
     } catch (error) {
       console.error(error);
       showFeedback(`Erro ao salvar atendimento: ${getErrorMessage(error)}`, "error");
@@ -1614,9 +1755,13 @@ export default function App() {
   };
 
   const seedExample = async () => {
+    if (!primaryService) {
+      showFeedback("Ative pelo menos um serviço no catálogo antes de criar dados de exemplo.", "error");
+      return;
+    }
     setActionLoading("seed");
     try {
-      const service = primaryService || defaultServicesForCategories(["lash_design"])[0];
+      const service = primaryService;
       const maintenanceDays = Number(service?.maintenance_days ?? 20);
       const procedureDate = addDays(todayISO(), maintenanceDays > 0 ? -(maintenanceDays + 1) : -21);
       const maintenanceDate = maintenanceDays > 0 ? addDays(procedureDate, maintenanceDays) : "";
@@ -1649,7 +1794,7 @@ export default function App() {
         adhesive: "Produto padrão",
         duration_minutes: service.duration_minutes,
         maintenance_days: maintenanceDays,
-        retention_percent: 55,
+        retention_percent: service.category === "lash_design" ? 55 : undefined,
         amount: service.price || 0,
         payment_status: "paid",
         next_maintenance_date: maintenanceDate,
@@ -1721,7 +1866,7 @@ export default function App() {
 
   if (!isLoading && !profile) {
     return (
-      <div className="min-h-dvh bg-[#f6f1ef] text-zinc-950">
+      <div className="min-h-dvh bg-brand-ivory text-brand-charcoal">
         <OnboardingScreen
           user={user}
           profileForm={profileForm}
@@ -1741,7 +1886,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-dvh bg-[#f6f1ef] text-zinc-950">
+    <div className="min-h-dvh bg-brand-ivory text-brand-charcoal">
       <AppHeader
         user={user}
         profile={profile}
@@ -1831,6 +1976,9 @@ export default function App() {
                 setSelectedClientId={setSelectedClientId}
                 serviceForm={serviceForm}
                 setServiceForm={setServiceForm}
+                servicePhotoFiles={servicePhotoFiles}
+                servicePhotoPreviews={servicePhotoPreviews}
+                onServicePhotoChange={updateServicePhotoDraft}
                 createServiceRecord={createServiceRecord}
                 actionLoading={actionLoading}
                 records={records}
@@ -2092,17 +2240,12 @@ function ProfileSetupPanel({
       <Panel>
         <PanelHeader
           title="Catálogo editável"
-          subtitle="Serviços padrão entram automaticamente, mas podem ser alterados antes de salvar."
-          action={
-            <Button type="button" onClick={addProfileService} className="rounded-full bg-zinc-950 text-white">
-              <Plus className="mr-2 h-4 w-4" />
-              Novo serviço
-            </Button>
-          }
+          subtitle="Organize por área, encontre rápido e mantenha apenas o que você realmente oferece."
         />
         <ServiceCatalogEditor
           services={profileForm.services || []}
           categories={profileForm.categories || []}
+          onAdd={addProfileService}
           onUpdate={updateProfileService}
           onRemove={removeProfileService}
         />
@@ -2157,79 +2300,288 @@ function CategorySelector({ value, onChange }) {
   );
 }
 
-function ServiceCatalogEditor({ services, categories, onUpdate, onRemove }) {
+export function ServiceCatalogEditor({ services, categories, onAdd, onUpdate, onRemove }) {
   const visibleCategories = PROFESSIONAL_CATEGORIES.filter((category) => categories.includes(category.id));
+  const [categoryFilter, setCategoryFilter] = useState(categories[0] || "all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [serviceDraft, setServiceDraft] = useState(null);
+  const [draftError, setDraftError] = useState("");
+
+  useEffect(() => {
+    if (categoryFilter !== "all" && !categories.includes(categoryFilter)) {
+      setCategoryFilter(categories[0] || "all");
+    }
+  }, [categories, categoryFilter]);
+
+  const filteredServices = useMemo(() => {
+    const query = catalogSearch.trim().toLocaleLowerCase("pt-BR");
+    return [...services]
+      .filter((service) => categoryFilter === "all" || service.category === categoryFilter)
+      .filter((service) => statusFilter === "all" || (statusFilter === "active" ? service.active !== false : service.active === false))
+      .filter((service) => !query || service.name.toLocaleLowerCase("pt-BR").includes(query))
+      .sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
+  }, [services, categoryFilter, statusFilter, catalogSearch]);
+
+  const activeCount = services.filter((service) => service.active !== false).length;
+  const openNewService = () => {
+    setDraftError("");
+    setServiceDraft({
+      category: categoryFilter !== "all" ? categoryFilter : categories[0] || "lash_design",
+      name: "",
+      price: "",
+      duration_minutes: 60,
+      maintenance_days: 0,
+      active: true,
+    });
+  };
+
+  const openService = (service) => {
+    setDraftError("");
+    setServiceDraft({ ...service });
+  };
+
+  const saveDraft = () => {
+    const name = String(serviceDraft?.name || "").trim();
+    if (!name) {
+      setDraftError("Informe o nome do serviço.");
+      return;
+    }
+    const duplicate = services.some(
+      (service) =>
+        service.id !== serviceDraft.id &&
+        service.category === serviceDraft.category &&
+        service.name.toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR")
+    );
+    if (duplicate) {
+      setDraftError("Já existe um serviço com esse nome nessa área.");
+      return;
+    }
+
+    const payload = {
+      category: serviceDraft.category,
+      name,
+      price: Number(serviceDraft.price || 0),
+      duration_minutes: Math.max(1, Number(serviceDraft.duration_minutes || 60)),
+      maintenance_days: Math.max(0, Number(serviceDraft.maintenance_days || 0)),
+      active: serviceDraft.active !== false,
+    };
+    if (serviceDraft.id) onUpdate(serviceDraft.id, payload);
+    else onAdd(payload);
+    setCategoryFilter(payload.category);
+    setStatusFilter("all");
+    setCatalogSearch("");
+    setServiceDraft(null);
+  };
 
   return (
-    <div className="mt-5 grid gap-3">
+    <div className="mt-5 min-w-0">
+      <div className="flex min-w-0 flex-col gap-4 border-y border-zinc-100 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-black text-zinc-950">{activeCount} ativos de {services.length} serviços</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-500">Alterações entram no app depois de salvar a configuração.</p>
+        </div>
+        <Button type="button" onClick={openNewService} className="h-11 w-full rounded-full bg-zinc-950 text-white sm:w-auto">
+          <Plus className="mr-2 h-4 w-4" />
+          Adicionar serviço
+        </Button>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px]">
+        <label className="relative block min-w-0">
+          <span className="sr-only">Buscar serviço</span>
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          <Input
+            value={catalogSearch}
+            onChange={(event) => setCatalogSearch(event.target.value)}
+            className="h-11 rounded-2xl border-zinc-200 pl-11"
+            placeholder="Buscar por nome"
+          />
+        </label>
+        <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filtrar serviços por status">
+          <option value="all">Todos os status</option>
+          <option value="active">Somente ativos</option>
+          <option value="inactive">Somente inativos</option>
+        </Select>
+      </div>
+
+      <div className="mt-4 flex max-w-full gap-2 overflow-x-auto pb-2" role="tablist" aria-label="Filtrar catálogo por área">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={categoryFilter === "all"}
+          onClick={() => setCategoryFilter("all")}
+          className={`shrink-0 rounded-full px-4 py-2 text-sm font-black transition ${
+            categoryFilter === "all" ? "bg-zinc-950 text-white" : "border border-zinc-200 bg-white text-zinc-600"
+          }`}
+        >
+          Todos <span className="ml-1 opacity-60">{services.length}</span>
+        </button>
+        {visibleCategories.map((category) => {
+          const count = services.filter((service) => service.category === category.id).length;
+          return (
+            <button
+              key={category.id}
+              type="button"
+              role="tab"
+              aria-selected={categoryFilter === category.id}
+              onClick={() => setCategoryFilter(category.id)}
+              className={`shrink-0 rounded-full px-4 py-2 text-sm font-black transition ${
+                categoryFilter === category.id ? "bg-zinc-950 text-white" : "border border-zinc-200 bg-white text-zinc-600"
+              }`}
+            >
+              {category.short} <span className="ml-1 opacity-60">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-3 divide-y divide-zinc-100 border-y border-zinc-100">
       {services.length === 0 ? (
         <EmptyState text="Escolha uma categoria para carregar serviços padrão." />
+      ) : filteredServices.length === 0 ? (
+        <EmptyState text="Nenhum serviço encontrado com esses filtros." />
       ) : (
-        services.map((service) => (
-          <div key={service.id} className="grid gap-3 rounded-[1.5rem] border border-zinc-100 bg-zinc-50 p-4 lg:grid-cols-[1.1fr_0.8fr_0.55fr_0.55fr_0.55fr_auto]">
-            <Field label="Serviço">
-              <Input
-                value={service.name}
-                onChange={(event) => onUpdate(service.id, { name: event.target.value })}
-                className="h-10 rounded-2xl border-zinc-200"
-              />
-            </Field>
-            <Field label="Categoria">
-              <Select value={service.category} onChange={(event) => onUpdate(service.id, { category: event.target.value })}>
-                {visibleCategories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Preço">
-              <Input
-                type="number"
-                value={service.price}
-                onChange={(event) => onUpdate(service.id, { price: event.target.value })}
-                className="h-10 rounded-2xl border-zinc-200"
-              />
-            </Field>
-            <Field label="Minutos">
-              <Input
-                type="number"
-                value={service.duration_minutes}
-                onChange={(event) => onUpdate(service.id, { duration_minutes: event.target.value })}
-                className="h-10 rounded-2xl border-zinc-200"
-              />
-            </Field>
-            <Field label="Retorno">
-              <Input
-                type="number"
-                value={service.maintenance_days}
-                onChange={(event) => onUpdate(service.id, { maintenance_days: event.target.value })}
-                className="h-10 rounded-2xl border-zinc-200"
-              />
-            </Field>
-            <div className="flex items-end gap-2">
-              <label className="flex h-10 items-center gap-2 rounded-full bg-white px-3 text-xs font-black text-zinc-600">
+        filteredServices.map((service) => (
+          <div key={service.id} className="grid min-w-0 gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <button type="button" onClick={() => openService(service)} className="min-w-0 text-left">
+              <span className="block truncate text-sm font-black text-zinc-950">{service.name}</span>
+              <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
+                <span>{categoryLabel(service.category)}</span>
+                <span>{money(service.price)}</span>
+                <span>{service.duration_minutes} min</span>
+                <span>{service.maintenance_days > 0 ? `Retorno em ${service.maintenance_days} dias` : "Sem retorno"}</span>
+              </span>
+            </button>
+            <div className="flex items-center justify-between gap-2 sm:justify-end">
+              <label className="flex h-9 items-center gap-2 rounded-full bg-zinc-50 px-3 text-xs font-black text-zinc-600">
                 <input
                   type="checkbox"
                   checked={service.active !== false}
                   onChange={(event) => onUpdate(service.id, { active: event.target.checked })}
+                  aria-label={`${service.active !== false ? "Desativar" : "Ativar"} ${service.name}`}
                 />
-                Ativo
+                {service.active !== false ? "Ativo" : "Inativo"}
               </label>
-              <Button type="button" variant="ghost" size="icon" onClick={() => onRemove(service.id)} className="rounded-full">
-                <Trash2 className="h-4 w-4" />
+              <Button type="button" variant="ghost" size="icon" onClick={() => openService(service)} className="rounded-full" aria-label={`Editar ${service.name}`}>
+                <Pencil className="h-4 w-4" />
               </Button>
             </div>
           </div>
         ))
       )}
+      </div>
+
+      {serviceDraft && (
+        <CatalogServiceDialog
+          draft={serviceDraft}
+          setDraft={setServiceDraft}
+          categories={visibleCategories}
+          error={draftError}
+          onSave={saveDraft}
+          onClose={() => setServiceDraft(null)}
+          onRemove={serviceDraft.id ? () => {
+            onRemove(serviceDraft.id);
+            setServiceDraft(null);
+          } : null}
+        />
+      )}
+    </div>
+  );
+}
+
+function CatalogServiceDialog({ draft, setDraft, categories, error, onSave, onClose, onRemove }) {
+  const [removeArmed, setRemoveArmed] = useState(false);
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-zinc-950/55 p-0 sm:items-center sm:p-5" role="presentation">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="catalog-service-title"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onClose();
+          if (event.key === "Enter" && event.target.tagName !== "TEXTAREA") {
+            event.preventDefault();
+            onSave();
+          }
+        }}
+        className="max-h-[92dvh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl sm:p-6"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase text-rose-700">Catálogo</p>
+            <h3 id="catalog-service-title" className="mt-1 text-xl font-black tracking-normal text-zinc-950">
+              {draft.id ? "Editar serviço" : "Adicionar serviço"}
+            </h3>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={onClose} className="rounded-full" aria-label="Fechar">
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <Field label="Nome do serviço" className="sm:col-span-2">
+            <Input
+              value={draft.name}
+              onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+              className="h-11 rounded-2xl border-zinc-200"
+              placeholder="Ex: Massagem relaxante"
+              autoFocus
+            />
+          </Field>
+          <Field label="Área de atuação">
+            <Select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })}>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>{category.label}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Preço (R$)">
+            <Input type="number" min="0" step="0.01" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} className="h-11 rounded-2xl border-zinc-200" />
+          </Field>
+          <Field label="Duração (minutos)">
+            <Input type="number" min="1" value={draft.duration_minutes} onChange={(event) => setDraft({ ...draft, duration_minutes: event.target.value })} className="h-11 rounded-2xl border-zinc-200" />
+          </Field>
+          <Field label="Retorno sugerido (dias)" hint="Use zero quando não houver retorno.">
+            <Input type="number" min="0" value={draft.maintenance_days} onChange={(event) => setDraft({ ...draft, maintenance_days: event.target.value })} className="h-11 rounded-2xl border-zinc-200" />
+          </Field>
+          <label className="flex items-center gap-3 rounded-2xl bg-zinc-50 px-4 py-3 text-sm font-black text-zinc-700 sm:col-span-2">
+            <input type="checkbox" checked={draft.active !== false} onChange={(event) => setDraft({ ...draft, active: event.target.checked })} />
+            Serviço ativo e disponível nos atendimentos
+          </label>
+        </div>
+
+        {error && <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</p>}
+
+        <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {onRemove ? (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => removeArmed ? onRemove() : setRemoveArmed(true)}
+              className="h-11 rounded-full text-red-700"
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              {removeArmed ? "Confirmar exclusão" : "Excluir serviço"}
+            </Button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <Button type="button" variant="ghost" onClick={onClose} className="h-11 flex-1 rounded-full border border-zinc-200 sm:flex-none">Cancelar</Button>
+            <Button type="button" onClick={onSave} className="h-11 flex-1 rounded-full bg-zinc-950 text-white sm:flex-none">
+              <Save className="mr-2 h-4 w-4" />
+              {draft.id ? "Salvar alterações" : "Adicionar"}
+            </Button>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
 
 function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
   return (
-    <div className="min-h-dvh bg-[#f6f1ef] px-4 py-6 text-zinc-950 sm:px-5 sm:py-10">
+    <div className="min-h-dvh bg-brand-ivory px-4 py-6 text-brand-charcoal sm:px-5 sm:py-10">
       <div className="mx-auto grid min-h-[calc(100dvh-3rem)] max-w-6xl items-center gap-7 sm:min-h-[calc(100dvh-5rem)] sm:gap-10 lg:grid-cols-[0.9fr_1.1fr]">
         <div>
           <BrandLockup size="hero" heading subtitle="Seu talento em foco. Seu studio sob controle." />
@@ -2254,10 +2606,16 @@ function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
           <Button
             onClick={onLogin}
             disabled={actionLoading === "login"}
-            className="mt-8 h-12 w-full rounded-full bg-[#402239] px-5 text-white hover:bg-[#553047] sm:w-auto sm:px-7"
+            className="mt-8 h-12 w-full rounded-full bg-brand-plum px-5 text-white hover:bg-[#573048] sm:w-auto sm:px-7"
           >
             {actionLoading === "login" ? "Abrindo login..." : "Entrar com Google"}
           </Button>
+          <p className="mt-4 text-sm text-zinc-500">
+            Ao entrar, você declara que leu a{" "}
+            <a href="/privacy.html" target="_blank" rel="noreferrer" className="font-bold text-[#7f3158] underline underline-offset-4">
+              Política de Privacidade e LGPD
+            </a>.
+          </p>
         </div>
         <div className="overflow-hidden rounded-2xl border border-white bg-white p-4 shadow-2xl sm:rounded-[2rem] sm:bg-white/86 sm:p-6 sm:backdrop-blur">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -2653,6 +3011,8 @@ function ClientProntuario({
   }
 
   const latestRecord = clientRecords[0];
+  const latestCategory = latestRecord?.service_category || latestRecord?.service_type;
+  const latestFieldLabels = procedureFieldLabels(latestCategory);
   const businessName = profile?.business_name || PRODUCT_NAME;
   const message = `Oi, ${String(selectedClient.full_name || "cliente").split(" ")[0]}! Tudo bem? Passando para falar do seu atendimento no ${businessName}.`;
 
@@ -2706,9 +3066,12 @@ function ClientProntuario({
           {latestRecord ? (
             <>
               <InfoLine label="Serviço" value={latestRecord.service_name || latestRecord.effect || "-"} />
-              <InfoLine label="Categoria" value={categoryLabel(latestRecord.service_category || latestRecord.service_type)} />
-              <InfoLine label="Retenção" value={latestRecord.retention_percent ? `${latestRecord.retention_percent}%` : "-"} />
-              <InfoLine label="Produto" value={latestRecord.adhesive || "-"} />
+              <InfoLine label="Categoria" value={categoryLabel(latestCategory)} />
+              <InfoLine label={latestFieldLabels.detail} value={latestRecord.curl || "-"} />
+              {latestCategory === "lash_design" && (
+                <InfoLine label="Retenção" value={latestRecord.retention_percent ? `${latestRecord.retention_percent}%` : "-"} />
+              )}
+              <InfoLine label={latestFieldLabels.product} value={latestRecord.adhesive || "-"} />
             </>
           ) : (
             <p className="text-sm text-zinc-500">Nenhum atendimento registrado.</p>
@@ -2720,8 +3083,16 @@ function ClientProntuario({
       </div>
 
       <div className="mt-6 grid min-w-0 gap-4 md:grid-cols-2">
-        <PhotoPlaceholder label="Foto antes" />
-        <PhotoPlaceholder label="Foto depois" />
+        <PrivateProcedurePhoto
+          label="Foto antes"
+          path={latestRecord?.before_photo_path}
+          legacyUrl={latestRecord?.before_photo_url}
+        />
+        <PrivateProcedurePhoto
+          label="Foto depois"
+          path={latestRecord?.after_photo_path}
+          legacyUrl={latestRecord?.after_photo_url}
+        />
       </div>
 
       <div className="mt-6">
@@ -2754,13 +3125,16 @@ function ClientProntuario({
   );
 }
 
-function ServiceView({
+export function ServiceView({
   clients,
   selectedClient,
   selectedClientId,
   setSelectedClientId,
   serviceForm,
   setServiceForm,
+  servicePhotoFiles,
+  servicePhotoPreviews,
+  onServicePhotoChange,
   createServiceRecord,
   actionLoading,
   records,
@@ -2770,10 +3144,18 @@ function ServiceView({
   onShareProcedurePdf,
 }) {
   const recentRecords = records.slice(0, 5);
+  const categoryServices = serviceCatalog.filter(
+    (service) => !serviceForm.service_category || service.category === serviceForm.service_category
+  );
+  const procedureFields = procedureFieldLabels(serviceForm.service_category);
 
   const updateProcedureDate = (value) => {
-    const selectedService = serviceCatalog.find((service) => service.name === serviceForm.effect);
-    const maintenanceDays = Number(serviceForm.maintenance_days || selectedService?.maintenance_days || 20);
+    const selectedService = serviceCatalog.find((service) => service.id === serviceForm.catalog_service_id);
+    const maintenanceDays = Number(
+      serviceForm.maintenance_days === "" || serviceForm.maintenance_days === null
+        ? selectedService?.maintenance_days ?? 0
+        : serviceForm.maintenance_days
+    );
     setServiceForm({
       ...serviceForm,
       procedure_date: value,
@@ -2781,25 +3163,38 @@ function ServiceView({
     });
   };
 
-  const selectService = (serviceName) => {
-    const selectedService = serviceCatalog.find((service) => service.name === serviceName);
+  const selectCategory = (categoryId) => {
+    const firstService = serviceCatalog.find((service) => service.category === categoryId);
+    if (!firstService) {
+      setServiceForm({
+        ...emptyService,
+        client_id: serviceForm.client_id || selectedClientId,
+        procedure_date: serviceForm.procedure_date,
+        service_category: categoryId,
+        service_type: categoryId,
+      });
+      return;
+    }
+    setServiceForm(buildServiceFormFromService(
+      firstService,
+      serviceForm.client_id || selectedClientId,
+      serviceForm.procedure_date
+    ));
+  };
+
+  const selectService = (serviceId) => {
+    const selectedService = serviceCatalog.find((service) => service.id === serviceId);
     if (!selectedService) {
-      setServiceForm({ ...serviceForm, effect: serviceName, service_name: serviceName });
+      setServiceForm({ ...serviceForm, catalog_service_id: "", effect: "", service_name: "" });
       return;
     }
     setServiceForm({
-      ...serviceForm,
-      service_type: selectedService.category,
-      service_category: selectedService.category,
-      service_name: selectedService.name,
-      effect: selectedService.name,
-      amount: selectedService.price ? String(selectedService.price) : serviceForm.amount,
-      duration_minutes: selectedService.duration_minutes || serviceForm.duration_minutes,
-      maintenance_days: selectedService.maintenance_days,
-      next_maintenance_date:
-        Number(selectedService.maintenance_days) > 0
-          ? addDays(serviceForm.procedure_date, Number(selectedService.maintenance_days))
-          : "",
+      ...buildServiceFormFromService(
+        selectedService,
+        serviceForm.client_id || selectedClientId,
+        serviceForm.procedure_date
+      ),
+      payment_status: serviceForm.payment_status || "paid",
     });
   };
 
@@ -2840,7 +3235,8 @@ function ServiceView({
               <Field label="Categoria">
                 <Select
                   value={serviceForm.service_category}
-                  onChange={(event) => setServiceForm({ ...serviceForm, service_category: event.target.value, service_type: event.target.value })}
+                  onChange={(event) => selectCategory(event.target.value)}
+                  required
                 >
                   <option value="">Selecione</option>
                   {PROFESSIONAL_CATEGORIES
@@ -2854,23 +3250,22 @@ function ServiceView({
               </Field>
               <Field label="Efeito / serviço">
                 <Select
-                  value={serviceForm.effect}
+                  value={serviceForm.catalog_service_id}
                   onChange={(event) => selectService(event.target.value)}
+                  required
                 >
                   <option value="">Selecione</option>
-                  {serviceCatalog
-                    .filter((service) => !serviceForm.service_category || service.category === serviceForm.service_category)
-                    .map((service) => (
-                    <option key={service.id} value={service.name}>{service.name}</option>
+                  {categoryServices.map((service) => (
+                    <option key={service.id} value={service.id}>{service.name}</option>
                   ))}
                 </Select>
               </Field>
-              <Field label="Técnica">
+              <Field label={procedureFields.technique}>
                 <Input
                   value={serviceForm.technique}
                   onChange={(event) => setServiceForm({ ...serviceForm, technique: event.target.value })}
                   className="h-11 rounded-2xl border-zinc-200"
-                  placeholder="Fios tecnológicos, volume..."
+                  placeholder={serviceForm.service_category === "massage_therapy" ? "Ex: relaxante, drenagem, liberação..." : "Descreva a técnica aplicada"}
                 />
               </Field>
             </div>
@@ -2878,20 +3273,20 @@ function ServiceView({
 
           <FormStep number="03" title="Ficha técnica e produtos">
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Curvatura / detalhe técnico">
+              <Field label={procedureFields.detail}>
                 <Input value={serviceForm.curl} onChange={(event) => setServiceForm({ ...serviceForm, curl: event.target.value })} className="h-11 rounded-2xl border-zinc-200" />
               </Field>
-              <Field label="Espessura / medida">
+              <Field label={procedureFields.measure}>
                 <Input value={serviceForm.thickness} onChange={(event) => setServiceForm({ ...serviceForm, thickness: event.target.value })} className="h-11 rounded-2xl border-zinc-200" />
               </Field>
-              <Field label="Tamanhos / numeração">
-                <Input value={serviceForm.lengths} onChange={(event) => setServiceForm({ ...serviceForm, lengths: event.target.value })} className="h-11 rounded-2xl border-zinc-200" placeholder="9-10-11-12" />
+              <Field label={procedureFields.sizing}>
+                <Input value={serviceForm.lengths} onChange={(event) => setServiceForm({ ...serviceForm, lengths: event.target.value })} className="h-11 rounded-2xl border-zinc-200" />
               </Field>
-              <Field label="Cola / produto usado">
+              <Field label={procedureFields.product}>
                 <Input value={serviceForm.adhesive} onChange={(event) => setServiceForm({ ...serviceForm, adhesive: event.target.value })} className="h-11 rounded-2xl border-zinc-200" />
               </Field>
-              <Field label="Mapeamento / detalhes do procedimento" className="md:col-span-2">
-                <TextArea value={serviceForm.mapping_notes} onChange={(event) => setServiceForm({ ...serviceForm, mapping_notes: event.target.value })} placeholder="Ex: técnica, combinações, regiões trabalhadas, produtos e cuidados..." />
+              <Field label={procedureFields.notes} className="md:col-span-2">
+                <TextArea value={serviceForm.mapping_notes} onChange={(event) => setServiceForm({ ...serviceForm, mapping_notes: event.target.value })} placeholder={procedureFields.notesPlaceholder} />
               </Field>
             </div>
           </FormStep>
@@ -2920,23 +3315,37 @@ function ServiceView({
                   placeholder="20"
                 />
               </Field>
-              <Field label="Retenção (%)">
-                <Input type="number" min="0" max="100" value={serviceForm.retention_percent} onChange={(event) => setServiceForm({ ...serviceForm, retention_percent: event.target.value })} className="h-11 rounded-2xl border-zinc-200" placeholder="55" />
-              </Field>
+              {serviceForm.service_category === "lash_design" && (
+                <Field label="Retenção (%)">
+                  <Input type="number" min="0" max="100" value={serviceForm.retention_percent} onChange={(event) => setServiceForm({ ...serviceForm, retention_percent: event.target.value })} className="h-11 rounded-2xl border-zinc-200" placeholder="55" />
+                </Field>
+              )}
               <Field label="Próxima manutenção">
                 <Input type="date" value={serviceForm.next_maintenance_date} onChange={(event) => setServiceForm({ ...serviceForm, next_maintenance_date: event.target.value })} className="h-11 rounded-2xl border-zinc-200" />
               </Field>
             </div>
           </FormStep>
 
-          <FormStep number="05" title="Observações e fotos futuras">
+          <FormStep number="05" title="Observações e fotos">
             <div className="grid gap-4">
               <Field label="Observações técnicas">
                 <TextArea value={serviceForm.notes} onChange={(event) => setServiceForm({ ...serviceForm, notes: event.target.value })} />
               </Field>
               <div className="grid gap-4 md:grid-cols-2">
-                <PhotoPlaceholder label="Foto antes - estrutura preparada" />
-                <PhotoPlaceholder label="Foto depois - estrutura preparada" />
+                <ProcedurePhotoInput
+                  label="Foto antes"
+                  file={servicePhotoFiles.before}
+                  previewUrl={servicePhotoPreviews.before}
+                  disabled={actionLoading === "service"}
+                  onChange={(file) => onServicePhotoChange("before", file)}
+                />
+                <ProcedurePhotoInput
+                  label="Foto depois"
+                  file={servicePhotoFiles.after}
+                  previewUrl={servicePhotoPreviews.after}
+                  disabled={actionLoading === "service"}
+                  onChange={(file) => onServicePhotoChange("after", file)}
+                />
               </div>
             </div>
           </FormStep>
@@ -3211,7 +3620,7 @@ function BillingAccessScreen({
   feedbackType,
 }) {
   return (
-    <div className="min-h-dvh bg-[#f6f1ef] text-zinc-950">
+    <div className="min-h-dvh bg-brand-ivory text-brand-charcoal">
       <header className="border-b border-white/70 bg-white sm:bg-white/85 sm:backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-3 sm:gap-4 sm:px-6 sm:py-4">
           <BrandLockup size="header" subtitle="Regularização de acesso" />
@@ -3739,7 +4148,7 @@ function SecurityView({
               subtitle="Etapa beta paga, com segurança operacional sem grande mudança visual."
             />
             <div className="mt-5 rounded-[1.5rem] bg-zinc-950 p-5 text-white">
-              <p className="text-sm font-bold text-white/55">StudiosBook Beta</p>
+              <p className="text-sm font-bold text-white/55">StudiosBook by BlackVision</p>
               <p className="mt-2 text-4xl font-black">{PRODUCT_PRICE}</p>
               <p className="mt-3 text-sm leading-6 text-white/65">
                 Inclui agenda, clientes, atendimentos, retorno por WhatsApp, exportação, PDF mensal e backup em nuvem.
@@ -3974,7 +4383,16 @@ function RecordCard({
   onDownloadProcedurePdf,
   onShareProcedurePdf,
 }) {
+  const [showPhotos, setShowPhotos] = useState(false);
   const serviceName = record.service_name || record.effect || record.service_type;
+  const category = record.service_category || record.service_type;
+  const fieldLabels = procedureFieldLabels(category);
+  const hasPhotos = Boolean(
+    record.before_photo_path
+      || record.after_photo_path
+      || record.before_photo_url
+      || record.after_photo_url
+  );
   return (
     <div className="min-w-0 rounded-[1.5rem] border border-zinc-100 bg-zinc-50/80 p-4">
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -3983,19 +4401,47 @@ function RecordCard({
           <p className="mt-1 break-words text-sm text-zinc-500">
             {formatDate(record.procedure_date)} | Retorno {formatDate(record.next_maintenance_date)}
           </p>
-          <p className="mt-1 text-xs font-bold text-zinc-400">{categoryLabel(record.service_category || record.service_type)}</p>
+          <p className="mt-1 text-xs font-bold text-zinc-400">{categoryLabel(category)}</p>
         </div>
         <Badge tone="rose">{money(record.amount)}</Badge>
       </div>
       {!compact && (
         <div className="mt-4 grid gap-2 text-sm text-zinc-600 sm:grid-cols-2">
-          <InfoLine label="Curvatura" value={record.curl || "-"} />
-          <InfoLine label="Espessura" value={record.thickness || "-"} />
-          <InfoLine label="Tamanhos" value={record.lengths || "-"} />
-          <InfoLine label="Produto" value={record.adhesive || "-"} />
+          <InfoLine label={fieldLabels.detail} value={record.curl || "-"} />
+          <InfoLine label={fieldLabels.measure} value={record.thickness || "-"} />
+          <InfoLine label={fieldLabels.sizing} value={record.lengths || "-"} />
+          <InfoLine label={fieldLabels.product} value={record.adhesive || "-"} />
           <InfoLine label="Duração" value={record.duration_minutes ? `${record.duration_minutes} min` : "-"} />
-          <p className="sm:col-span-2"><strong>Mapa:</strong> {record.mapping_notes || "-"}</p>
+          <p className="sm:col-span-2"><strong>{fieldLabels.notes}:</strong> {record.mapping_notes || "-"}</p>
         </div>
+      )}
+      {!compact && hasPhotos && (
+        <>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setShowPhotos((current) => !current)}
+            className="mt-4 h-9 rounded-full text-xs"
+            aria-expanded={showPhotos}
+          >
+            <Camera className="mr-2 h-4 w-4" />
+            {showPhotos ? "Ocultar fotos" : "Ver fotos do atendimento"}
+          </Button>
+          {showPhotos && (
+            <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
+              <PrivateProcedurePhoto
+                label="Foto antes"
+                path={record.before_photo_path}
+                legacyUrl={record.before_photo_url}
+              />
+              <PrivateProcedurePhoto
+                label="Foto depois"
+                path={record.after_photo_path}
+                legacyUrl={record.after_photo_url}
+              />
+            </div>
+          )}
+        </>
       )}
       {(onDownloadProcedurePdf || onShareProcedurePdf) && (
         <div className="mt-4 flex flex-wrap gap-2">
@@ -4112,15 +4558,113 @@ function ProntuarioBlock({ title, icon: Icon, children }) {
   );
 }
 
-function PhotoPlaceholder({ label }) {
+function ProcedurePhotoInput({ label, file, previewUrl, onChange, disabled = false }) {
+  const inputId = useId();
+
   return (
-    <div className="flex min-h-32 items-center justify-center rounded-[1.5rem] border border-dashed border-zinc-200 bg-zinc-50 p-5 text-center">
-      <div>
-        <Camera className="mx-auto h-6 w-6 text-zinc-400" />
-        <p className="mt-2 text-sm font-black text-zinc-600">{label}</p>
-        <p className="mt-1 text-xs text-zinc-400">Preparado para upload futuro</p>
+    <div className="min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50">
+      <div className="relative aspect-[4/3] overflow-hidden bg-zinc-100">
+        {previewUrl ? (
+          <img src={previewUrl} alt={`Pré-visualização: ${label}`} className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full items-center justify-center p-5 text-center">
+            <div>
+              <Camera className="mx-auto h-7 w-7 text-zinc-400" />
+              <p className="mt-2 text-sm font-black text-zinc-700">{label}</p>
+              <p className="mt-1 text-xs leading-5 text-zinc-400">JPG, PNG ou WebP · máximo 8 MB</p>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="flex min-w-0 items-center justify-between gap-2 p-3">
+        <div className="min-w-0">
+          <p className="truncate text-xs font-bold text-zinc-600">{file?.name || "Nenhuma foto selecionada"}</p>
+        </div>
+        <div className="flex shrink-0 gap-1">
+          <label
+            htmlFor={inputId}
+            className={`inline-flex h-9 cursor-pointer items-center justify-center rounded-full bg-zinc-950 px-3 text-xs font-black text-white transition hover:bg-zinc-800 ${disabled ? "pointer-events-none opacity-50" : ""}`}
+          >
+            <Camera className="mr-2 h-4 w-4" />
+            {previewUrl ? "Trocar" : "Adicionar"}
+          </label>
+          <input
+            id={inputId}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            disabled={disabled}
+            className="sr-only"
+            onChange={(event) => {
+              onChange(event.target.files?.[0] || null);
+              event.target.value = "";
+            }}
+          />
+          {previewUrl && (
+            <Button type="button" variant="ghost" size="icon" onClick={() => onChange(null)} disabled={disabled} className="rounded-full" aria-label={`Remover ${label.toLowerCase()}`}>
+              <Trash2 className="h-4 w-4 text-red-600" />
+            </Button>
+          )}
+        </div>
       </div>
     </div>
+  );
+}
+
+function PrivateProcedurePhoto({ label, path, legacyUrl }) {
+  const [source, setSource] = useState(legacyUrl || "");
+  const [loading, setLoading] = useState(Boolean(path));
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+    setFailed(false);
+    if (!path) {
+      setSource(legacyUrl || "");
+      setLoading(false);
+      return () => {};
+    }
+    setLoading(true);
+    base44.storage
+      .getPrivatePhotoObjectUrl(path)
+      .then((url) => {
+        objectUrl = url;
+        if (active) setSource(url);
+      })
+      .catch((error) => {
+        console.error("Private procedure photo load error", error);
+        if (active) setFailed(true);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [path, legacyUrl]);
+
+  if (loading) {
+    return <div className="flex aspect-[4/3] items-center justify-center rounded-2xl bg-zinc-100 text-sm font-bold text-zinc-500">Carregando {label.toLowerCase()}...</div>;
+  }
+
+  if (!source || failed) {
+    return (
+      <div className="flex aspect-[4/3] items-center justify-center rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-5 text-center">
+        <div>
+          <Camera className="mx-auto h-6 w-6 text-zinc-400" />
+          <p className="mt-2 text-sm font-black text-zinc-600">{label}</p>
+          <p className="mt-1 text-xs text-zinc-400">{failed ? "Não foi possível carregar" : "Não adicionada"}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <a href={source} target="_blank" rel="noreferrer" className="group block overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50">
+      <img src={source} alt={label} className="aspect-[4/3] h-auto w-full object-cover transition group-hover:scale-[1.02]" />
+      <span className="block px-4 py-3 text-sm font-black text-zinc-700">{label} · abrir imagem</span>
+    </a>
   );
 }
 
@@ -4162,7 +4706,7 @@ function InfoLine({ label, value }) {
 
 function LoadingScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-[#f6f1ef]">
+    <div className="flex min-h-dvh items-center justify-center bg-brand-ivory">
       <div className="grid justify-items-center gap-5">
         <img src="/brand/studiosbook-mark.svg" alt="StudiosBook" className="h-16 w-16 animate-pulse" />
         <div className="h-1 w-20 overflow-hidden rounded-full bg-[#eadde3]">

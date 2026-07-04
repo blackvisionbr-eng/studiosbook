@@ -2,7 +2,7 @@ import "dotenv/config";
 import { createHash, randomUUID } from "node:crypto";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getFirestore } from "firebase-admin/firestore";
 import cors from "cors";
 import express from "express";
@@ -14,6 +14,7 @@ import {
   TRIAL_DAYS,
   addDays,
   billingAccess,
+  stripeChargeRefundState,
   stripeInvoicePaymentIntentId,
   stripeInvoicePaymentStatus,
   stripeInvoiceSubscriptionId,
@@ -22,6 +23,7 @@ import {
   stripeSubscriptionPeriod,
   stripeTimestampToIso,
   trialFromAccountCreation,
+  validatePixPayment,
 } from "./billing.js";
 
 const app = express();
@@ -129,20 +131,25 @@ app.use(
     crossOriginResourcePolicy: { policy: "same-site" },
   })
 );
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin || allowedOrigins.has(origin)) return callback(null, true);
-      return callback(new Error("Origem não autorizada pelo CORS."));
-    },
-  })
-);
 app.use((req, res, next) => {
-  req.requestId = String(req.headers["x-request-id"] || randomUUID()).slice(0, 128);
+  const suppliedRequestId = String(req.headers["x-request-id"] || "")
+    .replace(/[^A-Za-z0-9._:-]/g, "")
+    .slice(0, 64);
+  req.requestId = suppliedRequestId || randomUUID();
   res.setHeader("X-Request-ID", req.requestId);
   res.setHeader("Cache-Control", "no-store");
   next();
 });
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+      const error = new Error("Origem não autorizada pelo CORS.");
+      error.code = "CORS_ORIGIN_DENIED";
+      return callback(error);
+    },
+  })
+);
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -165,6 +172,7 @@ const adminRateLimit = rateLimit({
   limit: 120,
   standardHeaders: "draft-7",
   legacyHeaders: false,
+  keyGenerator: (req) => req.user.uid,
   message: { error: "Limite administrativo temporariamente atingido." },
 });
 const billingPaymentRateLimit = rateLimit({
@@ -172,11 +180,16 @@ const billingPaymentRateLimit = rateLimit({
   limit: 10,
   standardHeaders: "draft-7",
   legacyHeaders: false,
+  keyGenerator: (req) => req.user.uid,
   message: { error: "Muitas tentativas de pagamento. Aguarde alguns minutos." },
 });
-app.use((req, res, next) => {
-  if (req.path.startsWith("/functions/admin-")) return adminRateLimit(req, res, next);
-  return next();
+const billingSyncRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user.uid,
+  message: { error: "Muitas sincronizações. Aguarde alguns minutos." },
 });
 
 function safeOrigin(value) {
@@ -270,6 +283,7 @@ async function requireFirebaseUser(req, res, next) {
       name: payload.name || payload.email || "Profissional",
       emailVerified: payload.email_verified === true,
       platformAdmin: payload.platform_admin === true,
+      authTime: Number(payload.auth_time || 0),
     };
     return next();
   } catch (error) {
@@ -287,16 +301,21 @@ function requirePlatformAdmin(req, res, next) {
   });
 }
 
+function requireRecentAdminAuth(req, res, next) {
+  const authAgeSeconds = Math.floor(Date.now() / 1000) - Number(req.user?.authTime || 0);
+  if (!Number.isFinite(authAgeSeconds) || authAgeSeconds < -60 || authAgeSeconds > 15 * 60) {
+    return res.status(401).json({
+      error: "Confirme novamente sua senha para executar esta ação administrativa.",
+      code: "recent_auth_required",
+    });
+  }
+  return next();
+}
+
 function requireFirebaseAdminSdk(res) {
   if (firebaseAdminReady && adminDb && adminAuth) return true;
   res.status(503).json({ error: "Serviço administrativo temporariamente indisponível." });
   return false;
-}
-
-async function isPlatformAdminUid(uid) {
-  if (!uid || !adminAuth) return false;
-  const user = await adminAuth.getUser(uid);
-  return user.customClaims?.platform_admin === true;
 }
 
 async function recordAdminAudit(req, action, details = {}) {
@@ -338,6 +357,20 @@ async function listCollection(ref, limit = 500) {
   return snapshot.docs.map((doc) => ({ id: doc.id, ...toJsonSafe(doc.data()) }));
 }
 
+async function listCollectionAll(ref, pageSize = 500) {
+  const rows = [];
+  let cursor = null;
+  do {
+    let query = ref.orderBy(FieldPath.documentId()).limit(pageSize);
+    if (cursor) query = query.startAfter(cursor);
+    const snapshot = await query.get();
+    rows.push(...snapshot.docs.map((doc) => ({ id: doc.id, ...toJsonSafe(doc.data()) })));
+    cursor = snapshot.docs.at(-1) || null;
+    if (snapshot.size < pageSize) break;
+  } while (cursor);
+  return rows;
+}
+
 function sortByLatest(rows = []) {
   return [...rows].sort((left, right) => {
     const leftDate = new Date(left.updated_date || left.created_date || 0).getTime();
@@ -375,22 +408,29 @@ async function latestBillingPayment(uid) {
 async function persistBillingState(uid, patch, options = {}) {
   const now = new Date().toISOString();
   const current = await currentSubscription(uid);
-  const merged = {
-    ...(current.data || {}),
-    ...patch,
-    updated_date: now,
-  };
-  if (!current.data) merged.created_date = patch.created_date || now;
+  const userRef = adminDb.collection("users").doc(uid);
+  return adminDb.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(current.ref);
+    const stored = snapshot.exists ? { id: snapshot.id, ...toJsonSafe(snapshot.data()) } : current.data || {};
+    const merged = {
+      ...stored,
+      ...patch,
+      updated_date: now,
+    };
+    if (!snapshot.exists && !current.data) merged.created_date = patch.created_date || now;
 
-  const access = billingAccess(merged);
-  merged.status = access.status;
-  const expiryValue = merged.current_period_end || merged.trial_end_date || 0;
-  const expiryDate = new Date(expiryValue);
-  const accessExpiresAt = Number.isFinite(expiryDate.getTime()) ? expiryDate : new Date(0);
+    const access = billingAccess(merged);
+    merged.status = access.status;
+    const expiryCandidates = [merged.current_period_end, merged.trial_end_date]
+      .map((value) => new Date(value || 0))
+      .filter((date) => Number.isFinite(date.getTime()));
+    const accessExpiresAt = expiryCandidates.length
+      ? new Date(Math.max(...expiryCandidates.map((date) => date.getTime())))
+      : new Date(0);
 
-  await Promise.all([
-    current.ref.set(merged, { merge: true }),
-    adminDb.collection("users").doc(uid).set(
+    transaction.set(current.ref, merged, { merge: true });
+    transaction.set(
+      userRef,
       {
         user_email: merged.user_email || options.email || "",
         billing_status: access.status,
@@ -402,13 +442,13 @@ async function persistBillingState(uid, patch, options = {}) {
         billing_updated_at: now,
       },
       { merge: true }
-    ),
-  ]);
+    );
 
-  return {
-    subscription: { id: current.ref.id, ...merged },
-    access: options.forceAccess === true ? { ...access, allowed: true, reason: "admin_override" } : access,
-  };
+    return {
+      subscription: { id: current.ref.id, ...merged },
+      access: options.forceAccess === true ? { ...access, allowed: true, reason: "admin_override" } : access,
+    };
+  });
 }
 
 async function ensureBillingAccount(uid, email = "") {
@@ -441,7 +481,7 @@ async function ensureBillingAccount(uid, email = "") {
         ? "Cobrança migrada para a Stripe; teste gratuito preservado desde o cadastro."
         : existing.notes || "Teste gratuito iniciado na data de criação da conta.",
     },
-    { email: accountEmail, forceAccess: authUser.customClaims?.platform_admin === true }
+    { email: accountEmail }
   );
 
   return {
@@ -464,19 +504,29 @@ const USER_ENTITY_NAMES = [
 async function loadWorkspace(uid, includeRows = false) {
   const userDoc = adminDb.collection("users").doc(uid);
   const entityRows = {};
+  const entityCounts = {};
 
   await Promise.all(
     USER_ENTITY_NAMES.map(async (entityName) => {
-      entityRows[entityName] = await listCollection(userDoc.collection(entityName), includeRows ? 1000 : 20);
+      const collectionRef = userDoc.collection(entityName);
+      if (includeRows) {
+        entityRows[entityName] = await listCollectionAll(collectionRef);
+        entityCounts[entityName] = entityRows[entityName].length;
+        return;
+      }
+      const [rows, countSnapshot] = await Promise.all([
+        listCollection(collectionRef, 20),
+        collectionRef.count().get(),
+      ]);
+      entityRows[entityName] = rows;
+      entityCounts[entityName] = Number(countSnapshot.data().count || 0);
     })
   );
 
   const profile = entityRows.StudioProfile?.[0] || null;
   const subscription = sortByLatest(entityRows.BillingSubscription)?.[0] || null;
   const payments = sortByLatest(entityRows.BillingPayment).slice(0, 10);
-  const counts = Object.fromEntries(
-    USER_ENTITY_NAMES.map((entityName) => [entityName, entityRows[entityName]?.length || 0])
-  );
+  const counts = Object.fromEntries(USER_ENTITY_NAMES.map((entityName) => [entityName, entityCounts[entityName] || 0]));
 
   return {
     uid,
@@ -539,6 +589,20 @@ function stripePaymentIntentStatus(status) {
   return "rejected";
 }
 
+function stripeSubscriptionUsesConfiguredPlan(subscription) {
+  const firstItem = subscription?.items?.data?.[0];
+  return Boolean(stripePriceId() && stripeResourceId(firstItem?.price) === stripePriceId());
+}
+
+function assertStripeSubscriptionPlan(subscription) {
+  if (!stripeSubscriptionUsesConfiguredPlan(subscription)) {
+    throw new Error("Assinatura Stripe não pertence ao plano configurado do StudiosBook.");
+  }
+  if (stripeMode() === "live" && subscription?.livemode !== true) {
+    throw new Error("Assinatura de teste não pode liberar acesso em produção.");
+  }
+}
+
 async function resolveStripeUid(object = {}) {
   const direct = stripeObjectUid(object);
   if (direct) return direct;
@@ -558,6 +622,40 @@ async function resolveStripeUid(object = {}) {
     }
   }
   return "";
+}
+
+async function resolveStripeChargeUid(charge = {}) {
+  const direct = await resolveStripeUid(charge);
+  if (direct) return direct;
+
+  const paymentIntentId = stripeResourceId(charge.payment_intent);
+  if (!paymentIntentId) return "";
+  const paymentIntent = await stripeClient().paymentIntents.retrieve(paymentIntentId);
+  return stripeObjectUid(paymentIntent) || resolveStripeUid(paymentIntent);
+}
+
+async function stripeInvoiceCharge(invoice = {}) {
+  if (invoice.charge) {
+    return typeof invoice.charge === "object"
+      ? invoice.charge
+      : stripeClient().charges.retrieve(invoice.charge);
+  }
+
+  const paymentIntentId = stripeInvoicePaymentIntentId(invoice);
+  if (!paymentIntentId) return null;
+  const paymentIntent = await stripeClient().paymentIntents.retrieve(paymentIntentId, {
+    expand: ["latest_charge"],
+  });
+  if (!paymentIntent.latest_charge) return null;
+  return typeof paymentIntent.latest_charge === "object"
+    ? paymentIntent.latest_charge
+    : stripeClient().charges.retrieve(paymentIntent.latest_charge);
+}
+
+async function stripeRefundCharge(object = {}) {
+  if (object.object === "charge" || String(object.id || "").startsWith("ch_")) return object;
+  const chargeId = stripeResourceId(object.charge);
+  return chargeId ? stripeClient().charges.retrieve(chargeId) : null;
 }
 
 async function ensureStripeCustomer(uid, email, name = "") {
@@ -588,7 +686,7 @@ async function ensureStripeCustomer(uid, email, name = "") {
   await persistBillingState(
     uid,
     { billing_provider: "stripe", stripe_customer_id: customer.id, last_sync_date: new Date().toISOString() },
-    { email, forceAccess: await isPlatformAdminUid(uid) }
+    { email }
   );
   return customer;
 }
@@ -596,6 +694,7 @@ async function ensureStripeCustomer(uid, email, name = "") {
 async function applyStripeSubscription(uid, subscription) {
   const ownerUid = stripeObjectUid(subscription);
   if (!uid || (ownerUid && ownerUid !== uid)) throw new Error("Assinatura Stripe não pertence à conta informada.");
+  assertStripeSubscriptionPlan(subscription);
 
   const account = await ensureBillingAccount(uid);
   const period = stripeSubscriptionPeriod(subscription);
@@ -627,7 +726,6 @@ async function applyStripeSubscription(uid, subscription) {
 
   return persistBillingState(uid, patch, {
     email: account.subscription?.user_email || "",
-    forceAccess: await isPlatformAdminUid(uid),
   });
 }
 
@@ -641,14 +739,29 @@ function stripeInvoicePeriod(invoice = {}) {
   };
 }
 
-async function applyStripeInvoice(uid, invoice, forcedStatus = "") {
+async function applyStripeInvoice(uid, invoice, forcedStatus = "", validatedSubscription = null) {
   if (!uid) throw new Error("Fatura Stripe sem vínculo com a conta StudiosBook.");
   const account = await ensureBillingAccount(uid, invoice.customer_email || "");
-  const status = forcedStatus || stripeInvoicePaymentStatus(invoice);
+  const refundedInvoice = account.subscription?.refunded_invoice_id === invoice.id;
+  const status = refundedInvoice ? "refunded" : forcedStatus || stripeInvoicePaymentStatus(invoice);
   const period = stripeInvoicePeriod(invoice);
   const now = new Date().toISOString();
   const paymentIntentId = stripeInvoicePaymentIntentId(invoice);
   const subscriptionId = stripeInvoiceSubscriptionId(invoice);
+  if (!subscriptionId) throw new Error("Fatura Stripe sem assinatura recorrente vinculada.");
+  const invoiceCustomerId = stripeResourceId(invoice.customer);
+  if (account.subscription?.stripe_customer_id && invoiceCustomerId !== account.subscription.stripe_customer_id) {
+    throw new Error("Fatura Stripe não pertence ao cliente de cobrança da conta informada.");
+  }
+  const subscription = validatedSubscription?.id === subscriptionId
+    ? validatedSubscription
+    : await stripeClient().subscriptions.retrieve(subscriptionId);
+  const ownerUid = stripeObjectUid(subscription);
+  const trustedStoredSubscription = subscriptionId === account.subscription?.stripe_subscription_id;
+  if (ownerUid !== uid && !(trustedStoredSubscription && !ownerUid)) {
+    throw new Error("Fatura Stripe não pertence à assinatura da conta informada.");
+  }
+  assertStripeSubscriptionPlan(subscription);
   const record = {
     user_uid: uid,
     user_email: invoice.customer_email || account.subscription?.user_email || "",
@@ -690,6 +803,20 @@ async function applyStripeInvoice(uid, invoice, forcedStatus = "") {
     }
     patch.last_approved_payment_id = invoice.id;
     patch.last_approved_payment_date = record.date_approved;
+    const paidAt = Number(invoice.status_transitions?.paid_at || 0) * 1000;
+    const revokedAt = new Date(account.subscription?.access_revoked_at || 0).getTime();
+    if (
+      account.subscription?.access_revoked_reason &&
+      invoice.id !== account.subscription?.refunded_invoice_id &&
+      Number.isFinite(revokedAt) &&
+      paidAt > revokedAt
+    ) {
+      patch.access_revoked_at = "";
+      patch.access_revoked_reason = "";
+      patch.refund_status = "";
+      patch.refunded_invoice_id = "";
+      patch.refunded_charge_id = "";
+    }
   } else if (status === "pending" && !forcedStatus) {
     delete patch.last_payment_status;
     delete patch.last_payment_detail;
@@ -698,17 +825,129 @@ async function applyStripeInvoice(uid, invoice, forcedStatus = "") {
 
   const billing = await persistBillingState(uid, patch, {
     email: account.subscription?.user_email || record.user_email,
-    forceAccess: await isPlatformAdminUid(uid),
   });
   return { ...billing, payment: { id: invoice.id, ...record } };
 }
 
+async function applyStripeChargeRefund(uid, charge, options = {}) {
+  const refund = stripeChargeRefundState(charge);
+  if (!uid || refund.status === "none") return null;
+
+  const now = new Date().toISOString();
+  const account = await ensureBillingAccount(uid);
+  const chargeCustomerId = stripeResourceId(charge.customer);
+  if (account.subscription?.stripe_customer_id && chargeCustomerId !== account.subscription.stripe_customer_id) {
+    throw new Error("Reembolso Stripe não pertence ao cliente da conta informada.");
+  }
+
+  const invoiceId = stripeResourceId(charge.invoice);
+  const invoice = options.invoice || (invoiceId
+    ? await stripeClient().invoices.retrieve(invoiceId, { expand: ["payments"] })
+    : null);
+  const subscriptionId = invoice ? stripeInvoiceSubscriptionId(invoice) : "";
+  let subscription = null;
+  if (subscriptionId) {
+    subscription = await stripeClient().subscriptions.retrieve(subscriptionId);
+    const ownerUid = stripeObjectUid(subscription);
+    const trustedStoredSubscription = subscriptionId === account.subscription?.stripe_subscription_id;
+    if (ownerUid !== uid && !(trustedStoredSubscription && !ownerUid)) {
+      throw new Error("Reembolso Stripe não pertence à assinatura da conta informada.");
+    }
+    assertStripeSubscriptionPlan(subscription);
+  }
+
+  if (refund.full && subscriptionId && subscription?.status !== "canceled") {
+    try {
+      subscription = await stripeClient().subscriptions.cancel(subscriptionId);
+    } catch (error) {
+      if (error?.statusCode !== 404) throw error;
+    }
+  }
+
+  const paymentIntentId = stripeResourceId(charge.payment_intent) || (invoice ? stripeInvoicePaymentIntentId(invoice) : "");
+  const paymentId = invoiceId || paymentIntentId || charge.id;
+  const paymentRef = paymentCollection(uid).doc(paymentId);
+  const existingPayment = await paymentRef.get();
+  const existing = existingPayment.exists ? toJsonSafe(existingPayment.data()) : {};
+  const record = {
+    ...existing,
+    user_uid: uid,
+    user_email: existing.user_email || account.subscription?.user_email || "",
+    provider: "stripe",
+    billing_flow: invoiceId ? "subscription" : existing.billing_flow || "payment",
+    stripe_invoice_id: invoiceId || existing.stripe_invoice_id || "",
+    stripe_payment_intent_id: paymentIntentId || existing.stripe_payment_intent_id || "",
+    stripe_subscription_id: subscriptionId || existing.stripe_subscription_id || "",
+    stripe_charge_id: charge.id || existing.stripe_charge_id || "",
+    status: refund.status,
+    status_detail: options.eventType || "stripe_refund_sync",
+    amount: refund.amount / 100,
+    refunded_amount: refund.amountRefunded / 100,
+    net_received_amount: refund.netAmount / 100,
+    currency_id: String(charge.currency || existing.currency_id || "brl").toUpperCase(),
+    date_refunded: now,
+    date_last_updated: now,
+    live_mode: Boolean(charge.livemode),
+    updated_date: now,
+  };
+  await paymentRef.set(record, { merge: true });
+
+  const commonPatch = {
+    refund_status: refund.status,
+    refunded_amount: refund.amountRefunded / 100,
+    refunded_charge_id: charge.id || "",
+    last_sync_date: now,
+    notes: refund.full
+      ? "Reembolso integral Stripe sincronizado; acesso revogado."
+      : "Reembolso parcial Stripe sincronizado; acesso mantido.",
+  };
+  if (!refund.full) {
+    const billing = await persistBillingState(uid, commonPatch, {
+      email: account.subscription?.user_email || "",
+    });
+    return { ...billing, payment: { id: paymentId, ...record }, refund };
+  }
+
+  const billing = await persistBillingState(
+    uid,
+    {
+      ...commonPatch,
+      last_payment_status: "refunded",
+      last_payment_detail: options.eventType || "charge.refunded",
+      last_payment_date: now,
+      stripe_subscription_status: subscriptionId ? "canceled" : account.subscription?.stripe_subscription_status || "",
+      cancel_at_period_end: false,
+      canceled_at: now,
+      current_period_end: now,
+      next_payment_date: "",
+      access_revoked_at: now,
+      access_revoked_reason: "refunded",
+      refunded_invoice_id: invoiceId || "",
+    },
+    {
+      email: account.subscription?.user_email || "",
+    }
+  );
+  return { ...billing, payment: { id: paymentId, ...record }, refund };
+}
+
 async function applyStripePixPayment(uid, paymentIntent) {
   const ownerUid = stripeObjectUid(paymentIntent);
-  if (!uid || (ownerUid && ownerUid !== uid)) throw new Error("Pagamento Pix Stripe não pertence à conta informada.");
-  const account = await ensureBillingAccount(uid);
+  if (!uid || ownerUid !== uid) throw new Error("Pagamento Pix Stripe não pertence à conta informada.");
   const now = new Date();
   const status = stripePaymentIntentStatus(paymentIntent.status);
+  if (status === "approved") {
+    const validation = validatePixPayment(paymentIntent, {
+      expectedAmountCents: Math.round(MONTHLY_AMOUNT * 100),
+      currency: "brl",
+      productName: PRODUCT_NAME,
+      requireLiveMode: stripeMode() === "live",
+    });
+    if (!validation.valid) {
+      throw new Error(`Pagamento Pix inválido para concessão de acesso: ${validation.reason}.`);
+    }
+  }
+  const account = await ensureBillingAccount(uid);
   const record = {
     user_uid: uid,
     user_email: account.subscription?.user_email || "",
@@ -727,8 +966,6 @@ async function applyStripePixPayment(uid, paymentIntent) {
     live_mode: Boolean(paymentIntent.livemode),
     updated_date: now.toISOString(),
   };
-  await paymentCollection(uid).doc(paymentIntent.id).set(record, { merge: true });
-
   const patch = {
     billing_provider: "stripe",
     stripe_customer_id: stripeResourceId(paymentIntent.customer) || account.subscription?.stripe_customer_id || "",
@@ -739,40 +976,122 @@ async function applyStripePixPayment(uid, paymentIntent) {
     last_sync_date: now.toISOString(),
     notes: `Pagamento Pix Stripe ${status} sincronizado.`,
   };
-  if (status === "approved") {
+
+  if (status !== "approved") {
+    await paymentCollection(uid).doc(paymentIntent.id).set(record, { merge: true });
+    const billing = await persistBillingState(uid, patch, {
+      email: account.subscription?.user_email || "",
+    });
+    return { ...billing, payment: { id: paymentIntent.id, ...record } };
+  }
+
+  const current = await currentSubscription(uid);
+  const paymentRef = paymentCollection(uid).doc(paymentIntent.id);
+  const userRef = adminDb.collection("users").doc(uid);
+  const result = await adminDb.runTransaction(async (transaction) => {
+    const [subscriptionSnapshot, paymentSnapshot] = await Promise.all([
+      transaction.get(current.ref),
+      transaction.get(paymentRef),
+    ]);
+    const existingPayment = paymentSnapshot.exists ? toJsonSafe(paymentSnapshot.data()) : {};
+    const subscription = subscriptionSnapshot.exists
+      ? { id: subscriptionSnapshot.id, ...toJsonSafe(subscriptionSnapshot.data()) }
+      : account.subscription || {};
+
+    if (existingPayment.access_granted === true) {
+      transaction.set(
+        paymentRef,
+        {
+          ...record,
+          date_approved: existingPayment.date_approved || record.date_approved,
+          access_granted: true,
+        },
+        { merge: true }
+      );
+      return {
+        duplicate: true,
+        subscription,
+        access: billingAccess(subscription),
+        payment: { id: paymentIntent.id, ...existingPayment, ...record, access_granted: true },
+      };
+    }
+
     const starts = [
       now,
-      new Date(account.subscription?.trial_end_date || 0),
-      new Date(account.subscription?.current_period_end || 0),
+      new Date(subscription.trial_end_date || 0),
+      new Date(subscription.current_period_end || 0),
     ].filter((date) => Number.isFinite(date.getTime()));
     const periodStart = new Date(Math.max(...starts.map((date) => date.getTime())));
-    patch.current_period_start = periodStart.toISOString();
-    patch.current_period_end = addDays(periodStart, PIX_ACCESS_DAYS).toISOString();
-    patch.next_payment_date = patch.current_period_end;
-    patch.last_approved_payment_id = paymentIntent.id;
-    patch.last_approved_payment_date = now.toISOString();
-  }
-  const billing = await persistBillingState(uid, patch, {
-    email: account.subscription?.user_email || "",
-    forceAccess: await isPlatformAdminUid(uid),
+    const periodEnd = addDays(periodStart, PIX_ACCESS_DAYS);
+    const merged = {
+      ...subscription,
+      ...patch,
+      current_period_start: periodStart.toISOString(),
+      current_period_end: periodEnd.toISOString(),
+      next_payment_date: periodEnd.toISOString(),
+      last_approved_payment_id: paymentIntent.id,
+      last_approved_payment_date: now.toISOString(),
+      status: "active",
+      updated_date: now.toISOString(),
+      ...(subscription.created_date ? {} : { created_date: now.toISOString() }),
+    };
+    const access = billingAccess(merged, now);
+    const payment = {
+      ...record,
+      access_granted: true,
+      access_period_start: periodStart.toISOString(),
+      access_period_end: periodEnd.toISOString(),
+    };
+
+    transaction.set(current.ref, merged, { merge: true });
+    transaction.set(paymentRef, payment, { merge: true });
+    transaction.set(
+      userRef,
+      {
+        user_email: merged.user_email || account.subscription?.user_email || "",
+        billing_status: access.status,
+        access_allowed: access.allowed,
+        access_expires_at: Timestamp.fromDate(periodEnd),
+        trial_start_date: merged.trial_start_date || "",
+        trial_end_date: merged.trial_end_date || "",
+        current_period_end: merged.current_period_end,
+        billing_updated_at: now.toISOString(),
+      },
+      { merge: true }
+    );
+
+    return {
+      duplicate: false,
+      subscription: { id: current.ref.id, ...merged },
+      access,
+      payment: { id: paymentIntent.id, ...payment },
+    };
   });
-  return { ...billing, payment: { id: paymentIntent.id, ...record } };
+
+  return result;
 }
 
-async function findStripeSubscription(customerId, preferredId = "") {
+async function findStripeSubscription(uid, customerId, preferredId = "") {
   if (preferredId) {
     try {
-      return await stripeClient().subscriptions.retrieve(preferredId, { expand: ["latest_invoice"] });
+      const subscription = await stripeClient().subscriptions.retrieve(preferredId, { expand: ["latest_invoice"] });
+      const ownerUid = stripeObjectUid(subscription);
+      const sameCustomer = !customerId || stripeResourceId(subscription.customer) === customerId;
+      if (sameCustomer && (!ownerUid || ownerUid === uid) && stripeSubscriptionUsesConfiguredPlan(subscription)) {
+        return subscription;
+      }
     } catch (error) {
       if (error?.statusCode !== 404) throw error;
     }
   }
   if (!customerId) return null;
   const subscriptions = await stripeClient().subscriptions.list({ customer: customerId, status: "all", limit: 20 });
-  return [...subscriptions.data].sort((left, right) => {
-    const statusDifference = stripeSubscriptionScore(right.status) - stripeSubscriptionScore(left.status);
-    return statusDifference || Number(right.created || 0) - Number(left.created || 0);
-  })[0] || null;
+  return subscriptions.data
+    .filter((subscription) => stripeObjectUid(subscription) === uid && stripeSubscriptionUsesConfiguredPlan(subscription))
+    .sort((left, right) => {
+      const statusDifference = stripeSubscriptionScore(right.status) - stripeSubscriptionScore(left.status);
+      return statusDifference || Number(right.created || 0) - Number(left.created || 0);
+    })[0] || null;
 }
 
 async function syncStripeBilling(uid, options = {}) {
@@ -787,6 +1106,7 @@ async function syncStripeBilling(uid, options = {}) {
   }
 
   const subscription = await findStripeSubscription(
+    uid,
     account.subscription?.stripe_customer_id,
     account.subscription?.stripe_subscription_id
   );
@@ -798,13 +1118,22 @@ async function syncStripeBilling(uid, options = {}) {
     limit: 10,
     expand: ["data.payments"],
   });
-  for (const invoice of [...invoices.data].reverse()) result = await applyStripeInvoice(uid, invoice);
+  const latestPaidInvoiceId = invoices.data.find(
+    (invoice) => invoice.status === "paid" || Number(invoice.amount_paid || 0) > 0
+  )?.id;
+  for (const invoice of [...invoices.data].reverse()) {
+    const charge = invoice.id === latestPaidInvoiceId ? await stripeInvoiceCharge(invoice) : null;
+    result = stripeChargeRefundState(charge || {}).status === "none"
+      ? await applyStripeInvoice(uid, invoice, "", subscription)
+      : await applyStripeChargeRefund(uid, charge, { invoice, eventType: "billing.sync" });
+  }
   return { ...result, latest_payment: await latestBillingPayment(uid) };
 }
 
 async function createSubscriptionFromSetupSession(session, uid) {
   const account = await ensureBillingAccount(uid);
   const existing = await findStripeSubscription(
+    uid,
     stripeResourceId(session.customer) || account.subscription?.stripe_customer_id,
     account.subscription?.stripe_subscription_id
   );
@@ -840,7 +1169,7 @@ async function processStripeCheckoutSession(session) {
       stripe_checkout_session_id: session.id,
       last_sync_date: new Date().toISOString(),
     },
-    { email: session.customer_details?.email || session.customer_email || "", forceAccess: await isPlatformAdminUid(uid) }
+    { email: session.customer_details?.email || session.customer_email || "" }
   );
 
   if (flow === "subscription_setup") {
@@ -904,7 +1233,7 @@ async function handleStripeEvent(event) {
       : null;
   }
   if (event.type.startsWith("customer.subscription.")) {
-    const uid = await resolveStripeUid(object);
+    const uid = stripeObjectUid(object);
     return uid ? syncStripeBilling(uid) : null;
   }
   if (["invoice.paid", "invoice.payment_failed", "invoice.payment_action_required"].includes(event.type)) {
@@ -914,6 +1243,13 @@ async function handleStripeEvent(event) {
     await applyStripeInvoice(uid, object, forcedStatus);
     return syncStripeBilling(uid);
   }
+  if (["charge.refunded", "refund.created", "refund.updated"].includes(event.type)) {
+    const charge = await stripeRefundCharge(object);
+    if (!charge) return null;
+    const uid = await resolveStripeChargeUid(charge);
+    return uid ? applyStripeChargeRefund(uid, charge, { eventType: event.type }) : null;
+  }
+  if (event.type === "refund.failed") return null;
   if (event.type.startsWith("payment_intent.") && object.metadata?.billing_flow === "pix") {
     const uid = await resolveStripeUid(object);
     return uid ? applyStripePixPayment(uid, object) : null;
@@ -961,7 +1297,8 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "StudiosBook API", ...adminStatusPayload() });
+  const ready = firebaseAdminReady && Boolean(stripeSecretKey() && stripePriceId()) && Boolean(stripeWebhookSecret());
+  res.status(ready ? 200 : 503).json({ ok: ready, service: "StudiosBook API" });
 });
 
 app.post("/functions/ensure-billing-account", requireFirebaseUser, async (req, res) => {
@@ -998,8 +1335,8 @@ app.post("/functions/ensure-billing-account", requireFirebaseUser, async (req, r
 
 app.post(
   "/functions/create-subscription-checkout",
-  billingPaymentRateLimit,
   requireFirebaseUser,
+  billingPaymentRateLimit,
   async (req, res) => {
     if (!requireFirebaseAdminSdk(res)) return;
     try {
@@ -1008,6 +1345,7 @@ app.post(
       }
       const account = await ensureBillingAccount(req.user.uid, req.user.email);
       const existing = await findStripeSubscription(
+        req.user.uid,
         account.subscription?.stripe_customer_id,
         account.subscription?.stripe_subscription_id
       );
@@ -1074,7 +1412,7 @@ app.post(
           last_sync_date: new Date().toISOString(),
           notes: "Checkout seguro criado na Stripe.",
         },
-        { email: req.user.email, forceAccess: req.user.platformAdmin === true }
+        { email: req.user.email }
       );
       return res.json({ success: true, url: session.url, checkout_mode: params.mode });
     } catch (error) {
@@ -1087,7 +1425,7 @@ app.post(
   }
 );
 
-app.post("/functions/create-billing-portal", requireFirebaseUser, async (req, res) => {
+app.post("/functions/create-billing-portal", requireFirebaseUser, billingPaymentRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
     const account = await ensureBillingAccount(req.user.uid, req.user.email);
@@ -1112,7 +1450,7 @@ app.post("/functions/create-card-subscription", requireFirebaseUser, (_req, res)
   });
 });
 
-app.post("/functions/create-pix-payment", requireFirebaseUser, async (req, res) => {
+app.post("/functions/create-pix-payment", requireFirebaseUser, billingPaymentRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
     const capabilities = await stripePaymentCapabilities();
@@ -1169,7 +1507,7 @@ app.post("/functions/create-pix-payment", requireFirebaseUser, async (req, res) 
         last_sync_date: new Date().toISOString(),
         notes: "Checkout Pix criado na Stripe.",
       },
-      { email: req.user.email, forceAccess: req.user.platformAdmin === true }
+      { email: req.user.email }
     );
     return res.json({ success: true, url: session.url, subscription: account.subscription, access: account.access });
   } catch (error) {
@@ -1181,7 +1519,7 @@ app.post("/functions/create-pix-payment", requireFirebaseUser, async (req, res) 
   }
 });
 
-app.post("/functions/sync-subscription-status", requireFirebaseUser, async (req, res) => {
+app.post("/functions/sync-subscription-status", requireFirebaseUser, billingSyncRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
     const result = await syncStripeBilling(req.user.uid, {
@@ -1198,7 +1536,7 @@ app.post("/functions/sync-subscription-status", requireFirebaseUser, async (req,
   }
 });
 
-app.post("/functions/sync-billing-status", requireFirebaseUser, async (req, res) => {
+app.post("/functions/sync-billing-status", requireFirebaseUser, billingSyncRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
     const result = await syncStripeBilling(req.user.uid, {
@@ -1216,16 +1554,10 @@ app.post("/functions/sync-billing-status", requireFirebaseUser, async (req, res)
 });
 
 app.get("/functions/stripe-webhook", (_req, res) => {
-  res.json({
-    ok: true,
-    service: "StudiosBook Stripe webhook",
-    signature_required: true,
-    webhook_ready: Boolean(stripeWebhookSecret()),
-    stripe_mode: stripeMode(),
-  });
+  res.json({ ok: true, service: "StudiosBook webhook" });
 });
 
-app.post("/functions/admin-session", requirePlatformAdmin, async (req, res) => {
+app.post("/functions/admin-session", requirePlatformAdmin, adminRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   await safeAdminAudit(req, "admin.session.validated");
   res.json({
@@ -1238,7 +1570,7 @@ app.post("/functions/admin-session", requirePlatformAdmin, async (req, res) => {
   });
 });
 
-app.post("/functions/admin-overview", requirePlatformAdmin, async (req, res) => {
+app.post("/functions/admin-overview", requirePlatformAdmin, adminRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
 
   try {
@@ -1334,7 +1666,7 @@ app.post("/functions/admin-overview", requirePlatformAdmin, async (req, res) => 
   }
 });
 
-app.post("/functions/admin-payment-diagnostics", requirePlatformAdmin, async (req, res) => {
+app.post("/functions/admin-payment-diagnostics", requirePlatformAdmin, adminRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
     const [balance, price, webhookEvents, paymentCapabilities] = await Promise.all([
@@ -1368,7 +1700,7 @@ app.post("/functions/admin-payment-diagnostics", requirePlatformAdmin, async (re
   }
 });
 
-app.post("/functions/admin-export", requirePlatformAdmin, async (req, res) => {
+app.post("/functions/admin-export", requirePlatformAdmin, requireRecentAdminAuth, adminRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
 
   try {
@@ -1391,7 +1723,7 @@ app.post("/functions/admin-export", requirePlatformAdmin, async (req, res) => {
   }
 });
 
-app.post("/functions/admin-update-subscription", requirePlatformAdmin, async (req, res) => {
+app.post("/functions/admin-update-subscription", requirePlatformAdmin, requireRecentAdminAuth, adminRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
 
   try {
@@ -1420,7 +1752,7 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, async (re
   }
 });
 
-app.post("/functions/admin-set-user-access", requirePlatformAdmin, async (req, res) => {
+app.post("/functions/admin-set-user-access", requirePlatformAdmin, requireRecentAdminAuth, adminRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
 
   try {
@@ -1450,7 +1782,47 @@ app.post("/functions/admin-set-user-access", requirePlatformAdmin, async (req, r
   }
 });
 
+app.use((req, res) => {
+  res.status(404).json({ error: "Rota não encontrada.", request_id: req.requestId });
+});
+
+app.use((error, req, res, _next) => {
+  if (error?.code === "CORS_ORIGIN_DENIED") {
+    return res.status(403).json({ error: "Origem não autorizada.", request_id: req.requestId });
+  }
+  console.error("Unhandled request error", { requestId: req.requestId, message: error?.message });
+  return res.status(500).json({ error: "Erro interno do servidor.", request_id: req.requestId });
+});
+
 const port = process.env.PORT || 8080;
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`StudiosBook API running on port ${port}`);
 });
+
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received; draining HTTP connections.`);
+
+  const forceExitTimer = setTimeout(() => {
+    console.error("Graceful shutdown timed out.");
+    process.exit(1);
+  }, 12000);
+  forceExitTimer.unref();
+
+  server.close((error) => {
+    clearTimeout(forceExitTimer);
+    if (error) {
+      console.error("HTTP server shutdown failed", { message: error.message });
+      process.exit(1);
+    }
+    console.log("HTTP server stopped cleanly.");
+    process.exit(0);
+  });
+
+  server.closeIdleConnections?.();
+}
+
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));

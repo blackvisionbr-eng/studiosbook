@@ -9,6 +9,14 @@ export default {
         sm: 'calc(var(--radius) - 4px)',
       },
       colors: {
+        brand: {
+          plum: 'var(--sb-plum-900)',
+          rose: 'var(--sb-rose-600)',
+          coral: 'var(--sb-coral-500)',
+          ivory: 'var(--sb-ivory-50)',
+          charcoal: 'var(--sb-charcoal-950)',
+          focus: 'var(--sb-focus-600)',
+        },
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         primary: {

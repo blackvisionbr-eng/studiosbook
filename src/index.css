@@ -1,29 +1,31 @@
+@import url("/brand/tokens.css");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 350 100% 99%;
+    --foreground: 300 7% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 300 7% 8%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    --popover-foreground: 300 7% 8%;
+    --primary: 314 31% 19%;
+    --primary-foreground: 350 100% 99%;
+    --secondary: 345 50% 94%;
+    --secondary-foreground: 314 31% 19%;
+    --muted: 330 19% 95%;
+    --muted-foreground: 317 5% 30%;
+    --accent: 342 37% 48%;
+    --accent-foreground: 350 100% 99%;
+    --destructive: 352 51% 47%;
+    --destructive-foreground: 350 100% 99%;
+    --border: 334 13% 90%;
+    --input: 334 13% 90%;
+    --ring: 172 46% 34%;
+    --radius: 0.75rem;
   }
 }
 
@@ -53,6 +55,11 @@
     margin: 0;
     overflow-wrap: anywhere;
     font-family: "DM Sans", Inter, Arial, sans-serif;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--sb-focus-600);
+    outline-offset: 2px;
   }
 
   #root {

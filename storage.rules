@@ -1,0 +1,24 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function ownsUserScope(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function isAllowedProcedureImage() {
+      return request.resource.size <= 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+
+    match /users/{userId}/procedures/{procedureId}/{fileName} {
+      allow read: if ownsUserScope(userId);
+      allow create, update: if ownsUserScope(userId) && isAllowedProcedureImage();
+      allow delete: if ownsUserScope(userId);
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

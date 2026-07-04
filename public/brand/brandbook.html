@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StudiosBook | Manual de Identidade Visual</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+    <style>
+      :root { --plum:#402239; --rose:#a84d68; --coral:#e97f91; --dusty:#c77d94; --ink:#171417; --ivory:#fff9fa; --muted:#6f666c; --line:#e8e1e4; --teal:#2e7d72; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #ded8db; color: var(--ink); font-family: "DM Sans", Arial, sans-serif; }
+      .page { position: relative; width: 210mm; height: 297mm; margin: 12mm auto; overflow: hidden; background: #fff; padding: 20mm; page-break-after: always; }
+      .page:last-child { page-break-after: auto; }
+      .page::after { content: attr(data-page); position: absolute; right: 20mm; bottom: 12mm; color: #9b9297; font-size: 9pt; font-weight: 700; }
+      h1, h2, h3, p { margin-top: 0; }
+      h1 { max-width: 145mm; margin-bottom: 8mm; font-size: 35pt; line-height: 1.02; letter-spacing: 0; }
+      h2 { margin-bottom: 5mm; font-size: 25pt; line-height: 1.05; letter-spacing: 0; }
+      h3 { margin-bottom: 2mm; color: var(--plum); font-size: 12pt; }
+      p, li { font-size: 10.5pt; line-height: 1.55; }
+      ul { margin: 0; padding-left: 5mm; }
+      .eyebrow { margin-bottom: 4mm; color: var(--rose); font-size: 8pt; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; }
+      .lead { max-width: 150mm; color: #4f474c; font-size: 14pt; line-height: 1.45; }
+      .serif { font-family: "DM Serif Display", Georgia, serif; font-weight: 400; }
+      .brand-logo { width: 112mm; height: auto; }
+      .cover { display: flex; flex-direction: column; justify-content: space-between; background: var(--ivory); }
+      .cover-mark { position: absolute; right: -35mm; top: 8mm; width: 145mm; opacity: .085; }
+      .cover-copy { position: relative; margin-top: 50mm; }
+      .cover h1 { font-size: 43pt; }
+      .cover-footer { display: flex; align-items: end; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 7mm; }
+      .cover-footer p { margin: 0; color: var(--muted); font-size: 9pt; }
+      .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8mm; }
+      .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5mm; }
+      .card { border: 1px solid var(--line); border-radius: 3mm; padding: 6mm; }
+      .card p:last-child { margin-bottom: 0; }
+      .quote { margin: 12mm 0; border-left: 3px solid var(--coral); padding: 1mm 0 1mm 7mm; color: var(--plum); font-size: 21pt; line-height: 1.25; }
+      .logo-stage { display: grid; place-items: center; min-height: 70mm; border: 1px solid var(--line); border-radius: 3mm; background: var(--ivory); }
+      .logo-stage.dark { background: var(--plum); }
+      .logo-stage img { width: 72%; }
+      .clear-space { display: grid; place-items: center; min-height: 80mm; background: #f6f1f3; }
+      .clear-space div { border: 1px dashed var(--coral); padding: 10mm; }
+      .clear-space img { width: 95mm; display: block; }
+      .swatches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; }
+      .swatch { min-height: 39mm; border-radius: 3mm; padding: 5mm; display: flex; flex-direction: column; justify-content: end; }
+      .swatch strong, .swatch span { display: block; font-size: 9pt; }
+      .swatch span { margin-top: 1mm; opacity: .75; }
+      .type-sample { margin: 0 0 8mm; border-bottom: 1px solid var(--line); padding-bottom: 7mm; }
+      .type-sample:last-child { border: 0; }
+      .type-display { margin-bottom: 2mm; font-size: 31pt; line-height: 1.05; }
+      .type-body { margin-bottom: 2mm; font-size: 16pt; }
+      .type-meta { color: var(--muted); font-size: 9pt; }
+      .do, .dont { position: relative; min-height: 58mm; }
+      .do::before, .dont::before { position: absolute; right: 5mm; top: 4mm; font-size: 9pt; font-weight: 700; }
+      .do::before { content: "CORRETO"; color: var(--teal); }
+      .dont::before { content: "EVITAR"; color: #b23a48; }
+      .series { border-left: 5px solid var(--coral); padding-left: 5mm; }
+      .series:nth-child(2) { border-color: var(--plum); }
+      .series:nth-child(3) { border-color: var(--teal); }
+      .series:nth-child(4) { border-color: var(--dusty); }
+      .series:nth-child(5) { border-color: #d09a39; }
+      .timeline { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 8mm; }
+      .timeline div { min-height: 31mm; border-top: 3px solid var(--plum); padding: 4mm 3mm 0 0; }
+      .timeline b { display: block; margin-bottom: 2mm; color: var(--rose); font-size: 9pt; }
+      .timeline span { font-size: 8.5pt; line-height: 1.35; }
+      .screen { position: relative; aspect-ratio: 16/9; overflow: hidden; border-radius: 3mm; background: var(--plum); color: #fff; padding: 9mm; }
+      .screen .tag { display: inline-block; border-radius: 2mm; background: var(--coral); padding: 2mm 3mm; color: var(--plum); font-size: 7pt; font-weight: 700; text-transform: uppercase; }
+      .screen h3 { max-width: 70%; margin: 20mm 0 0; color: #fff; font-size: 22pt; line-height: 1.08; }
+      .screen img { position: absolute; right: -8mm; bottom: -9mm; width: 60mm; opacity: .2; }
+      .checklist { columns: 2; column-gap: 10mm; }
+      .checklist li { break-inside: avoid; margin-bottom: 3mm; }
+      .footer-band { position: absolute; right: 0; bottom: 0; left: 0; height: 8mm; background: var(--plum); }
+      @media print {
+        @page { size: A4; margin: 0; }
+        body { background: #fff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+        .page { margin: 0; box-shadow: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <section class="page cover" data-page="01">
+      <img class="cover-mark" src="studiosbook-mark.svg" alt="" />
+      <div><img class="brand-logo" src="studiosbook-logo.svg" alt="StudiosBook" /></div>
+      <div class="cover-copy">
+        <p class="eyebrow">Identidade visual e sistema de conteúdo</p>
+        <h1>Uma marca que organiza talento e transforma gestão em crescimento.</h1>
+        <p class="lead">Manual oficial para produto, comunicação, tutoriais, suporte e materiais comerciais.</p>
+      </div>
+      <div class="cover-footer"><p>Versão 2.0</p><p>StudiosBook · 2026</p></div>
+      <div class="footer-band"></div>
+    </section>
+
+    <section class="page" data-page="02">
+      <p class="eyebrow">Estratégia de marca</p>
+      <h2>Posicionamento</h2>
+      <p class="lead">StudiosBook é o sistema de gestão simples e profissional para especialistas da beleza organizarem agenda, clientes, procedimentos e crescimento.</p>
+      <p class="quote serif">Seu talento em foco.<br />Seu studio sob controle.</p>
+      <div class="grid-3">
+        <article class="card"><h3>Clareza</h3><p>Reduzir esforço, ruído e insegurança nas rotinas do studio.</p></article>
+        <article class="card"><h3>Cuidado</h3><p>Tratar dados, clientes e decisões com respeito e confiança.</p></article>
+        <article class="card"><h3>Crescimento</h3><p>Transformar organização em recorrência, margem e escala.</p></article>
+      </div>
+      <div style="margin-top:12mm" class="grid-2">
+        <article><h3>Personalidade</h3><p>Profissional, acolhedora, segura, objetiva e contemporânea.</p></article>
+        <article><h3>Promessa</h3><p>Dar controle à profissional sem transformar gestão em complicação.</p></article>
+        <article><h3>Público</h3><p>Lash, nails, sobrancelhas, cabelo, estética, massoterapia e studios multiespecialidade.</p></article>
+        <article><h3>Assinatura educacional</h3><p><strong>Aprenda. Organize. Cresça.</strong> Usada em tutoriais, onboarding e conteúdo de suporte.</p></article>
+      </div>
+    </section>
+
+    <section class="page" data-page="03">
+      <p class="eyebrow">Sistema de assinatura</p>
+      <h2>Logo e símbolo</h2>
+      <div class="grid-2">
+        <div class="logo-stage"><img src="studiosbook-logo.svg" alt="Logo principal" /></div>
+        <div class="logo-stage dark"><img src="studiosbook-logo-reversed.svg" alt="Logo reverso" /></div>
+      </div>
+      <p style="margin-top:7mm">O símbolo Bloom System une quatro páginas em movimento. Ele representa organização, beleza, continuidade e crescimento.</p>
+      <div class="clear-space"><div><img src="studiosbook-logo.svg" alt="Área de proteção da marca" /></div></div>
+      <div class="grid-2" style="margin-top:7mm">
+        <article><h3>Área de proteção</h3><p>Mantenha ao redor da assinatura pelo menos a altura de uma pétala externa do símbolo.</p></article>
+        <article><h3>Tamanho mínimo</h3><p>Assinatura: 150 px digital ou 38 mm impresso. Símbolo: 24 px digital ou 8 mm impresso.</p></article>
+      </div>
+    </section>
+
+    <section class="page" data-page="04">
+      <p class="eyebrow">Fundamentos visuais</p>
+      <h2>Cor</h2>
+      <div class="swatches">
+        <div class="swatch" style="background:#402239;color:#fff"><strong>Ameixa</strong><span>#402239 · Primária</span></div>
+        <div class="swatch" style="background:#A84D68;color:#fff"><strong>Rosa profundo</strong><span>#A84D68 · Marca</span></div>
+        <div class="swatch" style="background:#E97F91;color:#171417"><strong>Coral</strong><span>#E97F91 · Acento</span></div>
+        <div class="swatch" style="background:#C77D94;color:#171417"><strong>Rosa antigo</strong><span>#C77D94 · Apoio</span></div>
+        <div class="swatch" style="background:#FFF9FA;color:#171417;border:1px solid #e8e1e4"><strong>Marfim</strong><span>#FFF9FA · Fundo</span></div>
+        <div class="swatch" style="background:#171417;color:#fff"><strong>Carvão</strong><span>#171417 · Texto</span></div>
+      </div>
+      <h3 style="margin-top:10mm">Cores funcionais do produto</h3>
+      <div class="grid-3">
+        <div class="card"><strong style="color:#2E7D72">#2E7D72</strong><p>Foco e interação.</p></div>
+        <div class="card"><strong style="color:#2F7D4A">#2F7D4A</strong><p>Sucesso e pagamento.</p></div>
+        <div class="card"><strong style="color:#A96D13">#A96D13</strong><p>Aviso e atenção.</p></div>
+      </div>
+      <p style="margin-top:8mm"><strong>Regra:</strong> use ameixa e marfim como base; coral para conduzir o olhar; cores funcionais apenas para estados e ações. Não transforme a interface em uma composição monocromática rosa.</p>
+    </section>
+
+    <section class="page" data-page="05">
+      <p class="eyebrow">Tipografia e composição</p>
+      <h2>Uma voz visual clara</h2>
+      <div class="type-sample"><p class="type-display"><strong>DM Sans</strong></p><p class="type-meta">Títulos, interface, legendas e materiais didáticos · pesos 400, 500, 600 e 700.</p></div>
+      <div class="type-sample"><p class="type-display serif">DM Serif Display</p><p class="type-meta">Frases curtas, campanhas e momentos editoriais. Nunca em textos longos ou na interface.</p></div>
+      <div class="type-sample"><p class="type-body"><strong>Escala recomendada:</strong> 56 / 44 / 36 / 28 / 22 / 18 / 16 / 14 px</p><p class="type-meta">Entrelinha entre 110% em títulos e 150% em textos. Espaçamento de letras sempre neutro.</p></div>
+      <div class="grid-2">
+        <article class="card do"><h3>Composição</h3><p>Títulos diretos, alinhamento previsível, respiro e contraste alto.</p></article>
+        <article class="card dont"><h3>Ruído</h3><p>Não usar fontes manuscritas, sombras pesadas, brilhos, excesso de rosa ou elementos decorativos sem função.</p></article>
+      </div>
+    </section>
+
+    <section class="page" data-page="06">
+      <p class="eyebrow">Arquitetura de conteúdo</p>
+      <h2>Séries oficiais de tutorial</h2>
+      <div class="grid-2">
+        <article class="card series"><h3>StudiosBook Primeiros Passos</h3><p>Cadastro, instalação, configuração e primeira rotina.</p></article>
+        <article class="card series"><h3>StudiosBook em 1 Minuto</h3><p>Uma ação objetiva, útil e rápida por episódio.</p></article>
+        <article class="card series"><h3>Domine sua Agenda</h3><p>Horários, confirmações, retornos e produtividade.</p></article>
+        <article class="card series"><h3>Clientes que Voltam</h3><p>Histórico, relacionamento e experiência da cliente.</p></article>
+        <article class="card series"><h3>Studio Lucrativo</h3><p>Finanças, indicadores, recorrência e decisões.</p></article>
+        <article class="card series"><h3>Novidades StudiosBook</h3><p>Atualizações, recursos e mudanças importantes.</p></article>
+      </div>
+      <h3 style="margin-top:10mm">Estrutura de cada vídeo</h3>
+      <div class="timeline">
+        <div><b>01 · Gancho</b><span>Mostre o problema ou resultado.</span></div>
+        <div><b>02 · Promessa</b><span>Defina o que será aprendido.</span></div>
+        <div><b>03 · Execução</b><span>Demonstre em passos curtos.</span></div>
+        <div><b>04 · Revisão</b><span>Recapitule pontos críticos.</span></div>
+        <div><b>05 · CTA</b><span>Aplique agora no StudiosBook.</span></div>
+      </div>
+    </section>
+
+    <section class="page" data-page="07">
+      <p class="eyebrow">Sistema para vídeo</p>
+      <h2>Telas reconhecíveis em qualquer canal</h2>
+      <div class="grid-2">
+        <div class="screen"><span class="tag">Primeiros passos</span><h3>Configure seu studio em poucos minutos</h3><img src="studiosbook-mark-reversed.svg" alt="" /></div>
+        <div class="screen" style="background:#fff9fa;color:#171417;border:1px solid #e8e1e4"><span class="tag">Dica rápida</span><h3 style="color:#171417">Como cadastrar uma cliente</h3><img src="studiosbook-mark.svg" alt="" /></div>
+      </div>
+      <div class="grid-2" style="margin-top:9mm">
+        <article><h3>Capas</h3><p>Uma promessa principal, até sete palavras, captura real do app e selo fixo da série.</p></article>
+        <article><h3>Movimento</h3><p>Entradas entre 180 e 320 ms. Use opacidade e deslocamento curto. Vinheta com até 2 segundos.</p></article>
+        <article><h3>Legenda</h3><p>DM Sans Semibold, no máximo duas linhas, contraste alto e termos essenciais destacados em coral.</p></article>
+        <article><h3>Áudio</h3><p>Voz clara entre -12 e -6 dB, música discreta e sem competir com a instrução.</p></article>
+      </div>
+    </section>
+
+    <section class="page" data-page="08">
+      <p class="eyebrow">Governança e publicação</p>
+      <h2>Checklist final</h2>
+      <ul class="checklist">
+        <li>Usar somente arquivos oficiais da pasta de marca.</li>
+        <li>Revisar ortografia e nomes de recursos.</li>
+        <li>Gravar com conta demonstrativa.</li>
+        <li>Nunca expor dados reais de clientes.</li>
+        <li>Manter textos dentro da área segura.</li>
+        <li>Validar leitura em tela de celular.</li>
+        <li>Adicionar legendas em todos os vídeos.</li>
+        <li>Manter a marca d'água discreta.</li>
+        <li>Exportar em 1080p e revisar o áudio.</li>
+        <li>Nomear o arquivo por série e episódio.</li>
+      </ul>
+      <div class="card" style="margin-top:12mm;background:#fff9fa">
+        <h3>Ferramenta central</h3>
+        <p>Abra <strong>brand-studio.html</strong>, selecione o formato, edite o texto, importe uma captura real e exporte o PNG. O mesmo sistema gera capa, abertura, capítulo, dica, encerramento, Reels e lower third.</p>
+      </div>
+      <p class="quote serif">Consistência transforma conteúdo em reconhecimento e reconhecimento em confiança.</p>
+      <p><strong>Proteção do ativo:</strong> antes de ampliar campanhas e licenciamento, faça busca de anterioridade e protocolo da marca StudiosBook no INPI.</p>
+      <div class="footer-band"></div>
+    </section>
+  </body>
+</html>
