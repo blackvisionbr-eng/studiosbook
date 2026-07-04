@@ -438,6 +438,21 @@ function supportWhatsAppLink(message) {
 function authErrorMessage(error) {
   const code = error?.code || "";
   const raw = error?.message || "";
+  if (code.includes("email-already-in-use")) {
+    return "Este e-mail já possui uma conta. Entre com a senha ou use o Google.";
+  }
+  if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) {
+    return "E-mail ou senha inválidos.";
+  }
+  if (code.includes("weak-password")) {
+    return "Use uma senha mais forte, com pelo menos 8 caracteres.";
+  }
+  if (code.includes("invalid-email")) {
+    return "Informe um endereço de e-mail válido.";
+  }
+  if (code.includes("too-many-requests")) {
+    return "Muitas tentativas seguidas. Aguarde alguns minutos e tente novamente.";
+  }
   if (code.includes("configuration-not-found") || raw.includes("CONFIGURATION_NOT_FOUND")) {
     return "O login está temporariamente indisponível. Tente novamente ou fale com o suporte.";
   }
@@ -1315,6 +1330,39 @@ export default function App() {
     }
   };
 
+  const handleEmailAuth = async ({ mode, email, password, fullName }) => {
+    setActionLoading("email-auth");
+    try {
+      const loggedUser = mode === "register"
+        ? await base44.auth.registerWithEmail(email, password, fullName)
+        : await base44.auth.loginWithEmail(email, password);
+      setUser(loggedUser);
+      showFeedback(mode === "register" ? "Conta criada. Enviamos a verificação do seu e-mail." : "Login realizado.");
+    } catch (error) {
+      console.error(error);
+      showFeedback(authErrorMessage(error), "error");
+    } finally {
+      setActionLoading("");
+    }
+  };
+
+  const handleEmailPasswordReset = async (email) => {
+    if (!String(email || "").trim()) {
+      showFeedback("Informe seu e-mail para redefinir a senha.", "error");
+      return;
+    }
+    setActionLoading("password-reset");
+    try {
+      await base44.auth.sendPasswordReset(email);
+      showFeedback("Enviamos o link de redefinição para seu e-mail.");
+    } catch (error) {
+      console.error(error);
+      showFeedback(authErrorMessage(error), "error");
+    } finally {
+      setActionLoading("");
+    }
+  };
+
   const handleLogout = () => {
     base44.auth.logout(window.location.origin);
   };
@@ -1835,6 +1883,8 @@ export default function App() {
       <>
         <LoginScreen
           onLogin={handleLogin}
+          onEmailAuth={handleEmailAuth}
+          onPasswordReset={handleEmailPasswordReset}
           feedback={feedback}
           feedbackType={feedbackType}
           actionLoading={actionLoading}
@@ -2579,7 +2629,13 @@ function CatalogServiceDialog({ draft, setDraft, categories, error, onSave, onCl
   );
 }
 
-function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
+function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedbackType, actionLoading }) {
+  const [mode, setMode] = useState("login");
+  const [form, setForm] = useState({ fullName: "", email: "", password: "" });
+  const submitEmail = (event) => {
+    event.preventDefault();
+    onEmailAuth({ mode, ...form });
+  };
   return (
     <div className="min-h-dvh bg-brand-ivory px-4 py-6 text-brand-charcoal sm:px-5 sm:py-10">
       <div className="mx-auto grid min-h-[calc(100dvh-3rem)] max-w-6xl items-center gap-7 sm:min-h-[calc(100dvh-5rem)] sm:gap-10 lg:grid-cols-[0.9fr_1.1fr]">
@@ -2603,13 +2659,49 @@ function LoginScreen({ onLogin, feedback, feedbackType, actionLoading }) {
               {feedback}
             </div>
           )}
-          <Button
-            onClick={onLogin}
-            disabled={actionLoading === "login"}
-            className="mt-8 h-12 w-full rounded-full bg-brand-plum px-5 text-white hover:bg-[#573048] sm:w-auto sm:px-7"
-          >
-            {actionLoading === "login" ? "Abrindo login..." : "Entrar com Google"}
-          </Button>
+          <div className="mt-8 grid w-full max-w-md gap-4">
+            <Button
+              type="button"
+              onClick={onLogin}
+              disabled={actionLoading === "login"}
+              className="h-12 w-full rounded-full bg-white px-5 text-zinc-900 shadow-sm ring-1 ring-zinc-200 hover:bg-zinc-50"
+            >
+              <span className="mr-3 flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-black text-[#4285f4] ring-1 ring-zinc-200">G</span>
+              {actionLoading === "login" ? "Abrindo Google..." : "Continuar com Google"}
+            </Button>
+
+            <div className="flex items-center gap-3 text-xs font-bold uppercase text-zinc-400"><span className="h-px flex-1 bg-zinc-200" /><span>ou use seu e-mail</span><span className="h-px flex-1 bg-zinc-200" /></div>
+
+            <div className="grid grid-cols-2 rounded-full bg-white p-1 ring-1 ring-zinc-200" role="group" aria-label="Modo de acesso">
+              <button type="button" onClick={() => setMode("login")} className={`h-10 rounded-full text-sm font-black transition ${mode === "login" ? "bg-brand-plum text-white" : "text-zinc-500"}`}>Entrar</button>
+              <button type="button" onClick={() => setMode("register")} className={`h-10 rounded-full text-sm font-black transition ${mode === "register" ? "bg-brand-plum text-white" : "text-zinc-500"}`}>Criar conta</button>
+            </div>
+
+            <form onSubmit={submitEmail} className="grid min-w-0 gap-3">
+              {mode === "register" && (
+                <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
+                  Seu nome
+                  <Input type="text" autoComplete="name" required value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
+                </label>
+              )}
+              <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
+                E-mail
+                <Input type="email" autoComplete="email" required value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
+              </label>
+              <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
+                Senha
+                <Input type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={mode === "register" ? 8 : 6} required value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
+              </label>
+              <Button type="submit" disabled={actionLoading === "email-auth"} className="mt-1 h-12 rounded-full bg-brand-plum text-white hover:bg-[#573048]">
+                {actionLoading === "email-auth" ? "Validando..." : mode === "register" ? "Criar minha conta" : "Entrar com e-mail"}
+              </Button>
+              {mode === "login" && (
+                <button type="button" disabled={actionLoading === "password-reset"} onClick={() => onPasswordReset(form.email)} className="min-h-10 text-sm font-bold text-[#7f3158] disabled:opacity-50">
+                  {actionLoading === "password-reset" ? "Enviando..." : "Esqueci minha senha"}
+                </button>
+              )}
+            </form>
+          </div>
           <p className="mt-4 text-sm text-zinc-500">
             Ao entrar, você declara que leu a{" "}
             <a href="/privacy.html" target="_blank" rel="noreferrer" className="font-bold text-[#7f3158] underline underline-offset-4">

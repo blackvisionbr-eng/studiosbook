@@ -8,10 +8,13 @@ import {
   Download,
   Eye,
   EyeOff,
+  History,
+  KeyRound,
   LayoutDashboard,
   LoaderCircle,
   LockKeyhole,
   LogOut,
+  Mail,
   QrCode,
   RefreshCw,
   Search,
@@ -23,13 +26,21 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { adminAuth, invokeAdmin, signInAdmin, signOutAdmin } from "./firebaseAdminClient.js";
+import {
+  adminAuth,
+  changeAdminPassword,
+  invokeAdmin,
+  sendAdminPasswordResetEmail,
+  signInAdmin,
+  signOutAdmin,
+} from "./firebaseAdminClient.js";
 
 const tabs = [
   { id: "overview", label: "Visão geral", icon: LayoutDashboard },
   { id: "accounts", label: "Contas", icon: Users },
   { id: "payments", label: "Pagamentos", icon: CreditCard },
   { id: "system", label: "Sistema", icon: Server },
+  { id: "security", label: "Segurança", icon: ShieldCheck },
 ];
 
 export default function AdminApp() {
@@ -43,6 +54,7 @@ export default function AdminApp() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
+  const [auditEvents, setAuditEvents] = useState([]);
 
   const loadOverview = async (currentUser = adminAuth.currentUser) => {
     if (!currentUser) return;
@@ -113,6 +125,99 @@ export default function AdminApp() {
   const handleLogout = async () => {
     await signOutAdmin();
     window.location.replace("/admin");
+  };
+
+  const handleLoginPasswordReset = async (email) => {
+    if (!email) {
+      setError("Informe o e-mail administrativo.");
+      return;
+    }
+    setLoading("login-reset");
+    setError("");
+    try {
+      await sendAdminPasswordResetEmail(email);
+      showNotice("E-mail de redefinição enviado.");
+    } catch {
+      setError("Não foi possível enviar a redefinição de senha.");
+    } finally {
+      setLoading("");
+    }
+  };
+
+  const loadAudit = async () => {
+    setLoading("audit");
+    setError("");
+    try {
+      const result = await invokeAdmin("admin-audit-log");
+      setAuditEvents(result.events || []);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading("");
+    }
+  };
+
+  const selectTab = (tabId) => {
+    setActiveTab(tabId);
+    if (tabId === "security") loadAudit();
+  };
+
+  const handlePasswordChange = async ({ currentPassword, newPassword, confirmation }) => {
+    if (newPassword !== confirmation) {
+      setError("A confirmação da nova senha não confere.");
+      return;
+    }
+    if (newPassword.length < 12) {
+      setError("Use uma nova senha com pelo menos 12 caracteres.");
+      return;
+    }
+    setLoading("password");
+    setError("");
+    try {
+      await changeAdminPassword(currentPassword, newPassword);
+      await signOutAdmin();
+      window.location.replace("/admin?password=changed");
+    } catch {
+      setError("A senha atual não foi confirmada ou a nova senha não atende aos requisitos.");
+    } finally {
+      setLoading("");
+    }
+  };
+
+  const sendAccountPasswordReset = async (account) => {
+    if (!account.email) return setError("Esta conta não possui e-mail cadastrado.");
+    if (!window.confirm(`Enviar redefinição de senha para ${account.email}?`)) return;
+    setLoading(`password-reset-${account.uid}`);
+    setError("");
+    try {
+      await invokeAdmin("admin-send-password-reset", { uid: account.uid });
+      await loadAudit();
+      showNotice("E-mail de redefinição enviado.");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading("");
+    }
+  };
+
+  const revokeAccountSessions = async (account) => {
+    if (!window.confirm(`Encerrar todas as sessões de ${account.email || account.uid}?`)) return;
+    setLoading(`sessions-${account.uid}`);
+    setError("");
+    try {
+      const result = await invokeAdmin("admin-revoke-user-sessions", { uid: account.uid });
+      if (result.self) {
+        await signOutAdmin();
+        window.location.replace("/admin?sessions=revoked");
+        return;
+      }
+      await loadAudit();
+      showNotice("Sessões da conta encerradas.");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading("");
+    }
   };
 
   const handleDiagnostics = async () => {
@@ -191,7 +296,7 @@ export default function AdminApp() {
   }, [data?.users, search]);
 
   if (authLoading) return <AdminLoading />;
-  if (!user || !authorized) return <AdminLogin onSubmit={handleLogin} loading={loading === "login"} error={error} />;
+  if (!user || !authorized) return <AdminLogin onSubmit={handleLogin} onResetPassword={handleLoginPasswordReset} loading={loading} error={error} notice={notice} />;
 
   return (
     <div className="min-h-dvh bg-brand-ivory text-brand-charcoal">
@@ -215,7 +320,7 @@ export default function AdminApp() {
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => selectTab(tab.id)}
                 className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-lg px-3 text-sm font-bold transition ${
                   activeTab === tab.id ? "bg-brand-plum text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
                 }`}
@@ -259,19 +364,39 @@ export default function AdminApp() {
             loading={loading}
             onSubscription={updateSubscription}
             onAccess={updateAccess}
+            onPasswordReset={sendAccountPasswordReset}
+            onSessions={revokeAccountSessions}
           />
         )}
         {activeTab === "payments" && <Payments rows={data?.recent_payments || []} />}
         {activeTab === "system" && (
           <System data={data} diagnostics={diagnostics} loading={loading} onDiagnostics={handleDiagnostics} />
         )}
+        {activeTab === "security" && (
+          <Security
+            user={user}
+            events={auditEvents}
+            users={data?.users || []}
+            loading={loading}
+            onPasswordChange={handlePasswordChange}
+            onRevokeSessions={() => revokeAccountSessions({ uid: user.uid, email: user.email })}
+            onRefreshAudit={loadAudit}
+          />
+        )}
       </main>
     </div>
   );
 }
 
-function AdminLogin({ onSubmit, loading, error }) {
+function AdminLogin({ onSubmit, onResetPassword, loading, error, notice }) {
   const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail] = useState("");
+  const query = new URLSearchParams(window.location.search);
+  const queryNotice = query.get("password") === "changed"
+    ? "Senha alterada. Entre novamente."
+    : query.get("sessions") === "revoked"
+      ? "Sessões encerradas. Entre novamente."
+      : "";
   return (
     <main className="grid min-h-dvh bg-brand-ivory lg:grid-cols-[0.9fr_1.1fr]">
       <section className="flex items-center justify-center px-3 py-6 sm:px-8 sm:py-10">
@@ -285,10 +410,11 @@ function AdminLogin({ onSubmit, loading, error }) {
             <p className="mt-2 text-sm leading-6 text-zinc-500">Use a conta autorizada pela BlackVision.</p>
           </div>
           {error && <div className="mt-5"><Alert tone="error">{error}</Alert></div>}
+          {(notice || queryNotice) && <div className="mt-5"><Alert tone="success">{notice || queryNotice}</Alert></div>}
           <div className="mt-6 grid gap-4">
             <label className="grid gap-2 text-sm font-bold text-zinc-700">
               E-mail
-              <Input name="email" type="email" autoComplete="username" required className="h-12 rounded-lg" />
+              <Input name="email" type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} className="h-12 rounded-lg" />
             </label>
             <label className="grid gap-2 text-sm font-bold text-zinc-700">
               Senha
@@ -299,10 +425,13 @@ function AdminLogin({ onSubmit, loading, error }) {
                 </button>
               </div>
             </label>
-            <Button type="submit" disabled={loading} className="h-12 rounded-lg bg-brand-plum text-white">
-              {loading ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
-              {loading ? "Validando..." : "Entrar com segurança"}
+            <Button type="submit" disabled={loading === "login"} className="h-12 rounded-lg bg-brand-plum text-white">
+              {loading === "login" ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+              {loading === "login" ? "Validando..." : "Entrar com segurança"}
             </Button>
+            <button type="button" disabled={loading === "login-reset"} onClick={() => onResetPassword(email.trim())} className="min-h-10 text-sm font-bold text-[#7f3158] disabled:opacity-50">
+              {loading === "login-reset" ? "Enviando redefinição..." : "Esqueci minha senha"}
+            </button>
           </div>
           <a href="/" className="mt-6 block text-center text-sm font-bold text-zinc-500 hover:text-zinc-950">Voltar ao StudiosBook</a>
         </form>
@@ -345,7 +474,7 @@ function Overview({ data, loading }) {
   );
 }
 
-function Accounts({ users, search, setSearch, loading, onSubscription, onAccess }) {
+function Accounts({ users, search, setSearch, loading, onSubscription, onAccess, onPasswordReset, onSessions }) {
   return (
     <Panel title="Contas e studios" subtitle="Controle de acesso e assinatura com confirmação explícita.">
       <label className="relative mt-5 block">
@@ -360,9 +489,10 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess 
           return (
             <article key={account.uid} className="grid min-w-0 gap-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 xl:grid-cols-[1.2fr_0.8fr_auto] xl:items-center">
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2"><h3 className="break-words font-black">{account.business_name || account.displayName || account.email || "Conta sem nome"}</h3><Status value={account.disabled ? "blocked" : "active"} /></div>
+                <div className="flex flex-wrap items-center gap-2"><h3 className="break-words font-black">{account.business_name || account.displayName || account.email || "Conta sem nome"}</h3><Status value={account.disabled ? "blocked" : "active"} />{account.platform_admin && <Status value="admin" />}</div>
                 <p className="mt-2 break-all text-xs font-bold text-zinc-500">{account.email || account.uid}</p>
                 <p className="mt-1 text-xs text-zinc-500">Último login: {dateTime(account.lastSignInTime)}</p>
+                <p className="mt-1 text-xs text-zinc-500">Métodos: {providerLabels(account.providers)}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <LabeledStatus label="Acesso" value={account.access?.status || status} />
                   <LabeledStatus label="Assinatura Stripe" value={providerStatus} />
@@ -374,9 +504,11 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess 
                 <Mini label="Atend." value={account.counts?.ServiceRecord || 0} />
                 <Mini label="Agenda" value={account.counts?.Appointment || 0} />
               </div>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
+              <div className="grid grid-cols-2 gap-2 xl:w-72">
                 <Button type="button" disabled={loading === `subscription-${account.uid}`} onClick={() => onSubscription(account)} className="h-10 rounded-lg bg-brand-plum px-3 text-white"><RefreshCw className={`mr-2 h-4 w-4 ${loading === `subscription-${account.uid}` ? "animate-spin" : ""}`} />Sincronizar</Button>
                 <Button type="button" disabled={loading === `access-${account.uid}`} onClick={() => onAccess(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3">{account.disabled ? <UserCheck className="mr-2 h-4 w-4" /> : <UserX className="mr-2 h-4 w-4" />}{account.disabled ? "Liberar" : "Bloquear"}</Button>
+                <Button type="button" disabled={loading === `password-reset-${account.uid}` || !account.email} onClick={() => onPasswordReset(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3"><Mail className="mr-2 h-4 w-4" />Senha</Button>
+                <Button type="button" disabled={loading === `sessions-${account.uid}`} onClick={() => onSessions(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3"><LogOut className="mr-2 h-4 w-4" />Sessões</Button>
               </div>
             </article>
           );
@@ -413,12 +545,106 @@ function System({ data, diagnostics, loading, onDiagnostics }) {
   );
 }
 
+function Security({ user, events, users, loading, onPasswordChange, onRevokeSessions, onRefreshAudit }) {
+  const [passwords, setPasswords] = useState({ currentPassword: "", newPassword: "", confirmation: "" });
+  const userByUid = new Map(users.map((account) => [account.uid, account.email || account.business_name || account.uid]));
+  const submitPassword = (event) => {
+    event.preventDefault();
+    onPasswordChange(passwords);
+  };
+
+  return (
+    <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+      <Panel title="Trocar senha administrativa" subtitle={`Conta atual: ${user.email || "administrador"}`}>
+        <form onSubmit={submitPassword} className="mt-5 grid min-w-0 gap-4">
+          <label className="grid min-w-0 gap-2 text-sm font-bold text-zinc-700">
+            Senha atual
+            <Input type="password" autoComplete="current-password" required value={passwords.currentPassword} onChange={(event) => setPasswords((current) => ({ ...current, currentPassword: event.target.value }))} className="h-11 rounded-lg" />
+          </label>
+          <label className="grid min-w-0 gap-2 text-sm font-bold text-zinc-700">
+            Nova senha
+            <Input type="password" autoComplete="new-password" minLength={12} required value={passwords.newPassword} onChange={(event) => setPasswords((current) => ({ ...current, newPassword: event.target.value }))} className="h-11 rounded-lg" />
+          </label>
+          <label className="grid min-w-0 gap-2 text-sm font-bold text-zinc-700">
+            Confirmar nova senha
+            <Input type="password" autoComplete="new-password" minLength={12} required value={passwords.confirmation} onChange={(event) => setPasswords((current) => ({ ...current, confirmation: event.target.value }))} className="h-11 rounded-lg" />
+          </label>
+          <Button type="submit" disabled={loading === "password"} className="h-11 rounded-lg bg-brand-plum text-white">
+            <KeyRound className="mr-2 h-4 w-4" />
+            {loading === "password" ? "Alterando..." : "Alterar senha"}
+          </Button>
+        </form>
+      </Panel>
+
+      <Panel title="Controle de sessões" subtitle="Invalide acessos abertos em outros aparelhos e navegadores.">
+        <div className="mt-5 grid gap-4">
+          <div className="rounded-lg bg-zinc-50 p-4">
+            <p className="break-all text-sm font-black text-zinc-900">{user.email}</p>
+            <p className="mt-2 text-sm leading-6 text-zinc-500">A ação exige login recente e desconecta esta sessão após concluir.</p>
+          </div>
+          <Button type="button" onClick={onRevokeSessions} disabled={loading.startsWith("sessions-")} variant="ghost" className="h-11 rounded-lg border border-red-200 bg-red-50 text-red-800 hover:bg-red-100">
+            <LogOut className="mr-2 h-4 w-4" />Encerrar todas as sessões
+          </Button>
+        </div>
+      </Panel>
+
+      <section className="min-w-0 overflow-hidden rounded-lg border border-zinc-200 bg-white p-4 sm:p-5 lg:col-span-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="break-words text-lg font-black">Histórico de auditoria</h2>
+            <p className="mt-1 break-words text-sm text-zinc-500">Últimas ações administrativas registradas pelo backend.</p>
+          </div>
+          <Button type="button" onClick={onRefreshAudit} disabled={loading === "audit"} variant="ghost" className="h-10 shrink-0 rounded-lg border bg-white">
+            <History className={`mr-2 h-4 w-4 ${loading === "audit" ? "animate-spin" : ""}`} />Atualizar histórico
+          </Button>
+        </div>
+        <div className="mt-5 grid gap-2">
+          {events.map((event) => (
+            <div key={event.id} className="grid min-w-0 gap-2 border-b border-zinc-100 py-3 last:border-0 sm:grid-cols-[1fr_auto] sm:items-center">
+              <div className="min-w-0">
+                <p className="break-words text-sm font-black">{auditLabel(event.action)}</p>
+                <p className="mt-1 break-all text-xs text-zinc-500">{event.target_uid ? userByUid.get(event.target_uid) || event.target_uid : event.admin_email || "StudiosBook"}</p>
+              </div>
+              <time className="text-xs font-bold text-zinc-400">{dateTime(event.created_at)}</time>
+            </div>
+          ))}
+          {!events.length && <p className="rounded-lg bg-zinc-50 p-8 text-center text-sm text-zinc-500">Nenhuma ação registrada.</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function auditLabel(action) {
+  return {
+    "admin.session.validated": "Sessão administrativa validada",
+    "admin.overview.viewed": "Painel administrativo consultado",
+    "admin.payments.diagnostics": "Diagnóstico financeiro executado",
+    "admin.data.exported": "Dados administrativos exportados",
+    "admin.subscription.updated": "Assinatura sincronizada",
+    "admin.user.access_changed": "Acesso de conta alterado",
+    "admin.user.password_reset_sent": "Redefinição de senha enviada",
+    "admin.user.sessions_revoked": "Sessões de conta encerradas",
+  }[action] || action || "Ação administrativa";
+}
+
+function providerLabels(providers = []) {
+  if (!providers.length) return "Não identificado";
+  return providers.map((provider) => ({
+    "google.com": "Google",
+    "password": "E-mail e senha",
+    "apple.com": "Apple",
+    "facebook.com": "Facebook",
+    "microsoft.com": "Microsoft",
+  }[provider] || provider)).join(", ");
+}
+
 function Brand() { return <div className="min-w-0"><img src="/brand/studiosbook-logo.svg" alt="StudiosBook" className="h-9 w-auto max-w-[176px]" /><p className="mt-1 break-words text-[9px] font-bold uppercase tracking-[0.08em] text-zinc-400 sm:text-[10px] sm:tracking-[0.12em]">Admin BlackVision</p></div>; }
 function Panel({ title, subtitle, children }) { return <section className="min-w-0 overflow-hidden rounded-lg border border-zinc-200 bg-white p-4 sm:p-5"><h2 className="break-words text-lg font-black">{title}</h2><p className="mt-1 break-words text-sm text-zinc-500">{subtitle}</p>{children}</section>; }
 function Mini({ label, value }) { return <div className="min-w-0 rounded-lg bg-white p-3 text-center"><p className="break-words text-sm font-black">{value}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-400">{label}</p></div>; }
 function Alert({ tone, children }) { return <div className={`min-w-0 break-words rounded-lg border px-4 py-3 text-sm font-bold ${tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{children}</div>; }
 function LabeledStatus({ label, value }) { return <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2 py-1 text-[10px] font-bold uppercase text-zinc-500">{label}<Status value={value} /></span>; }
-function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", trialing: "Em teste", paused: "Pausado", past_due: "Em atraso", unpaid: "Não pago", incomplete: "Incompleto", incomplete_expired: "Expirado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", partially_refunded: "Parcialmente estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; const good = ["active", "approved", "trialing"].includes(key); const bad = ["rejected", "payment_failed", "past_due", "unpaid", "incomplete", "incomplete_expired", "expired", "blocked", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
+function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", admin: "Administrador", trialing: "Em teste", paused: "Pausado", past_due: "Em atraso", unpaid: "Não pago", incomplete: "Incompleto", incomplete_expired: "Expirado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", partially_refunded: "Parcialmente estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; const good = ["active", "approved", "trialing", "admin"].includes(key); const bad = ["rejected", "payment_failed", "past_due", "unpaid", "incomplete", "incomplete_expired", "expired", "blocked", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
 function LoadingPanel() { return <div className="flex min-h-48 items-center justify-center rounded-lg border bg-white"><LoaderCircle className="h-6 w-6 animate-spin text-[#a84d68]" /></div>; }
 function AdminLoading() { return <div className="flex min-h-dvh items-center justify-center bg-brand-ivory"><div className="text-center"><img src="/brand/studiosbook-mark.svg" alt="" className="mx-auto h-12 w-12" /><LoaderCircle className="mx-auto mt-5 h-5 w-5 animate-spin text-[#a84d68]" /></div></div>; }
 function dateTime(value) { if (!value) return "-"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "-" : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date); }

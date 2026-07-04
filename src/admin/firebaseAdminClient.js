@@ -1,10 +1,14 @@
 import { initializeApp } from "firebase/app";
 import {
   browserSessionPersistence,
+  EmailAuthProvider,
   getAuth,
+  reauthenticateWithCredential,
+  sendPasswordResetEmail,
   setPersistence,
   signInWithEmailAndPassword,
   signOut,
+  updatePassword,
 } from "firebase/auth";
 
 const firebaseConfig = {
@@ -38,6 +42,22 @@ export async function signInAdmin(email, password) {
 
 export function signOutAdmin() {
   return signOut(adminAuth);
+}
+
+export function sendAdminPasswordResetEmail(email) {
+  return sendPasswordResetEmail(adminAuth, String(email || "").trim(), {
+    url: "https://studiosbook.com.br/admin",
+    handleCodeInApp: false,
+  });
+}
+
+export async function changeAdminPassword(currentPassword, newPassword) {
+  const user = adminAuth.currentUser;
+  if (!user?.email) throw new Error("Sessão administrativa não encontrada.");
+  const credential = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, credential);
+  await updatePassword(user, newPassword);
+  await user.getIdToken(true);
 }
 
 export async function invokeAdmin(name, data = {}, user = adminAuth.currentUser) {

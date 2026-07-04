@@ -31,6 +31,8 @@ const PRODUCT_NAME = "StudiosBook";
 const PLAN_NAME = "StudiosBook Intermediário";
 const MONTHLY_AMOUNT = 26.9;
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "blackvision-27f1c";
+const FIREBASE_WEB_API_KEY =
+  process.env.FIREBASE_WEB_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs";
 const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || "https://studiosbook.com.br";
 const PUBLIC_API_URL =
   process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
@@ -344,6 +346,28 @@ async function safeAdminAudit(req, action, details = {}) {
   }
 }
 
+async function sendFirebasePasswordReset(email) {
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(FIREBASE_WEB_API_KEY)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requestType: "PASSWORD_RESET",
+        email,
+        continueUrl: `${PUBLIC_APP_URL}/admin`,
+        canHandleCodeInApp: false,
+      }),
+    }
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error("Não foi possível enviar o e-mail de redefinição.");
+    error.code = payload?.error?.message || "PASSWORD_RESET_FAILED";
+    throw error;
+  }
+}
+
 function toJsonSafe(value) {
   if (!value || typeof value !== "object") return value;
   if (typeof value.toDate === "function") return value.toDate().toISOString();
@@ -559,6 +583,7 @@ async function listAuthUsers() {
         creationTime: user.metadata?.creationTime || "",
         lastSignInTime: user.metadata?.lastSignInTime || "",
         providers: user.providerData?.map((provider) => provider.providerId) || [],
+        platformAdmin: user.customClaims?.platform_admin === true,
       }))
     );
     pageToken = result.pageToken;
@@ -1596,8 +1621,10 @@ app.post("/functions/admin-overview", requirePlatformAdmin, adminRateLimit, asyn
         email: authUser.email || workspace.profile?.user_email || workspace.subscription?.user_email || "",
         displayName: authUser.displayName || workspace.profile?.owner_name || "",
         disabled: Boolean(authUser.disabled),
+        platform_admin: Boolean(authUser.platformAdmin),
         creationTime: authUser.creationTime || "",
         lastSignInTime: authUser.lastSignInTime || "",
+        providers: authUser.providers || [],
         business_name: workspace.profile?.business_name || "",
         categories: workspace.profile?.categories || [],
         subscription,
@@ -1749,6 +1776,62 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, requireRe
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Erro ao atualizar assinatura.", request_id: req.requestId });
+  }
+});
+
+app.post("/functions/admin-audit-log", requirePlatformAdmin, adminRateLimit, async (req, res) => {
+  if (!requireFirebaseAdminSdk(res)) return;
+
+  try {
+    const snapshot = await adminDb
+      .collection("AdminAuditLog")
+      .orderBy("created_at", "desc")
+      .limit(100)
+      .get();
+    const events = snapshot.docs.map((doc) => ({ id: doc.id, ...toJsonSafe(doc.data()) }));
+    res.json({ success: true, events });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erro ao carregar auditoria administrativa.", request_id: req.requestId });
+  }
+});
+
+app.post("/functions/admin-send-password-reset", requirePlatformAdmin, requireRecentAdminAuth, adminRateLimit, async (req, res) => {
+  if (!requireFirebaseAdminSdk(res)) return;
+
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(uid)) {
+      return res.status(400).json({ error: "UID inválido." });
+    }
+    const targetUser = await adminAuth.getUser(uid);
+    if (!targetUser.email) {
+      return res.status(400).json({ error: "A conta não possui e-mail para redefinição." });
+    }
+    await sendFirebasePasswordReset(targetUser.email);
+    await safeAdminAudit(req, "admin.user.password_reset_sent", { target_uid: uid });
+    res.json({ success: true, uid });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erro ao enviar redefinição de senha.", request_id: req.requestId });
+  }
+});
+
+app.post("/functions/admin-revoke-user-sessions", requirePlatformAdmin, requireRecentAdminAuth, adminRateLimit, async (req, res) => {
+  if (!requireFirebaseAdminSdk(res)) return;
+
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(uid)) {
+      return res.status(400).json({ error: "UID inválido." });
+    }
+    await adminAuth.getUser(uid);
+    await adminAuth.revokeRefreshTokens(uid);
+    await safeAdminAudit(req, "admin.user.sessions_revoked", { target_uid: uid });
+    res.json({ success: true, uid, self: uid === req.user.uid });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erro ao encerrar sessões da conta.", request_id: req.requestId });
   }
 });
 

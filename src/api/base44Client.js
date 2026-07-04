@@ -1,11 +1,16 @@
 import { initializeApp } from "firebase/app";
 import {
+  createUserWithEmailAndPassword,
   getAuth,
   getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
   signInWithRedirect,
   signOut,
+  updateProfile,
 } from "firebase/auth";
 import {
   addDoc,
@@ -258,6 +263,37 @@ export const base44 = {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
       await signInWithRedirect(auth, provider);
+    },
+    async loginWithEmail(email, password) {
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        String(email || "").trim().toLowerCase(),
+        String(password || "")
+      );
+      await credential.user.getIdToken(true);
+      return toBaseUser(credential.user);
+    },
+    async registerWithEmail(email, password, fullName) {
+      const credential = await createUserWithEmailAndPassword(
+        auth,
+        String(email || "").trim().toLowerCase(),
+        String(password || "")
+      );
+      const name = String(fullName || "").trim();
+      if (name) await updateProfile(credential.user, { displayName: name });
+      await sendEmailVerification(credential.user, {
+        url: "https://studiosbook.com.br/",
+        handleCodeInApp: false,
+      }).catch((error) => console.warn("E-mail de verificação não enviado", error?.code || error?.message));
+      await credential.user.getIdToken(true);
+      return toBaseUser(credential.user);
+    },
+    async sendPasswordReset(email) {
+      await sendPasswordResetEmail(auth, String(email || "").trim().toLowerCase(), {
+        url: "https://studiosbook.com.br/",
+        handleCodeInApp: false,
+      });
+      return { success: true };
     },
     async logout(returnUrl = window.location.origin) {
       await signOut(auth);

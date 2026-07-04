@@ -27,6 +27,8 @@
 - Eventos Stripe de estorno adicionados ao webhook de producao.
 - Estorno total real reconciliado: acesso revogado e assinatura cancelada.
 - Replay assinado de `charge.refunded` aprovado, inclusive entrega duplicada idempotente.
+- Painel admin com troca de senha, redefinicao por e-mail, revogacao de sessoes e auditoria.
+- Contas com entrada Google ou cadastro por e-mail e senha, incluindo recuperacao de senha.
 
 ## Protecao de dados
 

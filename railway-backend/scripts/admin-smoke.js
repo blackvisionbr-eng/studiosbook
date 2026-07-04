@@ -77,6 +77,7 @@ async function invoke(name) {
 
 const overview = await invoke("admin-overview");
 const diagnostics = await invoke("admin-payment-diagnostics");
+const audit = await invoke("admin-audit-log");
 const result = {
   admin_overview: overview.response.ok && overview.data.success === true,
   users_visible: Number(overview.data?.metrics?.users || 0) >= 1,
@@ -85,6 +86,7 @@ const result = {
   stripe_api: diagnostics.data?.stripe_api === "online",
   recurring_price_ready: diagnostics.data?.recurring_price_ready === true,
   webhook_ready: diagnostics.data?.webhook_ready === true,
+  audit_log_available: audit.response.ok && Array.isArray(audit.data?.events),
 };
 
 console.log(JSON.stringify(result));
