@@ -22,6 +22,11 @@
 - Testes: 16 frontend e 15 backend aprovados.
 - Build de producao aprovado.
 - App e admin sem overflow no viewport movel testado.
+- Senha administrativa anterior invalidada e todas as sessoes revogadas.
+- E-mail oficial de redefinicao administrativa enviado para o dominio StudiosBook.
+- Eventos Stripe de estorno adicionados ao webhook de producao.
+- Estorno total real reconciliado: acesso revogado e assinatura cancelada.
+- Replay assinado de `charge.refunded` aprovado, inclusive entrega duplicada idempotente.
 
 ## Protecao de dados
 
@@ -50,6 +55,22 @@ Separacao confirmada:
 
 O script e idempotente e pode ser executado novamente para validar ou reparar a configuracao.
 
+## Validacao financeira em producao
+
+Executada em 4 de julho de 2026:
+
+- API Stripe em modo live: aprovada.
+- Preco recorrente mensal de R$ 26,90: aprovado.
+- Assinatura invalida de webhook: rejeitada com HTTP 400.
+- Evento assinado: aceito com HTTP 200.
+- Evento duplicado: reconhecido sem novo processamento.
+- Estorno total: estado local `refunded`, acesso `false` e assinatura Stripe `canceled`.
+- Painel admin: sincronizado com os mesmos estados da conta.
+
+## Infraestrutura Railway
+
+O backend foi publicado temporariamente em `southeast-asia`, porque o plano gratuito bloqueou novos deploys nas regioes dos Estados Unidos e Europa durante o horario de pico. O dominio publico nao mudou. Reposicionar a replica para `us-east` fora da janela de pico para reduzir latencia no Brasil.
+
 ## Ordem segura de publicacao
 
 1. Confirmar a nova senha administrativa pelo e-mail de redefinicao ja enviado.
@@ -64,4 +85,4 @@ O script e idempotente e pode ser executado novamente para validar ou reparar a 
 ## Decisao
 
 **Codigo e identidade: prontos para release.**
-**Publicacao final: aguarda deploy e reteste financeiro em producao.**
+**Publicacao final: concluida e retestada em producao.**

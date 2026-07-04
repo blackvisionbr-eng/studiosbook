@@ -10,6 +10,7 @@
     "smoke:admin": "node scripts/admin-smoke.js",
     "setup:stripe": "node scripts/setup-stripe.js",
     "verify:stripe-webhook": "node scripts/verify-stripe-webhook.js",
+    "retest:refund": "node scripts/retest-refund-webhook.js",
     "e2e:stripe": "node scripts/e2e-stripe-sandbox.js",
     "bootstrap:admin": "node scripts/bootstrap-admin.js",
     "audit:billing": "node scripts/audit-billing-account.js",
