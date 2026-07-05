@@ -134,7 +134,7 @@ test("a master admin suspension blocks an otherwise paid subscription", () => {
   assert.equal(access.status, "suspended");
 });
 
-test("a refund revocation wins over an older master admin grant", () => {
+test("a time-limited master grant remains authoritative after a refund", () => {
   const access = billingAccess(
     {
       admin_access_override: "active",
@@ -145,8 +145,8 @@ test("a refund revocation wins over an older master admin grant", () => {
     },
     new Date("2026-07-05T12:00:00.000Z")
   );
-  assert.equal(access.allowed, false);
-  assert.equal(access.reason, "refunded");
+  assert.equal(access.allowed, true);
+  assert.equal(access.reason, "admin_override");
 });
 
 test("a new explicit master grant can restore access after a refund", () => {

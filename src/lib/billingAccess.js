@@ -1,4 +1,6 @@
 export function hasBillingAccessNow(subscription, access, now = Date.now()) {
+  if (access?.allowed === true && access?.reason === "admin_override") return true;
+
   const revokedStatuses = new Set(["refunded", "charged_back", "blocked", "revoked"]);
   const revoked = [
     subscription?.access_revoked_reason,
@@ -14,5 +16,5 @@ export function hasBillingAccessNow(subscription, access, now = Date.now()) {
   const trialEnd = new Date(subscription?.trial_end_date || 0).getTime();
   if (Number.isFinite(trialEnd) && trialEnd > now) return true;
   if (!access) return false;
-  return access.allowed === true && access.reason === "admin_override";
+  return false;
 }

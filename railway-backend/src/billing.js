@@ -32,8 +32,6 @@ export function billingAccess(subscription = {}, now = new Date()) {
   const currentTime = new Date(now).getTime();
   const adminOverride = String(subscription.admin_access_override || "").toLowerCase();
   const adminOverrideUntil = new Date(subscription.admin_override_until || 0).getTime();
-  const adminOverrideUpdatedAt = new Date(subscription.admin_override_updated_at || 0).getTime();
-  const accessRevokedAt = new Date(subscription.access_revoked_at || 0).getTime();
   const status = String(subscription.status || "not_started").toLowerCase();
   const providerStatus = String(subscription.stripe_subscription_status || "").toLowerCase();
   const paymentStatus = String(subscription.last_payment_status || "").toLowerCase();
@@ -49,8 +47,7 @@ export function billingAccess(subscription = {}, now = new Date()) {
   const adminOverrideIsCurrent =
     adminOverride === "active" &&
     Number.isFinite(adminOverrideUntil) &&
-    adminOverrideUntil > currentTime &&
-    (!Number.isFinite(accessRevokedAt) || !accessRevokedAt || adminOverrideUpdatedAt >= accessRevokedAt);
+    adminOverrideUntil > currentTime;
   if (adminOverrideIsCurrent) {
     return {
       allowed: true,

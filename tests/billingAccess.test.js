@@ -16,6 +16,17 @@ test("supports an explicit backend admin override", () => {
   assert.equal(hasBillingAccessNow(null, { allowed: true, reason: "admin_override" }, Date.now()), true);
 });
 
+test("an explicit backend admin override wins over an old refunded payment", () => {
+  assert.equal(
+    hasBillingAccessNow(
+      { status: "refunded", last_payment_status: "refunded" },
+      { allowed: true, reason: "admin_override", status: "authorized" },
+      Date.now()
+    ),
+    true
+  );
+});
+
 test("refund revocation wins over a future paid period and stale access response", () => {
   const now = Date.parse("2026-07-03T12:00:00Z");
   assert.equal(
