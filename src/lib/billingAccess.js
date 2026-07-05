@@ -1,7 +1,17 @@
 export function hasBillingAccessNow(subscription, access, now = Date.now()) {
-  if (access?.allowed === true && access?.reason === "admin_override") return true;
+  const confirmedAccessEnd = new Date(
+    access?.expiresAt ||
+    (access?.reason === "admin_override" ? subscription?.admin_override_until : 0) ||
+    0
+  ).getTime();
+  const serverConfirmedAccess =
+    access?.allowed === true &&
+    ["admin_override", "paid_period_active", "trial_active"].includes(access?.reason) &&
+    Number.isFinite(confirmedAccessEnd) &&
+    confirmedAccessEnd > now;
+  if (serverConfirmedAccess) return true;
 
-  const revokedStatuses = new Set(["refunded", "charged_back", "blocked", "revoked"]);
+  const revokedStatuses = new Set(["refunded", "charged_back", "blocked", "revoked", "suspended"]);
   const revoked = [
     subscription?.access_revoked_reason,
     subscription?.last_payment_status,
@@ -17,4 +27,35 @@ export function hasBillingAccessNow(subscription, access, now = Date.now()) {
   if (Number.isFinite(trialEnd) && trialEnd > now) return true;
   if (!access) return false;
   return false;
+}
+
+function timestampMillis(value) {
+  if (typeof value?.toMillis === "function") return value.toMillis();
+  if (typeof value?.toDate === "function") return value.toDate().getTime();
+  if (Number.isFinite(Number(value?._seconds))) return Number(value._seconds) * 1000;
+  return new Date(value || 0).getTime();
+}
+
+export function billingAccessFromRoot(root = {}, now = Date.now()) {
+  const status = String(root.billing_status || "expired").toLowerCase();
+  const expiresAtMs = timestampMillis(root.access_expires_at);
+  const expiresAt = Number.isFinite(expiresAtMs) && expiresAtMs > 0
+    ? new Date(expiresAtMs).toISOString()
+    : "";
+  const reason = String(
+    root.access_reason ||
+    (status === "authorized" ? "admin_override" :
+      status === "suspended" ? "admin_suspended" :
+        status === "active" ? "paid_period_active" :
+          status === "trialing" ? "trial_active" : status)
+  );
+  const allowed = root.access_allowed === true && expiresAtMs > now;
+
+  return {
+    allowed,
+    reason,
+    status,
+    expiresAt,
+    daysLeft: allowed ? Math.ceil((expiresAtMs - now) / 86400000) : 0,
+  };
 }

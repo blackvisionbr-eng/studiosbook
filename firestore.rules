@@ -10,10 +10,6 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
-    function isPlatformAdmin() {
-      return signedIn() && request.auth.token.platform_admin == true;
-    }
-
     function isAllowedUserEntity(entityName) {
       return entityName in [
         'Client',
@@ -27,13 +23,10 @@ service cloud.firestore {
     }
 
     function hasActiveAccess(userId) {
-      return isPlatformAdmin() || (
+      return (
         exists(/databases/$(database)/documents/users/$(userId)) &&
         get(/databases/$(database)/documents/users/$(userId)).data.access_allowed == true &&
-        (
-          get(/databases/$(database)/documents/users/$(userId)).data.billing_status == 'authorized' ||
-          get(/databases/$(database)/documents/users/$(userId)).data.access_expires_at > request.time
-        )
+        get(/databases/$(database)/documents/users/$(userId)).data.access_expires_at > request.time
       );
     }
 

@@ -19,6 +19,7 @@ import {
   doc,
   getDocs,
   getFirestore,
+  onSnapshot,
   updateDoc,
 } from "firebase/firestore";
 import {
@@ -157,6 +158,16 @@ function createEntity(entityName) {
       return { success: true };
     },
   };
+}
+
+function subscribeBillingAccess(onChange, onError) {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Login obrigatório.");
+  return onSnapshot(
+    doc(db, "users", user.uid),
+    (snapshot) => onChange(snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null),
+    onError
+  );
 }
 
 function assertProcedurePhoto(file) {
@@ -313,6 +324,9 @@ export const base44 = {
   },
   functions: {
     invoke: invokeFunction,
+  },
+  billing: {
+    subscribeAccess: subscribeBillingAccess,
   },
   storage: {
     uploadProcedurePhoto,

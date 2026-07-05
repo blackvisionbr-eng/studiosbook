@@ -34,6 +34,16 @@ test("Firestore user subcollections use an explicit allowlist", () => {
   assert.match(firestoreRules, /isAllowedUserEntity/);
   assert.match(firestoreRules, /entityName != 'BillingSubscription'/);
   assert.match(firestoreRules, /entityName != 'BillingPayment'/);
+  assert.doesNotMatch(firestoreRules, /billing_status == 'authorized'/);
+  assert.doesNotMatch(firestoreRules, /isPlatformAdmin\(\) \|\|/);
+  assert.match(firestoreRules, /access_expires_at > request\.time/);
+});
+
+test("the app receives billing access changes in real time", () => {
+  assert.match(appAuthClient, /onSnapshot/);
+  assert.match(appAuthClient, /subscribeBillingAccess/);
+  assert.match(appSource, /base44\.billing\.subscribeAccess/);
+  assert.match(appSource, /billingAccessFromRoot/);
 });
 
 test("critical admin account controls require role and recent authentication", () => {
@@ -57,6 +67,8 @@ test("subscription overrides are restricted to the exact master administrator", 
   assert.match(backendServer, /platformRole !== "master_admin"/);
   assert.match(backendServer, /MASTER_ADMIN_EMAIL/);
   assert.match(backendServer, /admin\.subscription\.renewal_changed/);
+  assert.doesNotMatch(backendServer, /Contas administrativas não podem ter a assinatura suspensa/);
+  assert.doesNotMatch(backendServer, /administrador mestre não pode suspender a própria conta/);
 });
 
 test("the app supports Google and email account flows", () => {

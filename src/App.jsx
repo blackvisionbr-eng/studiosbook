@@ -8,7 +8,7 @@ import {
   serviceBelongsToCatalog,
 } from "@/lib/serviceCatalog";
 import { toCsv } from "@/lib/csv";
-import { hasBillingAccessNow } from "@/lib/billingAccess";
+import { billingAccessFromRoot, hasBillingAccessNow } from "@/lib/billingAccess";
 import {
   Activity,
   AlertTriangle,
@@ -1094,6 +1094,33 @@ export default function App() {
     const timer = window.setInterval(() => setBillingClock(Date.now()), 60000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    let unsubscribe = () => {};
+    try {
+      unsubscribe = base44.billing.subscribeAccess(
+        (root) => {
+          if (!root) return;
+          const nextAccess = billingAccessFromRoot(root, Date.now());
+          setBillingAccess(nextAccess);
+          setBillingSubscription((current) => ({
+            ...(current || {}),
+            status: nextAccess.status,
+            current_period_end: root.current_period_end || current?.current_period_end || "",
+            trial_end_date: root.trial_end_date || current?.trial_end_date || "",
+            admin_access_override: root.admin_access_override || "",
+            admin_override_until: root.admin_override_until || "",
+          }));
+          setBillingClock(Date.now());
+        },
+        (snapshotError) => console.warn("Atualização de acesso indisponível", snapshotError?.code || snapshotError?.message)
+      );
+    } catch (snapshotError) {
+      console.warn("Não foi possível acompanhar o acesso", snapshotError?.message);
+    }
+    return () => unsubscribe();
+  }, [user?.id]);
 
   const billingLocked = !hasBillingAccessNow(billingSubscription, billingAccess, billingClock);
 
@@ -3714,6 +3741,9 @@ function BillingAccessScreen({
   feedback,
   feedbackType,
 }) {
+  const accessMessage = billingAccess?.reason === "admin_suspended"
+    ? "Seu acesso foi suspenso pelo administrador. Seus dados continuam salvos; fale com o suporte para revisar a liberação."
+    : "O período gratuito terminou. Seus dados continuam salvos; regularize o pagamento para voltar a editar agenda, clientes e atendimentos.";
   return (
     <div className="min-h-dvh bg-brand-ivory text-brand-charcoal">
       <header className="border-b border-white/70 bg-white sm:bg-white/85 sm:backdrop-blur-xl">
@@ -3732,7 +3762,7 @@ function BillingAccessScreen({
           </div>
         )}
         <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
-          O período gratuito terminou. Seus dados continuam salvos; regularize o pagamento para voltar a editar agenda, clientes e atendimentos.
+          {accessMessage}
         </div>
         <BillingView
           user={user}

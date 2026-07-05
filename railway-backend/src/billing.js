@@ -41,7 +41,7 @@ export function billingAccess(subscription = {}, now = new Date()) {
   const paidPeriodActive = Number.isFinite(periodEnd) && periodEnd > currentTime;
 
   if (adminOverride === "suspended") {
-    return { allowed: false, reason: "admin_suspended", status: "suspended", daysLeft: 0 };
+    return { allowed: false, reason: "admin_suspended", status: "suspended", daysLeft: 0, expiresAt: "" };
   }
 
   const adminOverrideIsCurrent =
@@ -54,6 +54,7 @@ export function billingAccess(subscription = {}, now = new Date()) {
       reason: "admin_override",
       status: "authorized",
       daysLeft: Math.ceil((adminOverrideUntil - currentTime) / 86400000),
+      expiresAt: new Date(adminOverrideUntil).toISOString(),
     };
   }
 
@@ -66,7 +67,7 @@ export function billingAccess(subscription = {}, now = new Date()) {
   ].find((value) => revokedStatuses.has(String(value || "").toLowerCase()));
   if (revokedStatus) {
     const normalized = String(revokedStatus).toLowerCase();
-    return { allowed: false, reason: normalized, status: normalized, daysLeft: 0 };
+    return { allowed: false, reason: normalized, status: normalized, daysLeft: 0, expiresAt: "" };
   }
 
   if (paidPeriodActive) {
@@ -75,6 +76,7 @@ export function billingAccess(subscription = {}, now = new Date()) {
       reason: "paid_period_active",
       status: "active",
       daysLeft: Math.ceil((periodEnd - currentTime) / 86400000),
+      expiresAt: new Date(periodEnd).toISOString(),
     };
   }
 
@@ -84,6 +86,7 @@ export function billingAccess(subscription = {}, now = new Date()) {
       reason: "trial_active",
       status: "trialing",
       daysLeft: Math.ceil((trialEnd - currentTime) / 86400000),
+      expiresAt: new Date(trialEnd).toISOString(),
     };
   }
 
@@ -98,14 +101,14 @@ export function billingAccess(subscription = {}, now = new Date()) {
     "incomplete_expired",
   ]);
   if (failedStatuses.has(paymentStatus) || failedStatuses.has(status) || failedStatuses.has(providerStatus)) {
-    return { allowed: false, reason: "payment_failed", status: "payment_failed", daysLeft: 0 };
+    return { allowed: false, reason: "payment_failed", status: "payment_failed", daysLeft: 0, expiresAt: "" };
   }
 
   if (paymentStatus === "pending" || ["pending", "trialing", "paused"].includes(providerStatus)) {
-    return { allowed: false, reason: "payment_pending", status: "pending", daysLeft: 0 };
+    return { allowed: false, reason: "payment_pending", status: "pending", daysLeft: 0, expiresAt: "" };
   }
 
-  return { allowed: false, reason: "trial_expired", status: "expired", daysLeft: 0 };
+  return { allowed: false, reason: "trial_expired", status: "expired", daysLeft: 0, expiresAt: "" };
 }
 
 export function stripeTimestampToIso(value) {

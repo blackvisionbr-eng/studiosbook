@@ -482,7 +482,10 @@ async function persistBillingState(uid, patch, options = {}) {
         user_email: merged.user_email || options.email || "",
         billing_status: access.status,
         access_allowed: options.forceAccess === true || access.allowed,
+        access_reason: options.forceAccess === true ? "admin_override" : access.reason,
         access_expires_at: Timestamp.fromDate(accessExpiresAt),
+        admin_access_override: merged.admin_access_override || "",
+        admin_override_until: merged.admin_override_until || "",
         trial_start_date: merged.trial_start_date || "",
         trial_end_date: merged.trial_end_date || "",
         current_period_end: merged.current_period_end || "",
@@ -1100,6 +1103,7 @@ async function applyStripePixPayment(uid, paymentIntent) {
         user_email: merged.user_email || account.subscription?.user_email || "",
         billing_status: access.status,
         access_allowed: access.allowed,
+        access_reason: access.reason,
         access_expires_at: Timestamp.fromDate(periodEnd),
         trial_start_date: merged.trial_start_date || "",
         trial_end_date: merged.trial_end_date || "",
@@ -1825,14 +1829,7 @@ app.post("/functions/admin-set-subscription-override", requireMasterAdmin, requi
     if (!new Set(["grant", "suspend", "automatic"]).has(action)) {
       return res.status(400).json({ error: "Ação de assinatura inválida." });
     }
-    if (uid === req.user.uid && action === "suspend") {
-      return res.status(400).json({ error: "O administrador mestre não pode suspender a própria conta." });
-    }
-
     const targetUser = await adminAuth.getUser(uid);
-    if (action === "suspend" && targetUser.customClaims?.platform_admin === true) {
-      return res.status(400).json({ error: "Contas administrativas não podem ter a assinatura suspensa." });
-    }
 
     const now = new Date();
     const current = await currentSubscription(uid);
@@ -1855,7 +1852,6 @@ app.post("/functions/admin-set-subscription-override", requireMasterAdmin, requi
     }
 
     const result = await persistBillingState(uid, patch, { email: patch.user_email });
-    if (action === "suspend") await adminAuth.revokeRefreshTokens(uid);
 
     await safeAdminAudit(req, `admin.subscription.${action}`, {
       target_uid: uid,
