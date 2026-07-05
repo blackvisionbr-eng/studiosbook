@@ -30,6 +30,10 @@ export function trialFromAccountCreation(creationTime, now = new Date()) {
 
 export function billingAccess(subscription = {}, now = new Date()) {
   const currentTime = new Date(now).getTime();
+  const adminOverride = String(subscription.admin_access_override || "").toLowerCase();
+  const adminOverrideUntil = new Date(subscription.admin_override_until || 0).getTime();
+  const adminOverrideUpdatedAt = new Date(subscription.admin_override_updated_at || 0).getTime();
+  const accessRevokedAt = new Date(subscription.access_revoked_at || 0).getTime();
   const status = String(subscription.status || "not_started").toLowerCase();
   const providerStatus = String(subscription.stripe_subscription_status || "").toLowerCase();
   const paymentStatus = String(subscription.last_payment_status || "").toLowerCase();
@@ -37,6 +41,24 @@ export function billingAccess(subscription = {}, now = new Date()) {
   const periodEnd = new Date(subscription.current_period_end || 0).getTime();
   const trialActive = Number.isFinite(trialEnd) && trialEnd > currentTime;
   const paidPeriodActive = Number.isFinite(periodEnd) && periodEnd > currentTime;
+
+  if (adminOverride === "suspended") {
+    return { allowed: false, reason: "admin_suspended", status: "suspended", daysLeft: 0 };
+  }
+
+  const adminOverrideIsCurrent =
+    adminOverride === "active" &&
+    Number.isFinite(adminOverrideUntil) &&
+    adminOverrideUntil > currentTime &&
+    (!Number.isFinite(accessRevokedAt) || !accessRevokedAt || adminOverrideUpdatedAt >= accessRevokedAt);
+  if (adminOverrideIsCurrent) {
+    return {
+      allowed: true,
+      reason: "admin_override",
+      status: "authorized",
+      daysLeft: Math.ceil((adminOverrideUntil - currentTime) / 86400000),
+    };
+  }
 
   const revokedStatuses = new Set(["refunded", "charged_back", "blocked", "revoked"]);
   const revokedStatus = [

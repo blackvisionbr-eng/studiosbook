@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   CreditCard,
+  Crown,
   Download,
   Eye,
   EyeOff,
@@ -55,6 +56,7 @@ export default function AdminApp() {
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [auditEvents, setAuditEvents] = useState([]);
+  const [adminRole, setAdminRole] = useState("");
 
   const loadOverview = async (currentUser = adminAuth.currentUser) => {
     if (!currentUser) return;
@@ -79,14 +81,16 @@ export default function AdminApp() {
       setError("");
       if (!currentUser) {
         setAuthorized(false);
+        setAdminRole("");
         setData(null);
         setAuthLoading(false);
         return;
       }
       try {
         await currentUser.getIdToken(true);
-        await invokeAdmin("admin-session", {}, currentUser);
+        const session = await invokeAdmin("admin-session", {}, currentUser);
         if (!active) return;
+        setAdminRole(session.admin?.role || "platform_admin");
         setAuthorized(true);
         await loadOverview(currentUser);
       } catch (sessionError) {
@@ -284,6 +288,53 @@ export default function AdminApp() {
     }
   };
 
+  const updateSubscriptionOverride = async (account, control) => {
+    const actionLabel = {
+      grant: `conceder acesso manual por ${control.days} dias`,
+      suspend: "suspender a assinatura imediatamente",
+      automatic: "devolver a assinatura ao controle automático",
+    }[control.action];
+    if (!window.confirm(`Deseja ${actionLabel} para ${account.email || account.uid}?`)) return;
+
+    setLoading(`subscription-control-${account.uid}`);
+    setError("");
+    try {
+      await invokeAdmin("admin-set-subscription-override", {
+        uid: account.uid,
+        action: control.action,
+        days: Number(control.days || 30),
+        reason: control.reason || "Ajuste realizado pelo painel mestre",
+      });
+      await loadOverview();
+      showNotice("Controle de assinatura atualizado.");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading("");
+    }
+  };
+
+  const updateStripeRenewal = async (account) => {
+    const cancelAtPeriodEnd = !Boolean(account.subscription?.cancel_at_period_end);
+    const verb = cancelAtPeriodEnd ? "cancelar a renovação ao fim do período pago" : "retomar a renovação automática";
+    if (!window.confirm(`Deseja ${verb} para ${account.email || account.uid}?`)) return;
+
+    setLoading(`renewal-${account.uid}`);
+    setError("");
+    try {
+      await invokeAdmin("admin-set-stripe-renewal", {
+        uid: account.uid,
+        cancel_at_period_end: cancelAtPeriodEnd,
+      });
+      await loadOverview();
+      showNotice(cancelAtPeriodEnd ? "Renovação programada para cancelamento." : "Renovação automática retomada.");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading("");
+    }
+  };
+
   const filteredUsers = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return data?.users || [];
@@ -306,7 +357,7 @@ export default function AdminApp() {
           <div className="flex min-w-0 items-center gap-2">
             <div className="hidden min-w-0 text-right sm:block">
               <p className="truncate text-xs font-bold text-zinc-900">{user.email}</p>
-              <p className="text-[11px] text-zinc-500">Administrador</p>
+              <p className="text-[11px] text-zinc-500">{adminRole === "master_admin" ? "Administrador mestre" : "Administrador"}</p>
             </div>
             <Button type="button" variant="ghost" size="icon" onClick={handleLogout} title="Sair" className="rounded-full">
               <LogOut className="h-4 w-4" />
@@ -366,6 +417,9 @@ export default function AdminApp() {
             onAccess={updateAccess}
             onPasswordReset={sendAccountPasswordReset}
             onSessions={revokeAccountSessions}
+            adminRole={adminRole}
+            onSubscriptionOverride={updateSubscriptionOverride}
+            onStripeRenewal={updateStripeRenewal}
           />
         )}
         {activeTab === "payments" && <Payments rows={data?.recent_payments || []} />}
@@ -455,6 +509,8 @@ function Overview({ data, loading }) {
   const cards = [
     ["Usuários", metrics.users || 0, Users],
     ["Acessos ativos", metrics.active_subscriptions || 0, UserCheck],
+    ["Acessos manuais", metrics.manual_access_users || 0, Crown],
+    ["Suspensões manuais", metrics.suspended_subscriptions || 0, UserX],
     ["Em teste", metrics.trialing_users || 0, Activity],
     ["Expirados", metrics.expired_users || 0, AlertTriangle],
     ["Pagamentos pendentes", metrics.pending_payments || 0, QrCode],
@@ -475,7 +531,7 @@ function Overview({ data, loading }) {
   );
 }
 
-function Accounts({ users, search, setSearch, loading, onSubscription, onAccess, onPasswordReset, onSessions }) {
+function Accounts({ users, search, setSearch, loading, onSubscription, onAccess, onPasswordReset, onSessions, adminRole, onSubscriptionOverride, onStripeRenewal }) {
   return (
     <Panel title="Contas e studios" subtitle="Controle de acesso e assinatura com confirmação explícita.">
       <label className="relative mt-5 block">
@@ -490,7 +546,7 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess,
           return (
             <article key={account.uid} className="grid min-w-0 gap-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 xl:grid-cols-[1.2fr_0.8fr_auto] xl:items-center">
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2"><h3 className="break-words font-black">{account.business_name || account.displayName || account.email || "Conta sem nome"}</h3><Status value={account.disabled ? "blocked" : "active"} />{account.platform_admin && <Status value="admin" />}</div>
+                <div className="flex flex-wrap items-center gap-2"><h3 className="break-words font-black">{account.business_name || account.displayName || account.email || "Conta sem nome"}</h3><Status value={account.disabled ? "blocked" : "active"} />{account.platform_admin && <Status value={account.platform_role === "master_admin" ? "master_admin" : "admin"} />}</div>
                 <p className="mt-2 break-all text-xs font-bold text-zinc-500">{account.email || account.uid}</p>
                 <p className="mt-1 text-xs text-zinc-500">Último login: {dateTime(account.lastSignInTime)}</p>
                 <p className="mt-1 text-xs text-zinc-500">Métodos: {providerLabels(account.providers)}</p>
@@ -498,7 +554,9 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess,
                   <LabeledStatus label="Acesso" value={account.access?.status || status} />
                   <LabeledStatus label="Assinatura Stripe" value={providerStatus} />
                   <LabeledStatus label="Pagamento" value={paymentStatus} />
+                  {account.subscription?.admin_access_override && <LabeledStatus label="Controle mestre" value={account.subscription.admin_access_override === "active" ? "manual_access" : "suspended"} />}
                 </div>
+                {account.subscription?.admin_access_override === "active" && <p className="mt-2 text-xs font-bold text-[#7f3158]">Acesso manual até {dateTime(account.subscription.admin_override_until)}</p>}
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <Mini label="Clientes" value={account.counts?.Client || 0} />
@@ -511,12 +569,60 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess,
                 <Button type="button" disabled={loading === `password-reset-${account.uid}` || !account.email} onClick={() => onPasswordReset(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3"><Mail className="mr-2 h-4 w-4" />Senha</Button>
                 <Button type="button" disabled={loading === `sessions-${account.uid}`} onClick={() => onSessions(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3"><LogOut className="mr-2 h-4 w-4" />Sessões</Button>
               </div>
+              {adminRole === "master_admin" && (
+                <SubscriptionControls
+                  account={account}
+                  loading={loading}
+                  onOverride={onSubscriptionOverride}
+                  onStripeRenewal={onStripeRenewal}
+                />
+              )}
             </article>
           );
         })}
         {!users.length && <p className="rounded-lg bg-zinc-50 p-8 text-center text-sm text-zinc-500">Nenhuma conta encontrada.</p>}
       </div>
     </Panel>
+  );
+}
+
+function SubscriptionControls({ account, loading, onOverride, onStripeRenewal }) {
+  const [action, setAction] = useState("grant");
+  const [days, setDays] = useState("30");
+  const [reason, setReason] = useState("");
+  const hasStripeSubscription = Boolean(account.subscription?.stripe_subscription_id);
+  const renewalCancelled = Boolean(account.subscription?.cancel_at_period_end);
+  const busy = loading === `subscription-control-${account.uid}` || loading === `renewal-${account.uid}`;
+
+  return (
+    <div className="grid min-w-0 gap-3 border-t border-zinc-200 pt-4 xl:col-span-3 xl:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_auto] xl:items-end">
+      <label className="grid min-w-0 gap-1.5 text-xs font-black text-zinc-600">
+        Controle da assinatura
+        <select value={action} onChange={(event) => setAction(event.target.value)} className="h-10 min-w-0 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-bold text-zinc-800 outline-none focus:border-[#a84d68]">
+          <option value="grant">Conceder acesso manual</option>
+          <option value="suspend">Suspender imediatamente</option>
+          <option value="automatic">Usar status automático</option>
+        </select>
+      </label>
+      <label className="grid min-w-0 gap-1.5 text-xs font-black text-zinc-600">
+        Dias
+        <Input type="number" min="1" max="3650" inputMode="numeric" value={days} onChange={(event) => setDays(event.target.value)} disabled={action !== "grant"} className="h-10 rounded-lg bg-white disabled:opacity-50" />
+      </label>
+      <label className="grid min-w-0 gap-1.5 text-xs font-black text-zinc-600">
+        Motivo da alteração
+        <Input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={200} placeholder="Ex.: cortesia ou suporte" className="h-10 min-w-0 rounded-lg bg-white" />
+      </label>
+      <div className="grid min-w-0 grid-cols-1 gap-2 min-[420px]:grid-cols-2 xl:grid-cols-1">
+        <Button type="button" disabled={busy || (action === "grant" && (!Number.isInteger(Number(days)) || Number(days) < 1 || Number(days) > 3650))} onClick={() => onOverride(account, { action, days, reason })} className="h-10 min-w-0 rounded-lg bg-brand-plum px-3 text-white">
+          <Crown className="mr-2 h-4 w-4 shrink-0" />Aplicar controle
+        </Button>
+        {hasStripeSubscription && (
+          <Button type="button" disabled={busy} onClick={() => onStripeRenewal(account)} variant="ghost" className="h-10 min-w-0 rounded-lg border bg-white px-3 text-xs">
+            <CreditCard className="mr-2 h-4 w-4 shrink-0" />{renewalCancelled ? "Retomar renovação" : "Cancelar renovação"}
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -623,6 +729,10 @@ function auditLabel(action) {
     "admin.payments.diagnostics": "Diagnóstico financeiro executado",
     "admin.data.exported": "Dados administrativos exportados",
     "admin.subscription.updated": "Assinatura sincronizada",
+    "admin.subscription.grant": "Acesso manual concedido",
+    "admin.subscription.suspend": "Assinatura suspensa pelo administrador mestre",
+    "admin.subscription.automatic": "Assinatura devolvida ao controle automático",
+    "admin.subscription.renewal_changed": "Renovação Stripe alterada",
     "admin.user.access_changed": "Acesso de conta alterado",
     "admin.user.password_reset_sent": "Redefinição de senha enviada",
     "admin.user.sessions_revoked": "Sessões de conta encerradas",
@@ -645,7 +755,7 @@ function Panel({ title, subtitle, children }) { return <section className="min-w
 function Mini({ label, value }) { return <div className="min-w-0 rounded-lg bg-white p-3 text-center"><p className="break-words text-sm font-black">{value}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-400">{label}</p></div>; }
 function Alert({ tone, children }) { return <div className={`min-w-0 break-words rounded-lg border px-4 py-3 text-sm font-bold ${tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{children}</div>; }
 function LabeledStatus({ label, value }) { return <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2 py-1 text-[10px] font-bold uppercase text-zinc-500">{label}<Status value={value} /></span>; }
-function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", admin: "Administrador", trialing: "Em teste", paused: "Pausado", past_due: "Em atraso", unpaid: "Não pago", incomplete: "Incompleto", incomplete_expired: "Expirado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", partially_refunded: "Parcialmente estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; const good = ["active", "approved", "trialing", "admin"].includes(key); const bad = ["rejected", "payment_failed", "past_due", "unpaid", "incomplete", "incomplete_expired", "expired", "blocked", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
+function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", manual_access: "Acesso manual", master_admin: "Administrador mestre", admin: "Administrador", authorized: "Autorizado", suspended: "Suspenso", trialing: "Em teste", paused: "Pausado", past_due: "Em atraso", unpaid: "Não pago", incomplete: "Incompleto", incomplete_expired: "Expirado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", partially_refunded: "Parcialmente estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; const good = ["active", "approved", "trialing", "admin", "master_admin", "authorized", "manual_access"].includes(key); const bad = ["rejected", "payment_failed", "past_due", "unpaid", "incomplete", "incomplete_expired", "expired", "blocked", "suspended", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
 function LoadingPanel() { return <div className="flex min-h-48 items-center justify-center rounded-lg border bg-white"><LoaderCircle className="h-6 w-6 animate-spin text-[#a84d68]" /></div>; }
 function AdminLoading() { return <div className="flex min-h-dvh items-center justify-center bg-brand-ivory"><div className="text-center"><img src="/brand/studiosbook-mark.svg" alt="" className="mx-auto h-12 w-12" /><LoaderCircle className="mx-auto mt-5 h-5 w-5 animate-spin text-[#a84d68]" /></div></div>; }
 function dateTime(value) { if (!value) return "-"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "-" : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date); }

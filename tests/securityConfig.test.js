@@ -47,6 +47,18 @@ test("critical admin account controls require role and recent authentication", (
   assert.match(backendServer, /linkDomain:\s*"studiosbook\.com\.br"/);
 });
 
+test("subscription overrides are restricted to the exact master administrator", () => {
+  for (const route of ["admin-set-subscription-override", "admin-set-stripe-renewal"]) {
+    assert.match(
+      backendServer,
+      new RegExp(`app\\.post\\(\"/functions/${route}\", requireMasterAdmin, requireRecentAdminAuth`)
+    );
+  }
+  assert.match(backendServer, /platformRole !== "master_admin"/);
+  assert.match(backendServer, /MASTER_ADMIN_EMAIL/);
+  assert.match(backendServer, /admin\.subscription\.renewal_changed/);
+});
+
 test("the app supports Google and email account flows", () => {
   assert.match(appAuthClient, /loginWithProvider\(providerName = "google"\)/);
   assert.match(appAuthClient, /loginWithEmail\(email, password\)/);

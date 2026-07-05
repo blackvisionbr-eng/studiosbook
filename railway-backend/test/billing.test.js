@@ -105,6 +105,65 @@ test("persistent refund revocation cannot be overwritten by a stale approved inv
   assert.equal(access.reason, "refunded");
 });
 
+test("a current master admin override grants time-limited access", () => {
+  const access = billingAccess(
+    {
+      admin_access_override: "active",
+      admin_override_until: "2026-07-09T12:00:00.000Z",
+      admin_override_updated_at: "2026-07-01T12:00:00.000Z",
+      status: "expired",
+    },
+    new Date("2026-07-05T12:00:00.000Z")
+  );
+  assert.equal(access.allowed, true);
+  assert.equal(access.reason, "admin_override");
+  assert.equal(access.daysLeft, 4);
+});
+
+test("a master admin suspension blocks an otherwise paid subscription", () => {
+  const access = billingAccess(
+    {
+      admin_access_override: "suspended",
+      stripe_subscription_status: "active",
+      current_period_end: "2026-08-05T12:00:00.000Z",
+    },
+    new Date("2026-07-05T12:00:00.000Z")
+  );
+  assert.equal(access.allowed, false);
+  assert.equal(access.reason, "admin_suspended");
+  assert.equal(access.status, "suspended");
+});
+
+test("a refund revocation wins over an older master admin grant", () => {
+  const access = billingAccess(
+    {
+      admin_access_override: "active",
+      admin_override_until: "2026-08-05T12:00:00.000Z",
+      admin_override_updated_at: "2026-07-01T12:00:00.000Z",
+      access_revoked_at: "2026-07-03T12:00:00.000Z",
+      access_revoked_reason: "refunded",
+    },
+    new Date("2026-07-05T12:00:00.000Z")
+  );
+  assert.equal(access.allowed, false);
+  assert.equal(access.reason, "refunded");
+});
+
+test("a new explicit master grant can restore access after a refund", () => {
+  const access = billingAccess(
+    {
+      admin_access_override: "active",
+      admin_override_until: "2026-08-05T12:00:00.000Z",
+      admin_override_updated_at: "2026-07-04T12:00:00.000Z",
+      access_revoked_at: "2026-07-03T12:00:00.000Z",
+      access_revoked_reason: "refunded",
+    },
+    new Date("2026-07-05T12:00:00.000Z")
+  );
+  assert.equal(access.allowed, true);
+  assert.equal(access.reason, "admin_override");
+});
+
 test("maps Stripe invoice states to local payment states", () => {
   assert.equal(stripeInvoicePaymentStatus({ status: "paid" }), "approved");
   assert.equal(stripeInvoicePaymentStatus({ status: "open" }), "pending");

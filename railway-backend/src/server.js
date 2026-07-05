@@ -30,6 +30,9 @@ const app = express();
 const PRODUCT_NAME = "StudiosBook";
 const PLAN_NAME = "StudiosBook Intermediário";
 const MONTHLY_AMOUNT = 26.9;
+const MASTER_ADMIN_EMAIL = String(process.env.MASTER_ADMIN_EMAIL || "getblackvision.br@gmail.com")
+  .trim()
+  .toLowerCase();
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "blackvision-27f1c";
 const FIREBASE_WEB_API_KEY =
   process.env.FIREBASE_WEB_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs";
@@ -285,6 +288,7 @@ async function requireFirebaseUser(req, res, next) {
       name: payload.name || payload.email || "Profissional",
       emailVerified: payload.email_verified === true,
       platformAdmin: payload.platform_admin === true,
+      platformRole: String(payload.platform_role || ""),
       authTime: Number(payload.auth_time || 0),
     };
     return next();
@@ -292,6 +296,21 @@ async function requireFirebaseUser(req, res, next) {
     console.error(error);
     return res.status(401).json({ error: "Sessão inválida ou expirada." });
   }
+}
+
+function requireMasterAdmin(req, res, next) {
+  requireFirebaseUser(req, res, () => {
+    const email = String(req.user?.email || "").trim().toLowerCase();
+    if (
+      !req.user?.platformAdmin ||
+      req.user?.platformRole !== "master_admin" ||
+      !req.user?.emailVerified ||
+      email !== MASTER_ADMIN_EMAIL
+    ) {
+      return res.status(403).json({ error: "Ação restrita ao administrador mestre do StudiosBook." });
+    }
+    return next();
+  });
 }
 
 function requirePlatformAdmin(req, res, next) {
@@ -449,7 +468,7 @@ async function persistBillingState(uid, patch, options = {}) {
 
     const access = billingAccess(merged);
     merged.status = access.status;
-    const expiryCandidates = [merged.current_period_end, merged.trial_end_date]
+    const expiryCandidates = [merged.current_period_end, merged.trial_end_date, merged.admin_override_until]
       .map((value) => new Date(value || 0))
       .filter((date) => Number.isFinite(date.getTime()));
     const accessExpiresAt = expiryCandidates.length
@@ -588,6 +607,7 @@ async function listAuthUsers() {
         lastSignInTime: user.metadata?.lastSignInTime || "",
         providers: user.providerData?.map((provider) => provider.providerId) || [],
         platformAdmin: user.customClaims?.platform_admin === true,
+        platformRole: String(user.customClaims?.platform_role || ""),
       }))
     );
     pageToken = result.pageToken;
@@ -1594,7 +1614,11 @@ app.post("/functions/admin-session", requirePlatformAdmin, adminRateLimit, async
     admin: {
       uid: req.user.uid,
       email: req.user.email,
-      role: "platform_admin",
+      role:
+        req.user.platformRole === "master_admin" &&
+        String(req.user.email || "").toLowerCase() === MASTER_ADMIN_EMAIL
+          ? "master_admin"
+          : "platform_admin",
     },
   });
 });
@@ -1626,6 +1650,7 @@ app.post("/functions/admin-overview", requirePlatformAdmin, adminRateLimit, asyn
         displayName: authUser.displayName || workspace.profile?.owner_name || "",
         disabled: Boolean(authUser.disabled),
         platform_admin: Boolean(authUser.platformAdmin),
+        platform_role: authUser.platformRole || "",
         creationTime: authUser.creationTime || "",
         lastSignInTime: authUser.lastSignInTime || "",
         providers: authUser.providers || [],
@@ -1656,6 +1681,8 @@ app.post("/functions/admin-overview", requirePlatformAdmin, adminRateLimit, asyn
         acc.records += user.counts.ServiceRecord || 0;
         acc.appointments += user.counts.Appointment || 0;
         if (user.access?.allowed) acc.active_subscriptions += 1;
+        if (user.subscription?.admin_access_override === "active") acc.manual_access_users += 1;
+        if (user.subscription?.admin_access_override === "suspended") acc.suspended_subscriptions += 1;
         if (user.subscription?.status === "trialing") acc.trialing_users += 1;
         if (user.subscription?.status === "expired") acc.expired_users += 1;
         if (user.latest_payment?.status === "pending") acc.pending_payments += 1;
@@ -1668,6 +1695,8 @@ app.post("/functions/admin-overview", requirePlatformAdmin, adminRateLimit, asyn
         records: 0,
         appointments: 0,
         active_subscriptions: 0,
+        manual_access_users: 0,
+        suspended_subscriptions: 0,
         trialing_users: 0,
         expired_users: 0,
         pending_payments: 0,
@@ -1780,6 +1809,111 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, requireRe
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Erro ao atualizar assinatura.", request_id: req.requestId });
+  }
+});
+
+app.post("/functions/admin-set-subscription-override", requireMasterAdmin, requireRecentAdminAuth, adminRateLimit, async (req, res) => {
+  if (!requireFirebaseAdminSdk(res)) return;
+
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    const action = String(req.body?.action || "").trim().toLowerCase();
+    const reason = String(req.body?.reason || "Ajuste administrativo").trim().slice(0, 200);
+    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(uid)) {
+      return res.status(400).json({ error: "UID inválido." });
+    }
+    if (!new Set(["grant", "suspend", "automatic"]).has(action)) {
+      return res.status(400).json({ error: "Ação de assinatura inválida." });
+    }
+    if (uid === req.user.uid && action === "suspend") {
+      return res.status(400).json({ error: "O administrador mestre não pode suspender a própria conta." });
+    }
+
+    const targetUser = await adminAuth.getUser(uid);
+    if (action === "suspend" && targetUser.customClaims?.platform_admin === true) {
+      return res.status(400).json({ error: "Contas administrativas não podem ter a assinatura suspensa." });
+    }
+
+    const now = new Date();
+    const current = await currentSubscription(uid);
+    const patch = {
+      user_email: targetUser.email || current.data?.user_email || "",
+      admin_access_override: action === "grant" ? "active" : action === "suspend" ? "suspended" : "",
+      admin_override_until: "",
+      admin_override_reason: action === "automatic" ? "" : reason,
+      admin_override_updated_at: now.toISOString(),
+      admin_override_updated_by: req.user.email,
+    };
+
+    let grantedDays = 0;
+    if (action === "grant") {
+      grantedDays = Number(req.body?.days || 30);
+      if (!Number.isInteger(grantedDays) || grantedDays < 1 || grantedDays > 3650) {
+        return res.status(400).json({ error: "Informe um período entre 1 e 3650 dias." });
+      }
+      patch.admin_override_until = addDays(now, grantedDays).toISOString();
+    }
+
+    const result = await persistBillingState(uid, patch, { email: patch.user_email });
+    if (action === "suspend") await adminAuth.revokeRefreshTokens(uid);
+
+    await safeAdminAudit(req, `admin.subscription.${action}`, {
+      target_uid: uid,
+      metadata: {
+        reason: patch.admin_override_reason,
+        days: grantedDays,
+        override_until: patch.admin_override_until,
+      },
+    });
+
+    res.json({ success: true, action, ...result });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erro ao alterar o acesso da assinatura.", request_id: req.requestId });
+  }
+});
+
+app.post("/functions/admin-set-stripe-renewal", requireMasterAdmin, requireRecentAdminAuth, adminRateLimit, async (req, res) => {
+  if (!requireFirebaseAdminSdk(res)) return;
+
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    if (typeof req.body?.cancel_at_period_end !== "boolean") {
+      return res.status(400).json({ error: "Informe uma opção válida para a renovação." });
+    }
+    const cancelAtPeriodEnd = req.body.cancel_at_period_end;
+    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(uid)) {
+      return res.status(400).json({ error: "UID inválido." });
+    }
+
+    const current = await currentSubscription(uid);
+    const subscriptionId = String(current.data?.stripe_subscription_id || "").trim();
+    if (!subscriptionId) {
+      return res.status(400).json({ error: "Esta conta não possui assinatura recorrente na Stripe." });
+    }
+
+    const existing = await stripeClient().subscriptions.retrieve(subscriptionId);
+    const ownerUid = stripeObjectUid(existing);
+    if (ownerUid && ownerUid !== uid) {
+      return res.status(409).json({ error: "A assinatura não pertence a esta conta." });
+    }
+    assertStripeSubscriptionPlan(existing);
+
+    const updated = await stripeClient().subscriptions.update(subscriptionId, {
+      cancel_at_period_end: cancelAtPeriodEnd,
+    });
+    const result = await applyStripeSubscription(uid, updated);
+
+    await safeAdminAudit(req, "admin.subscription.renewal_changed", {
+      target_uid: uid,
+      metadata: { subscription_id: subscriptionId, cancel_at_period_end: cancelAtPeriodEnd },
+    });
+
+    res.json({ success: true, cancel_at_period_end: cancelAtPeriodEnd, ...result });
+  } catch (error) {
+    console.error(error);
+    const status = error?.statusCode && error.statusCode < 500 ? 422 : 500;
+    res.status(status).json({ error: "Erro ao alterar a renovação da assinatura.", request_id: req.requestId });
   }
 });
 
