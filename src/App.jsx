@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -2760,9 +2760,29 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
 }
 
 function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, billingLocked }) {
+  const navigationRef = useRef(null);
+  const tabRefs = useRef(new Map());
   const accountTabs = billingLocked
     ? tabs.filter((tab) => ["billing", "security", "privacy"].includes(tab.id))
     : tabs;
+
+  useEffect(() => {
+    const navigation = navigationRef.current;
+    const selectedTab = tabRefs.current.get(activeTab);
+    if (!navigation || !selectedTab) return;
+    const navigationRect = navigation.getBoundingClientRect();
+    const selectedRect = selectedTab.getBoundingClientRect();
+    const maxScroll = Math.max(0, navigation.scrollWidth - navigation.clientWidth);
+    const targetLeft = Math.min(
+      maxScroll,
+      Math.max(
+        0,
+        navigation.scrollLeft + selectedRect.left - navigationRect.left -
+          (navigation.clientWidth - selectedRect.width) / 2
+      )
+    );
+    navigation.scrollTo({ left: targetLeft, behavior: "smooth" });
+  }, [activeTab, accountTabs.length]);
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/70 bg-white/95 sm:bg-white/80 sm:backdrop-blur-xl">
@@ -2778,14 +2798,19 @@ function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, billingLo
           </Button>
         </div>
       </div>
-      <nav className="mx-auto flex max-w-7xl gap-2 overflow-x-auto overscroll-x-contain px-3 pb-3 sm:px-6 sm:pb-4 lg:px-8">
+      <nav ref={navigationRef} className="mx-auto flex max-w-7xl scroll-smooth gap-2 overflow-x-auto overscroll-x-contain px-3 pb-3 sm:px-6 sm:pb-4 lg:px-8">
         {accountTabs.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
           return (
             <button
               key={tab.id}
+              ref={(node) => {
+                if (node) tabRefs.current.set(tab.id, node);
+                else tabRefs.current.delete(tab.id);
+              }}
               onClick={() => setActiveTab(tab.id)}
+              aria-current={active ? "page" : undefined}
               className={`inline-flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-black transition ${
                 active
                   ? "bg-zinc-950 text-white shadow-lg"

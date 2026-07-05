@@ -4,6 +4,10 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
   CreditCard,
   Crown,
   Download,
@@ -44,6 +48,8 @@ const tabs = [
   { id: "system", label: "Sistema", icon: Server },
   { id: "security", label: "Segurança", icon: ShieldCheck },
 ];
+
+const ACCOUNT_PAGE_SIZES = [20, 50, 100];
 
 export default function AdminApp() {
   const [user, setUser] = useState(null);
@@ -598,56 +604,104 @@ function Overview({ data, loading }) {
 }
 
 function Accounts({ users, search, setSearch, loading, onSubscription, onAccess, onPasswordReset, onSessions, adminRole, onSubscriptionOverride, onStripeRenewal }) {
+  const [expandedUid, setExpandedUid] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [pageSize, setPageSize] = useState(20);
+  const [page, setPage] = useState(1);
+  const filteredAccounts = useMemo(() => users.filter((account) => {
+    if (statusFilter === "all") return true;
+    if (statusFilter === "blocked") return account.disabled;
+    if (statusFilter === "manual") return account.subscription?.admin_access_override === "active";
+    if (statusFilter === "suspended") return account.subscription?.admin_access_override === "suspended";
+    return String(account.access?.status || account.subscription?.status || "not_started") === statusFilter;
+  }), [statusFilter, users]);
+  const pageCount = Math.max(1, Math.ceil(filteredAccounts.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageUsers = filteredAccounts.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+    setExpandedUid("");
+  }, [search, statusFilter, pageSize]);
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+
   return (
-    <Panel title="Contas e studios" subtitle="Controle de acesso e assinatura com confirmação explícita.">
-      <label className="relative mt-5 block">
-        <Search className="absolute left-3 top-3.5 h-4 w-4 text-zinc-400" />
-        <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nome, e-mail ou UID" className="h-11 rounded-lg pl-10" />
-      </label>
-      <div className="mt-4 grid gap-3">
-        {users.map((account) => {
+    <Panel title="Contas e studios" subtitle="Lista compacta com paginação e controles sob demanda.">
+      <div className="mt-5 grid min-w-0 gap-2 md:grid-cols-[minmax(0,1fr)_13rem_8rem]">
+        <label className="relative block min-w-0">
+          <Search className="absolute left-3 top-3.5 h-4 w-4 text-zinc-400" />
+          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nome, e-mail ou UID" className="h-11 rounded-lg pl-10" />
+        </label>
+        <label className="sr-only" htmlFor="account-status-filter">Filtrar status</label>
+        <select id="account-status-filter" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 min-w-0 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-bold text-zinc-700 outline-none focus:border-[#a84d68]">
+          <option value="all">Todos os status</option>
+          <option value="active">Ativos</option>
+          <option value="trialing">Em teste</option>
+          <option value="manual">Acesso manual</option>
+          <option value="suspended">Suspensos</option>
+          <option value="expired">Expirados</option>
+          <option value="refunded">Estornados</option>
+          <option value="blocked">Contas bloqueadas</option>
+        </select>
+        <label className="sr-only" htmlFor="account-page-size">Itens por página</label>
+        <select id="account-page-size" value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} className="h-11 min-w-0 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-bold text-zinc-700 outline-none focus:border-[#a84d68]">
+          {ACCOUNT_PAGE_SIZES.map((size) => <option key={size} value={size}>{size} por página</option>)}
+        </select>
+      </div>
+
+      <div className="mt-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs font-bold text-zinc-500">{filteredAccounts.length} conta(s) encontrada(s)</p>
+        <p className="text-xs text-zinc-400">Exibindo {(currentPage - 1) * pageSize + (filteredAccounts.length ? 1 : 0)}–{Math.min(currentPage * pageSize, filteredAccounts.length)}</p>
+      </div>
+
+      <div className="mt-3 grid gap-2">
+        {pageUsers.map((account) => {
           const status = account.subscription?.status || "not_started";
           const providerStatus = account.subscription?.stripe_subscription_status || "not_started";
           const paymentStatus = account.subscription?.last_payment_status || account.latest_payment?.status || "not_started";
+          const expanded = expandedUid === account.uid;
           return (
-            <article key={account.uid} className="grid min-w-0 gap-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 xl:grid-cols-[1.2fr_0.8fr_auto] xl:items-center">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2"><h3 className="break-words font-black">{account.business_name || account.displayName || account.email || "Conta sem nome"}</h3><Status value={account.disabled ? "blocked" : "active"} />{account.platform_admin && <Status value={account.platform_role === "master_admin" ? "master_admin" : "admin"} />}</div>
-                <p className="mt-2 break-all text-xs font-bold text-zinc-500">{account.email || account.uid}</p>
-                <p className="mt-1 text-xs text-zinc-500">Último login: {dateTime(account.lastSignInTime)}</p>
-                <p className="mt-1 text-xs text-zinc-500">Métodos: {providerLabels(account.providers)}</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <LabeledStatus label="Acesso" value={account.access?.status || status} />
-                  <LabeledStatus label="Assinatura Stripe" value={providerStatus} />
-                  <LabeledStatus label="Pagamento" value={paymentStatus} />
-                  {account.subscription?.admin_access_override && <LabeledStatus label="Controle mestre" value={account.subscription.admin_access_override === "active" ? "manual_access" : "suspended"} />}
+            <article key={account.uid} className="min-w-0 overflow-hidden rounded-lg border border-zinc-200 bg-white">
+              <div className="grid min-w-0 gap-3 px-3 py-3 sm:px-4 lg:grid-cols-[minmax(0,1.5fr)_auto_auto_auto] lg:items-center">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2"><h3 className="truncate font-black">{account.business_name || account.displayName || account.email || "Conta sem nome"}</h3>{account.platform_admin && <Status value={account.platform_role === "master_admin" ? "master_admin" : "admin"} />}</div>
+                  <p className="mt-1 truncate text-xs font-bold text-zinc-500" title={account.email || account.uid}>{account.email || account.uid}</p>
                 </div>
-                {account.subscription?.admin_access_override === "active" && <p className="mt-2 text-xs font-bold text-[#7f3158]">Acesso manual até {dateTime(account.subscription.admin_override_until)}</p>}
+                <div className="flex min-w-0 flex-wrap items-center gap-2 lg:justify-end"><Status value={account.disabled ? "blocked" : account.access?.status || status} />{account.subscription?.admin_access_override && <Status value={account.subscription.admin_access_override === "active" ? "manual_access" : "suspended"} />}</div>
+                <p className="text-xs font-bold text-zinc-500 lg:text-right">{account.counts?.Client || 0} clientes · {account.counts?.Appointment || 0} agenda</p>
+                <Button type="button" onClick={() => setExpandedUid(expanded ? "" : account.uid)} variant="ghost" aria-expanded={expanded} className="h-9 w-full rounded-lg border bg-white px-3 lg:w-auto">{expanded ? <ChevronUp className="mr-2 h-4 w-4" /> : <ChevronDown className="mr-2 h-4 w-4" />}{expanded ? "Fechar" : "Detalhes"}</Button>
               </div>
-              <div className="grid grid-cols-3 gap-2">
-                <Mini label="Clientes" value={account.counts?.Client || 0} />
-                <Mini label="Atend." value={account.counts?.ServiceRecord || 0} />
-                <Mini label="Agenda" value={account.counts?.Appointment || 0} />
-              </div>
-              <div className="grid grid-cols-2 gap-2 xl:w-72">
-                <Button type="button" disabled={loading === `subscription-${account.uid}`} onClick={() => onSubscription(account)} className="h-10 rounded-lg bg-brand-plum px-3 text-white"><RefreshCw className={`mr-2 h-4 w-4 ${loading === `subscription-${account.uid}` ? "animate-spin" : ""}`} />Sincronizar</Button>
-                <Button type="button" disabled={loading === `access-${account.uid}`} onClick={() => onAccess(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3">{account.disabled ? <UserCheck className="mr-2 h-4 w-4" /> : <UserX className="mr-2 h-4 w-4" />}{account.disabled ? "Liberar" : "Bloquear"}</Button>
-                <Button type="button" disabled={loading === `password-reset-${account.uid}` || !account.email} onClick={() => onPasswordReset(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3"><Mail className="mr-2 h-4 w-4" />Senha</Button>
-                <Button type="button" disabled={loading === `sessions-${account.uid}`} onClick={() => onSessions(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3"><LogOut className="mr-2 h-4 w-4" />Sessões</Button>
-              </div>
-              {adminRole === "master_admin" && (
-                <SubscriptionControls
-                  account={account}
-                  loading={loading}
-                  onOverride={onSubscriptionOverride}
-                  onStripeRenewal={onStripeRenewal}
-                />
+              {expanded && (
+                <div className="grid min-w-0 gap-4 border-t border-zinc-200 bg-zinc-50 p-3 sm:p-4 xl:grid-cols-[1.1fr_0.9fr_auto] xl:items-start">
+                  <div className="min-w-0 text-xs text-zinc-500"><p>Último login: {dateTime(account.lastSignInTime)}</p><p className="mt-1">Métodos: {providerLabels(account.providers)}</p><p className="mt-1 break-all">UID: {account.uid}</p>{account.subscription?.admin_access_override === "active" && <p className="mt-2 font-bold text-[#7f3158]">Acesso manual até {dateTime(account.subscription.admin_override_until)}</p>}</div>
+                  <div className="flex min-w-0 flex-wrap gap-2"><LabeledStatus label="Acesso" value={account.access?.status || status} /><LabeledStatus label="Stripe" value={providerStatus} /><LabeledStatus label="Pagamento" value={paymentStatus} /></div>
+                  <div className="grid grid-cols-2 gap-2 xl:w-72">
+                    <Button type="button" disabled={loading === `subscription-${account.uid}`} onClick={() => onSubscription(account)} className="h-10 rounded-lg bg-brand-plum px-3 text-white"><RefreshCw className={`mr-2 h-4 w-4 ${loading === `subscription-${account.uid}` ? "animate-spin" : ""}`} />Sincronizar</Button>
+                    <Button type="button" disabled={loading === `access-${account.uid}`} onClick={() => onAccess(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3">{account.disabled ? <UserCheck className="mr-2 h-4 w-4" /> : <UserX className="mr-2 h-4 w-4" />}{account.disabled ? "Liberar" : "Bloquear"}</Button>
+                    <Button type="button" disabled={loading === `password-reset-${account.uid}` || !account.email} onClick={() => onPasswordReset(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3"><Mail className="mr-2 h-4 w-4" />Senha</Button>
+                    <Button type="button" disabled={loading === `sessions-${account.uid}`} onClick={() => onSessions(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3"><LogOut className="mr-2 h-4 w-4" />Sessões</Button>
+                  </div>
+                  {adminRole === "master_admin" && <SubscriptionControls account={account} loading={loading} onOverride={onSubscriptionOverride} onStripeRenewal={onStripeRenewal} />}
+                </div>
               )}
             </article>
           );
         })}
-        {!users.length && <p className="rounded-lg bg-zinc-50 p-8 text-center text-sm text-zinc-500">Nenhuma conta encontrada.</p>}
+        {!filteredAccounts.length && <p className="rounded-lg bg-zinc-50 p-8 text-center text-sm text-zinc-500">Nenhuma conta encontrada.</p>}
       </div>
+
+      {filteredAccounts.length > 0 && (
+        <div className="mt-4 flex min-w-0 flex-col gap-3 border-t border-zinc-100 pt-4 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
+          <p className="text-center text-xs font-bold text-zinc-500 min-[420px]:text-left">Página {currentPage} de {pageCount}</p>
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" variant="ghost" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="h-10 rounded-lg border bg-white"><ChevronLeft className="mr-1 h-4 w-4" />Anterior</Button>
+            <Button type="button" variant="ghost" disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="h-10 rounded-lg border bg-white">Próxima<ChevronRight className="ml-1 h-4 w-4" /></Button>
+          </div>
+        </div>
+      )}
     </Panel>
   );
 }

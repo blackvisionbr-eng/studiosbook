@@ -86,6 +86,22 @@ test("master subscription controls expose confirmed states and recover expired a
   assert.match(adminAuthClient, /reauthenticateWithCredential/);
 });
 
+test("admin accounts are paginated and details render on demand", () => {
+  assert.match(adminSource, /ACCOUNT_PAGE_SIZES/);
+  assert.match(adminSource, /pageUsers/);
+  assert.match(adminSource, /expandedUid/);
+  assert.match(adminSource, /Estado realmente aplicado/);
+  assert.match(adminSource, /Página \{currentPage\} de \{pageCount\}/);
+});
+
+test("the operations header centers the selected horizontal tab", () => {
+  assert.match(appSource, /navigationRef/);
+  assert.match(appSource, /selectedTab\.getBoundingClientRect\(\)/);
+  assert.match(appSource, /navigation\.scrollWidth - navigation\.clientWidth/);
+  assert.match(appSource, /navigation\.scrollTo\(\{ left: targetLeft, behavior: "smooth" \}\)/);
+  assert.match(appSource, /aria-current=\{active \? "page"/);
+});
+
 test("the app supports Google and email account flows", () => {
   assert.match(appAuthClient, /loginWithProvider\(providerName = "google"\)/);
   assert.match(appAuthClient, /loginWithEmail\(email, password\)/);
