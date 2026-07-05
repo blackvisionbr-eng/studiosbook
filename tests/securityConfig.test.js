@@ -46,6 +46,8 @@ test("the app receives billing access changes in real time", () => {
   assert.match(appAuthClient, /subscribeBillingAccess/);
   assert.match(appSource, /base44\.billing\.subscribeAccess/);
   assert.match(appSource, /billingAccessFromRoot/);
+  assert.match(appSource, /Acesso liberado pelo painel mestre/);
+  assert.match(appSource, /Cobrança recorrente Stripe/);
 });
 
 test("critical admin account controls require role and recent authentication", () => {

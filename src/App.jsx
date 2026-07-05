@@ -3819,6 +3819,8 @@ function BillingView({
   const supportHref = supportWhatsAppLink("Oi, preciso de suporte para ativar minha assinatura do StudiosBook.");
   const hasStripeCustomer = Boolean(billingSubscription?.stripe_customer_id);
   const pixAvailable = billingCapabilities?.pix === true;
+  const manualAccessActive = billingAccess?.allowed === true && billingAccess?.reason === "admin_override";
+  const manualAccessUntil = billingAccess?.expiresAt || billingSubscription?.admin_override_until;
 
   return (
     <div className="grid gap-6">
@@ -3875,6 +3877,12 @@ function BillingView({
           </div>
 
           <div className="min-w-0 rounded-2xl border border-white/10 bg-white/10 p-4 sm:rounded-[1.75rem] sm:p-5 sm:backdrop-blur">
+            {manualAccessActive && (
+              <div className="mb-4 rounded-xl border border-emerald-300/25 bg-emerald-400/15 p-3 text-sm leading-6 text-emerald-50">
+                <p className="font-black">Acesso liberado pelo painel mestre</p>
+                <p>Válido até {formatDateTime(manualAccessUntil)}. Um eventual status “Cancelada” abaixo se refere somente à cobrança anterior da Stripe.</p>
+              </div>
+            )}
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-white/55">Status da conta</p>
@@ -3885,7 +3893,8 @@ function BillingView({
             <div className="mt-5 grid gap-3">
               <MiniMetric label="Profissional" value={user?.email || "-"} />
               <MiniMetric label="Plano" value={billingSubscription?.plan_name || "StudiosBook Intermediário"} />
-              <MiniMetric label="Assinatura Stripe" value={billingStatusLabel(providerSubscriptionStatus)} />
+              <MiniMetric label="Acesso ao aplicativo" value={billingStatusLabel(status)} />
+              <MiniMetric label="Cobrança recorrente Stripe" value={billingStatusLabel(providerSubscriptionStatus)} />
               <MiniMetric label="Último pagamento" value={billingStatusLabel(recurringPaymentStatus)} />
               <MiniMetric label="Teste grátis" value={trialEnd ? `${trialDaysLeft} dia(s) restantes` : "7 dias desde o cadastro"} />
               <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
