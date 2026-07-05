@@ -62,6 +62,15 @@ export async function changeAdminPassword(currentPassword, newPassword) {
   await user.getIdToken(true);
 }
 
+export async function reauthenticateAdmin(currentPassword) {
+  const user = adminAuth.currentUser;
+  if (!user?.email) throw new Error("Sessão administrativa não encontrada.");
+  const credential = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, credential);
+  await user.getIdToken(true);
+  return user;
+}
+
 export async function invokeAdmin(name, data = {}, user = adminAuth.currentUser) {
   if (!user) throw new Error("Sessão administrativa não encontrada.");
   const token = await user.getIdToken();

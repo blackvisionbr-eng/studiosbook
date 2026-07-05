@@ -31,6 +31,7 @@ import {
   adminAuth,
   changeAdminPassword,
   invokeAdmin,
+  reauthenticateAdmin,
   sendAdminPasswordResetEmail,
   signInAdmin,
   signOutAdmin,
@@ -57,6 +58,8 @@ export default function AdminApp() {
   const [search, setSearch] = useState("");
   const [auditEvents, setAuditEvents] = useState([]);
   const [adminRole, setAdminRole] = useState("");
+  const [reauthRequest, setReauthRequest] = useState(null);
+  const [reauthError, setReauthError] = useState("");
 
   const loadOverview = async (currentUser = adminAuth.currentUser) => {
     if (!currentUser) return;
@@ -288,28 +291,59 @@ export default function AdminApp() {
     }
   };
 
-  const updateSubscriptionOverride = async (account, control) => {
+  const updateSubscriptionOverride = async (account, control, options = {}) => {
     const actionLabel = {
       grant: `conceder acesso manual por ${control.days} dias`,
       suspend: "suspender a assinatura imediatamente",
       automatic: "devolver a assinatura ao controle automático",
     }[control.action];
-    if (!window.confirm(`Deseja ${actionLabel} para ${account.email || account.uid}?`)) return;
+    if (!options.skipConfirmation && !window.confirm(`Deseja ${actionLabel} para ${account.email || account.uid}?`)) return;
 
     setLoading(`subscription-control-${account.uid}`);
     setError("");
     try {
-      await invokeAdmin("admin-set-subscription-override", {
+      const result = await invokeAdmin("admin-set-subscription-override", {
         uid: account.uid,
         action: control.action,
         days: Number(control.days || 30),
         reason: control.reason || "Ajuste realizado pelo painel mestre",
       });
+      if (result?.action !== control.action) throw new Error("O servidor não confirmou a alteração solicitada.");
       await loadOverview();
-      showNotice("Controle de assinatura atualizado.");
+      const successMessage = {
+        grant: `Acesso autorizado até ${dateTime(result.subscription?.admin_override_until)}.`,
+        suspend: "Acesso suspenso imediatamente.",
+        automatic: `Controle automático aplicado: ${statusText(result.access?.status)}.`,
+      }[control.action];
+      showNotice(successMessage || "Controle de assinatura atualizado.");
     } catch (requestError) {
+      if (requestError.payload?.code === "recent_auth_required") {
+        setReauthError("");
+        setReauthRequest({ type: "subscription", account, control });
+        return;
+      }
       setError(requestError.message);
     } finally {
+      setLoading("");
+    }
+  };
+
+  const handleReauthentication = async (event) => {
+    event.preventDefault();
+    const password = String(new FormData(event.currentTarget).get("password") || "");
+    const pending = reauthRequest;
+    if (!pending) return;
+    setLoading("reauth");
+    setReauthError("");
+    try {
+      await reauthenticateAdmin(password);
+      setReauthRequest(null);
+      setLoading("");
+      if (pending.type === "subscription") {
+        await updateSubscriptionOverride(pending.account, pending.control, { skipConfirmation: true });
+      }
+    } catch {
+      setReauthError("Senha administrativa incorreta. Tente novamente.");
       setLoading("");
     }
   };
@@ -438,6 +472,38 @@ export default function AdminApp() {
           />
         )}
       </main>
+      {reauthRequest && (
+        <AdminReauthDialog
+          loading={loading === "reauth"}
+          error={reauthError}
+          onSubmit={handleReauthentication}
+          onCancel={() => {
+            setReauthRequest(null);
+            setReauthError("");
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AdminReauthDialog({ loading, error, onSubmit, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-zinc-950/60 p-3 sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="reauth-title">
+      <form onSubmit={onSubmit} className="w-full max-w-md rounded-lg bg-white p-5 shadow-2xl sm:p-6">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-rose-50 text-[#a84d68]"><KeyRound className="h-5 w-5" /></div>
+        <h2 id="reauth-title" className="mt-4 text-xl font-black">Confirme sua identidade</h2>
+        <p className="mt-2 text-sm leading-6 text-zinc-500">Por segurança, confirme a senha administrativa. A alteração pendente será aplicada automaticamente.</p>
+        {error && <div className="mt-4"><Alert tone="error">{error}</Alert></div>}
+        <label className="mt-5 grid gap-2 text-sm font-bold text-zinc-700">
+          Senha administrativa
+          <Input name="password" type="password" autoComplete="current-password" required autoFocus className="h-12 rounded-lg" />
+        </label>
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={loading} className="h-11 rounded-lg border">Cancelar</Button>
+          <Button type="submit" disabled={loading} className="h-11 rounded-lg bg-brand-plum text-white">{loading ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}{loading ? "Confirmando..." : "Confirmar e aplicar"}</Button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -587,35 +653,31 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess,
 }
 
 function SubscriptionControls({ account, loading, onOverride, onStripeRenewal }) {
-  const [action, setAction] = useState("grant");
   const [days, setDays] = useState("30");
   const [reason, setReason] = useState("");
   const hasStripeSubscription = Boolean(account.subscription?.stripe_subscription_id);
   const renewalCancelled = Boolean(account.subscription?.cancel_at_period_end);
   const busy = loading === `subscription-control-${account.uid}` || loading === `renewal-${account.uid}`;
+  const override = String(account.subscription?.admin_access_override || "");
+  const appliedStatus = override === "active" ? "manual_access" : override === "suspended" ? "suspended" : "automatic";
+  const validDays = Number.isInteger(Number(days)) && Number(days) >= 1 && Number(days) <= 3650;
 
   return (
-    <div className="grid min-w-0 gap-3 border-t border-zinc-200 pt-4 xl:col-span-3 xl:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_auto] xl:items-end">
-      <label className="grid min-w-0 gap-1.5 text-xs font-black text-zinc-600">
-        Controle da assinatura
-        <select value={action} onChange={(event) => setAction(event.target.value)} className="h-10 min-w-0 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-bold text-zinc-800 outline-none focus:border-[#a84d68]">
-          <option value="grant">Conceder acesso manual</option>
-          <option value="suspend">Suspender imediatamente</option>
-          <option value="automatic">Usar status automático</option>
-        </select>
-      </label>
-      <label className="grid min-w-0 gap-1.5 text-xs font-black text-zinc-600">
-        Dias
-        <Input type="number" min="1" max="3650" inputMode="numeric" value={days} onChange={(event) => setDays(event.target.value)} disabled={action !== "grant"} className="h-10 rounded-lg bg-white disabled:opacity-50" />
-      </label>
-      <label className="grid min-w-0 gap-1.5 text-xs font-black text-zinc-600">
-        Motivo da alteração
-        <Input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={200} placeholder="Ex.: cortesia ou suporte" className="h-10 min-w-0 rounded-lg bg-white" />
-      </label>
-      <div className="grid min-w-0 grid-cols-1 gap-2 min-[420px]:grid-cols-2 xl:grid-cols-1">
-        <Button type="button" disabled={busy || (action === "grant" && (!Number.isInteger(Number(days)) || Number(days) < 1 || Number(days) > 3650))} onClick={() => onOverride(account, { action, days, reason })} className="h-10 min-w-0 rounded-lg bg-brand-plum px-3 text-white">
-          <Crown className="mr-2 h-4 w-4 shrink-0" />Aplicar controle
-        </Button>
+    <div className="grid min-w-0 gap-4 border-t border-zinc-200 pt-4 xl:col-span-3">
+      <div className="flex min-w-0 flex-col gap-2 rounded-lg bg-white px-3 py-3 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
+        <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.08em] text-zinc-400">Estado realmente aplicado</p><p className="mt-1 break-words text-xs text-zinc-500">Última alteração: {dateTime(account.subscription?.admin_override_updated_at)}</p></div>
+        <Status value={appliedStatus} />
+      </div>
+      <div className="grid min-w-0 gap-3 lg:grid-cols-[7rem_minmax(0,1fr)]">
+        <label className="grid min-w-0 gap-1.5 text-xs font-black text-zinc-600">Dias<Input type="number" min="1" max="3650" inputMode="numeric" value={days} onChange={(event) => setDays(event.target.value)} className="h-10 rounded-lg bg-white" /></label>
+        <label className="grid min-w-0 gap-1.5 text-xs font-black text-zinc-600">Motivo da alteração<Input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={200} placeholder="Ex.: cortesia ou suporte" className="h-10 min-w-0 rounded-lg bg-white" /></label>
+      </div>
+      <div className="grid min-w-0 gap-2 sm:grid-cols-3">
+        <Button type="button" disabled={busy || !validDays} onClick={() => onOverride(account, { action: "grant", days, reason })} className="h-11 min-w-0 rounded-lg bg-brand-plum px-3 text-white"><Crown className="mr-2 h-4 w-4 shrink-0" />Liberar por {validDays ? days : "-"} dias</Button>
+        <Button type="button" disabled={busy} onClick={() => onOverride(account, { action: "suspend", days, reason })} variant="ghost" className="h-11 min-w-0 rounded-lg border border-red-200 bg-red-50 px-3 text-red-800 hover:bg-red-100"><UserX className="mr-2 h-4 w-4 shrink-0" />Suspender agora</Button>
+        <Button type="button" disabled={busy} onClick={() => onOverride(account, { action: "automatic", days, reason })} variant="ghost" className="h-11 min-w-0 rounded-lg border bg-white px-3"><RefreshCw className="mr-2 h-4 w-4 shrink-0" />Usar automático</Button>
+      </div>
+      <div className="grid min-w-0 gap-2 min-[420px]:grid-cols-2">
         {hasStripeSubscription && (
           <Button type="button" disabled={busy} onClick={() => onStripeRenewal(account)} variant="ghost" className="h-10 min-w-0 rounded-lg border bg-white px-3 text-xs">
             <CreditCard className="mr-2 h-4 w-4 shrink-0" />{renewalCancelled ? "Retomar renovação" : "Cancelar renovação"}
@@ -755,7 +817,8 @@ function Panel({ title, subtitle, children }) { return <section className="min-w
 function Mini({ label, value }) { return <div className="min-w-0 rounded-lg bg-white p-3 text-center"><p className="break-words text-sm font-black">{value}</p><p className="mt-1 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-400">{label}</p></div>; }
 function Alert({ tone, children }) { return <div className={`min-w-0 break-words rounded-lg border px-4 py-3 text-sm font-bold ${tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{children}</div>; }
 function LabeledStatus({ label, value }) { return <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2 py-1 text-[10px] font-bold uppercase text-zinc-500">{label}<Status value={value} /></span>; }
-function Status({ value }) { const key = String(value || ""); const label = { active: "Ativo", manual_access: "Acesso manual", master_admin: "Administrador mestre", admin: "Administrador", authorized: "Autorizado", suspended: "Suspenso", trialing: "Em teste", paused: "Pausado", past_due: "Em atraso", unpaid: "Não pago", incomplete: "Incompleto", incomplete_expired: "Expirado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", partially_refunded: "Parcialmente estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; const good = ["active", "approved", "trialing", "admin", "master_admin", "authorized", "manual_access"].includes(key); const bad = ["rejected", "payment_failed", "past_due", "unpaid", "incomplete", "incomplete_expired", "expired", "blocked", "suspended", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
+function statusText(value) { const key = String(value || ""); return { active: "Ativo", automatic: "Automático", manual_access: "Acesso manual", master_admin: "Administrador mestre", admin: "Administrador", authorized: "Autorizado", suspended: "Suspenso", trialing: "Em teste", paused: "Pausado", past_due: "Em atraso", unpaid: "Não pago", incomplete: "Incompleto", incomplete_expired: "Expirado", expired: "Expirado", blocked: "Bloqueado", pending: "Pendente", approved: "Aprovado", rejected: "Recusado", payment_failed: "Pagamento recusado", cancelled: "Cancelado", canceled: "Cancelado", refunded: "Estornado", partially_refunded: "Parcialmente estornado", charged_back: "Contestado", not_started: "Não iniciado" }[key] || key || "Não iniciado"; }
+function Status({ value }) { const key = String(value || ""); const label = statusText(key); const good = ["active", "approved", "trialing", "admin", "master_admin", "authorized", "manual_access"].includes(key); const bad = ["rejected", "payment_failed", "past_due", "unpaid", "incomplete", "incomplete_expired", "expired", "blocked", "suspended", "cancelled", "canceled", "refunded", "charged_back"].includes(key); return <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-center text-[11px] font-black normal-case leading-tight ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{label}</span>; }
 function LoadingPanel() { return <div className="flex min-h-48 items-center justify-center rounded-lg border bg-white"><LoaderCircle className="h-6 w-6 animate-spin text-[#a84d68]" /></div>; }
 function AdminLoading() { return <div className="flex min-h-dvh items-center justify-center bg-brand-ivory"><div className="text-center"><img src="/brand/studiosbook-mark.svg" alt="" className="mx-auto h-12 w-12" /><LoaderCircle className="mx-auto mt-5 h-5 w-5 animate-spin text-[#a84d68]" /></div></div>; }
 function dateTime(value) { if (!value) return "-"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "-" : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date); }

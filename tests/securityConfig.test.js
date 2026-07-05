@@ -7,6 +7,8 @@ const firestoreRules = readFileSync(new URL("../firestore.rules", import.meta.ur
 const backendServer = readFileSync(new URL("../railway-backend/src/server.js", import.meta.url), "utf8");
 const appAuthClient = readFileSync(new URL("../src/api/base44Client.js", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+const adminSource = readFileSync(new URL("../src/admin/AdminApp.jsx", import.meta.url), "utf8");
+const adminAuthClient = readFileSync(new URL("../src/admin/firebaseAdminClient.js", import.meta.url), "utf8");
 
 test("hosting does not rewrite every unknown path to the authenticated app", () => {
   const rewrites = firebaseConfig.hosting.rewrites || [];
@@ -69,6 +71,17 @@ test("subscription overrides are restricted to the exact master administrator", 
   assert.match(backendServer, /admin\.subscription\.renewal_changed/);
   assert.doesNotMatch(backendServer, /Contas administrativas não podem ter a assinatura suspensa/);
   assert.doesNotMatch(backendServer, /administrador mestre não pode suspender a própria conta/);
+});
+
+test("master subscription controls expose confirmed states and recover expired authentication", () => {
+  assert.match(adminSource, /Estado realmente aplicado/);
+  assert.match(adminSource, /Liberar por \{validDays \? days/);
+  assert.match(adminSource, /Suspender agora/);
+  assert.match(adminSource, /Usar automático/);
+  assert.match(adminSource, /recent_auth_required/);
+  assert.match(adminSource, /AdminReauthDialog/);
+  assert.match(adminAuthClient, /reauthenticateAdmin/);
+  assert.match(adminAuthClient, /reauthenticateWithCredential/);
 });
 
 test("the app supports Google and email account flows", () => {
