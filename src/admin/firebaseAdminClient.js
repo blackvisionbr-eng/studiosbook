@@ -31,6 +31,7 @@ const apiBaseUrls = (
 
 const app = initializeApp(firebaseConfig, "studiosbook-admin");
 export const adminAuth = getAuth(app);
+adminAuth.languageCode = "pt-BR";
 const adminPersistenceReady = setPersistence(adminAuth, browserSessionPersistence);
 
 export async function signInAdmin(email, password) {
@@ -48,6 +49,7 @@ export function sendAdminPasswordResetEmail(email) {
   return sendPasswordResetEmail(adminAuth, String(email || "").trim(), {
     url: "https://studiosbook.com.br/admin",
     handleCodeInApp: false,
+    linkDomain: "studiosbook.com.br",
   });
 }
 

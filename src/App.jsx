@@ -442,7 +442,7 @@ function authErrorMessage(error) {
     return "Este e-mail já possui uma conta. Entre com a senha ou use o Google.";
   }
   if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) {
-    return "E-mail ou senha inválidos.";
+    return "Conta não encontrada ou senha incorreta. Confira os dados ou crie uma conta.";
   }
   if (code.includes("weak-password")) {
     return "Use uma senha mais forte, com pelo menos 8 caracteres.";
@@ -1337,7 +1337,7 @@ export default function App() {
         ? await base44.auth.registerWithEmail(email, password, fullName)
         : await base44.auth.loginWithEmail(email, password);
       setUser(loggedUser);
-      showFeedback(mode === "register" ? "Conta criada. Enviamos a verificação do seu e-mail." : "Login realizado.");
+      showFeedback(mode === "register" ? "Conta criada. Enviamos a verificação do seu e-mail. Confira também Spam ou Lixo eletrônico." : "Login realizado.");
     } catch (error) {
       console.error(error);
       showFeedback(authErrorMessage(error), "error");
@@ -1354,7 +1354,7 @@ export default function App() {
     setActionLoading("password-reset");
     try {
       await base44.auth.sendPasswordReset(email);
-      showFeedback("Enviamos o link de redefinição para seu e-mail.");
+      showFeedback("Se houver uma conta ativa para este e-mail, enviaremos o link de redefinição. Confira também Spam ou Lixo eletrônico.");
     } catch (error) {
       console.error(error);
       showFeedback(authErrorMessage(error), "error");
@@ -2696,9 +2696,12 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
                 {actionLoading === "email-auth" ? "Validando..." : mode === "register" ? "Criar minha conta" : "Entrar com e-mail"}
               </Button>
               {mode === "login" && (
-                <button type="button" disabled={actionLoading === "password-reset"} onClick={() => onPasswordReset(form.email)} className="min-h-10 text-sm font-bold text-[#7f3158] disabled:opacity-50">
-                  {actionLoading === "password-reset" ? "Enviando..." : "Esqueci minha senha"}
-                </button>
+                <div className="grid gap-1 text-center">
+                  <button type="button" disabled={actionLoading === "password-reset"} onClick={() => onPasswordReset(form.email)} className="min-h-10 text-sm font-bold text-[#7f3158] disabled:opacity-50">
+                    {actionLoading === "password-reset" ? "Enviando..." : "Esqueci minha senha"}
+                  </button>
+                  <p className="text-xs leading-5 text-zinc-500">Não recebeu? Verifique Spam ou Lixo eletrônico e marque a mensagem como “Não é spam”.</p>
+                </div>
               )}
             </form>
           </div>

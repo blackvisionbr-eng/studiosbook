@@ -351,12 +351,16 @@ async function sendFirebasePasswordReset(email) {
     `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(FIREBASE_WEB_API_KEY)}`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Firebase-Locale": "pt-BR",
+      },
       body: JSON.stringify({
         requestType: "PASSWORD_RESET",
         email,
         continueUrl: `${PUBLIC_APP_URL}/admin`,
         canHandleCodeInApp: false,
+        linkDomain: "studiosbook.com.br",
       }),
     }
   );

@@ -136,7 +136,7 @@ export default function AdminApp() {
     setError("");
     try {
       await sendAdminPasswordResetEmail(email);
-      showNotice("E-mail de redefinição enviado.");
+      showNotice("Se houver uma conta ativa para este e-mail, o link será enviado. Confira também Spam ou Lixo eletrônico.");
     } catch {
       setError("Não foi possível enviar a redefinição de senha.");
     } finally {
@@ -192,7 +192,7 @@ export default function AdminApp() {
     try {
       await invokeAdmin("admin-send-password-reset", { uid: account.uid });
       await loadAudit();
-      showNotice("E-mail de redefinição enviado.");
+      showNotice("E-mail de redefinição enviado. Oriente o usuário a conferir também Spam ou Lixo eletrônico.");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -432,6 +432,7 @@ function AdminLogin({ onSubmit, onResetPassword, loading, error, notice }) {
             <button type="button" disabled={loading === "login-reset"} onClick={() => onResetPassword(email.trim())} className="min-h-10 text-sm font-bold text-[#7f3158] disabled:opacity-50">
               {loading === "login-reset" ? "Enviando redefinição..." : "Esqueci minha senha"}
             </button>
+            <p className="text-center text-xs leading-5 text-zinc-500">Não recebeu? Verifique Spam ou Lixo eletrônico e marque a mensagem como “Não é spam”.</p>
           </div>
           <a href="/" className="mt-6 block text-center text-sm font-bold text-zinc-500 hover:text-zinc-950">Voltar ao StudiosBook</a>
         </form>

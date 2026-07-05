@@ -44,6 +44,7 @@ const apiBaseUrls = (import.meta.env.VITE_API_BASE_URLS || import.meta.env.VITE_
   .filter(Boolean);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+auth.languageCode = "pt-BR";
 const db = getFirestore(app);
 const storage = getStorage(app);
 
@@ -284,6 +285,7 @@ export const base44 = {
       await sendEmailVerification(credential.user, {
         url: "https://studiosbook.com.br/",
         handleCodeInApp: false,
+        linkDomain: "studiosbook.com.br",
       }).catch((error) => console.warn("E-mail de verificação não enviado", error?.code || error?.message));
       await credential.user.getIdToken(true);
       return toBaseUser(credential.user);
@@ -292,6 +294,7 @@ export const base44 = {
       await sendPasswordResetEmail(auth, String(email || "").trim().toLowerCase(), {
         url: "https://studiosbook.com.br/",
         handleCodeInApp: false,
+        linkDomain: "studiosbook.com.br",
       });
       return { success: true };
     },
