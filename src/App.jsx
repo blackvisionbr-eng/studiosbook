@@ -1724,9 +1724,9 @@ export default function App() {
           : selectedService?.duration_minutes,
         maintenance_days: maintenanceDays,
         amount: Number(serviceForm.amount || 0),
-        retention_percent: serviceForm.retention_percent
-          ? Number(serviceForm.retention_percent)
-          : undefined,
+        ...(serviceForm.retention_percent !== "" && serviceForm.retention_percent !== null
+          ? { retention_percent: Number(serviceForm.retention_percent) }
+          : {}),
         next_maintenance_date: nextMaintenance,
       });
       const photoPaths = {};
@@ -1869,7 +1869,7 @@ export default function App() {
         adhesive: "Produto padrão",
         duration_minutes: service.duration_minutes,
         maintenance_days: maintenanceDays,
-        retention_percent: service.category === "lash_design" ? 55 : undefined,
+        ...(service.category === "lash_design" ? { retention_percent: 55 } : {}),
         amount: service.price || 0,
         payment_status: "paid",
         next_maintenance_date: maintenanceDate,

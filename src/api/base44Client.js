@@ -29,6 +29,7 @@ import {
   ref as storageRef,
   uploadBytes,
 } from "firebase/storage";
+import { sanitizeFirestorePayload } from "../lib/firestorePayload.js";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs",
@@ -131,12 +132,12 @@ function createEntity(entityName) {
     async create(data) {
       const user = await requireUser();
       const now = new Date().toISOString();
-      const payload = {
+      const payload = sanitizeFirestorePayload({
         ...data,
         created_by: user.email || user.uid,
         created_date: data?.created_date || now,
         updated_date: now,
-      };
+      });
       const ref = await addDoc(collection(db, ...entityPath(user.uid, entityName)), payload);
       return { id: ref.id, ...payload };
     },
@@ -144,10 +145,10 @@ function createEntity(entityName) {
     async update(id, data) {
       const user = await requireUser();
       const now = new Date().toISOString();
-      const payload = {
+      const payload = sanitizeFirestorePayload({
         ...data,
         updated_date: now,
-      };
+      });
       await updateDoc(doc(db, ...entityPath(user.uid, entityName), id), payload);
       return { id, ...payload };
     },
