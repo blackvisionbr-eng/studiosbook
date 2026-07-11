@@ -29,6 +29,47 @@ export function hasBillingAccessNow(subscription, access, now = Date.now()) {
   return false;
 }
 
+export function shouldForceBillingTab(subscription, access, now = Date.now()) {
+  if (hasBillingAccessNow(subscription, access, now)) return false;
+
+  const hasBillingState = Boolean(subscription || access);
+  if (!hasBillingState) return false;
+
+  const currentTime = Number(now);
+  const trialEnd = new Date(subscription?.trial_end_date || access?.expiresAt || 0).getTime();
+  if (Number.isFinite(trialEnd) && trialEnd > currentTime) return false;
+
+  const periodEnd = new Date(subscription?.current_period_end || 0).getTime();
+  if (Number.isFinite(periodEnd) && periodEnd > currentTime) return false;
+
+  const forceStatuses = new Set([
+    "admin_suspended",
+    "blocked",
+    "cancelled",
+    "canceled",
+    "charged_back",
+    "expired",
+    "incomplete",
+    "incomplete_expired",
+    "past_due",
+    "payment_failed",
+    "refunded",
+    "rejected",
+    "revoked",
+    "suspended",
+    "trial_expired",
+    "unpaid",
+  ]);
+  return [
+    access?.reason,
+    access?.status,
+    subscription?.access_revoked_reason,
+    subscription?.last_payment_status,
+    subscription?.status,
+    subscription?.stripe_subscription_status,
+  ].some((value) => forceStatuses.has(String(value || "").toLowerCase()));
+}
+
 function timestampMillis(value) {
   if (typeof value?.toMillis === "function") return value.toMillis();
   if (typeof value?.toDate === "function") return value.toDate().getTime();

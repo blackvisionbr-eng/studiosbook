@@ -8,7 +8,7 @@ import {
   serviceBelongsToCatalog,
 } from "@/lib/serviceCatalog";
 import { toCsv } from "@/lib/csv";
-import { billingAccessFromRoot, hasBillingAccessNow } from "@/lib/billingAccess";
+import { billingAccessFromRoot, hasBillingAccessNow, shouldForceBillingTab } from "@/lib/billingAccess";
 import {
   Activity,
   AlertTriangle,
@@ -1122,13 +1122,15 @@ export default function App() {
     return () => unsubscribe();
   }, [user?.id]);
 
-  const billingLocked = !hasBillingAccessNow(billingSubscription, billingAccess, billingClock);
+  const billingStateReady = Boolean(billingSubscription || billingAccess);
+  const billingLocked = billingStateReady && !hasBillingAccessNow(billingSubscription, billingAccess, billingClock);
+  const mustResolveBilling = billingStateReady && shouldForceBillingTab(billingSubscription, billingAccess, billingClock);
 
   useEffect(() => {
-    if (billingLocked && !["billing", "security", "privacy"].includes(activeTab)) {
+    if (mustResolveBilling && !["billing", "security", "privacy"].includes(activeTab)) {
       setActiveTab("billing");
     }
-  }, [activeTab, billingLocked]);
+  }, [activeTab, mustResolveBilling]);
 
   useEffect(() => {
     if (!user || typeof window === "undefined") return;
@@ -1930,7 +1932,7 @@ export default function App() {
     );
   }
 
-  if (!isLoading && billingLocked && !profile) {
+  if (!isLoading && mustResolveBilling && !profile) {
     return (
       <BillingAccessScreen
         user={user}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { billingAccessFromRoot, hasBillingAccessNow } from "../src/lib/billingAccess.js";
+import { billingAccessFromRoot, hasBillingAccessNow, shouldForceBillingTab } from "../src/lib/billingAccess.js";
 
 test("fails closed when billing validation is unavailable", () => {
   assert.equal(hasBillingAccessNow(null, null, Date.parse("2026-07-03T12:00:00Z")), false);
@@ -124,4 +124,40 @@ test("does not trust a stale paid access response after the period expires", () 
     ),
     false
   );
+});
+
+test("does not force billing tab while the free trial is still active", () => {
+  const now = Date.parse("2026-07-03T12:00:00Z");
+  assert.equal(
+    shouldForceBillingTab(
+      { status: "trialing", trial_end_date: "2026-07-04T12:00:00Z" },
+      { allowed: true, reason: "trial_active", status: "trialing", expiresAt: "2026-07-04T12:00:00Z" },
+      now
+    ),
+    false
+  );
+});
+
+test("forces billing tab only after trial expiration or payment failure", () => {
+  const now = Date.parse("2026-07-10T12:00:00Z");
+  assert.equal(
+    shouldForceBillingTab(
+      { status: "expired", trial_end_date: "2026-07-04T12:00:00Z" },
+      { allowed: false, reason: "trial_expired", status: "expired", expiresAt: "" },
+      now
+    ),
+    true
+  );
+  assert.equal(
+    shouldForceBillingTab(
+      { status: "payment_failed", last_payment_status: "rejected" },
+      { allowed: false, reason: "payment_failed", status: "payment_failed", expiresAt: "" },
+      now
+    ),
+    true
+  );
+});
+
+test("does not force billing tab before billing state is loaded", () => {
+  assert.equal(shouldForceBillingTab(null, null, Date.parse("2026-07-10T12:00:00Z")), false);
 });
