@@ -163,6 +163,53 @@ export function validatePixPayment(paymentIntent = {}, options = {}) {
   return { valid: true, reason: "verified" };
 }
 
+export function mercadoPagoPaymentStatus(payment = {}) {
+  const status = String(payment.status || "").toLowerCase();
+  if (status === "approved") return "approved";
+  if (["pending", "in_process", "in_mediation", "authorized"].includes(status)) return "pending";
+  if (["cancelled", "canceled"].includes(status)) return "cancelled";
+  if (status === "refunded") return "refunded";
+  if (status === "charged_back") return "charged_back";
+  if (["rejected", "expired"].includes(status)) return "rejected";
+  return status || "pending";
+}
+
+export function mercadoPagoPaymentUid(payment = {}) {
+  const metadataUid = String(
+    payment?.metadata?.studiosbook_uid ||
+      payment?.metadata?.user_uid ||
+      payment?.additional_info?.items?.[0]?.id ||
+      ""
+  ).trim();
+  if (metadataUid) return metadataUid;
+
+  const externalReference = String(payment.external_reference || "").trim();
+  const colonMatch = externalReference.match(/^studiosbook:([^:]+):/);
+  if (colonMatch?.[1]) return colonMatch[1];
+  const dashMatch = externalReference.match(/^studiosbook-([A-Za-z0-9_-]+)-/);
+  return dashMatch?.[1] || "";
+}
+
+export function validateMercadoPagoPixPayment(payment = {}, options = {}) {
+  const expectedAmount = Number(options.expectedAmount || 0);
+  const amount = Number(payment.transaction_amount || 0);
+  const currency = String(payment.currency_id || "").toUpperCase();
+  const product = String(payment.metadata?.product || "");
+  const externalReference = String(payment.external_reference || "");
+  const methodId = String(payment.payment_method_id || payment.payment_method?.id || "").toLowerCase();
+  const methodType = String(payment.payment_type_id || payment.payment_method?.type || "").toLowerCase();
+
+  if (methodId !== "pix" && methodType !== "bank_transfer") return { valid: false, reason: "payment_method_mismatch" };
+  if (!Number.isFinite(expectedAmount) || expectedAmount <= 0) return { valid: false, reason: "invalid_expected_amount" };
+  if (Math.abs(amount - expectedAmount) > 0.001) return { valid: false, reason: "amount_mismatch" };
+  if (currency && currency !== String(options.currency || "BRL").toUpperCase()) return { valid: false, reason: "currency_mismatch" };
+  if (options.productName && product !== options.productName && !externalReference.startsWith("studiosbook:")) {
+    return { valid: false, reason: "product_mismatch" };
+  }
+  if (options.requireLiveMode === true && payment.live_mode !== true) return { valid: false, reason: "live_mode_required" };
+  return { valid: true, reason: "verified" };
+}
+
 function stripeResourceId(value) {
   return typeof value === "string" ? value : value?.id || "";
 }

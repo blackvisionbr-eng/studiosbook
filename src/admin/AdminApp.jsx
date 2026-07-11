@@ -744,9 +744,9 @@ function SubscriptionControls({ account, loading, onOverride, onStripeRenewal })
 
 function Payments({ rows }) {
   return (
-    <Panel title="Pagamentos recentes" subtitle="Conciliação dos eventos assinados recebidos da Stripe.">
+    <Panel title="Pagamentos recentes" subtitle="Conciliação dos eventos assinados recebidos da Stripe e do Mercado Pago.">
       <div className="mt-5 grid gap-3">
-        {rows.map((payment) => { const paymentId = payment.stripe_invoice_id || payment.stripe_payment_intent_id || payment.id; return <div key={`${payment.uid}-${paymentId}`} className="grid min-w-0 gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 sm:grid-cols-[1fr_auto] sm:items-center"><div className="min-w-0"><p className="break-words font-black">{payment.business_name || payment.user_email || "Conta StudiosBook"}</p><p className="mt-1 break-all text-xs text-zinc-500">ID {paymentId} · {dateTime(payment.date_last_updated)}</p></div><div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end"><Status value={payment.status} /><strong className="break-words">{money(payment.amount)}</strong></div></div>; })}
+        {rows.map((payment) => { const paymentId = payment.stripe_invoice_id || payment.stripe_payment_intent_id || payment.mercado_pago_payment_id || payment.id; return <div key={`${payment.uid}-${paymentId}`} className="grid min-w-0 gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 sm:grid-cols-[1fr_auto] sm:items-center"><div className="min-w-0"><p className="break-words font-black">{payment.business_name || payment.user_email || "Conta StudiosBook"}</p><p className="mt-1 break-all text-xs text-zinc-500">{payment.provider || "provedor"} · ID {paymentId} · {dateTime(payment.date_last_updated)}</p></div><div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end"><Status value={payment.status} /><strong className="break-words">{money(payment.amount)}</strong></div></div>; })}
         {!rows.length && <p className="rounded-lg bg-zinc-50 p-8 text-center text-sm text-zinc-500">Nenhum pagamento registrado.</p>}
       </div>
     </Panel>
@@ -754,7 +754,7 @@ function Payments({ rows }) {
 }
 
 function System({ data, diagnostics, loading, onDiagnostics }) {
-  const checks = [["Backend Railway", Boolean(data)], ["Firebase Admin", data?.admin_ready === true], ["Stripe", data?.stripe_ready === true], ["Webhook assinado", data?.webhook_ready === true]];
+  const checks = [["Backend Railway", Boolean(data)], ["Firebase Admin", data?.admin_ready === true], ["Stripe", data?.stripe_ready === true], ["Mercado Pago", data?.mercado_pago_ready === true], ["Webhook Stripe", data?.webhook_ready === true], ["Webhook Pix", data?.mercado_pago_webhook_ready === true]];
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Panel title="Saúde do sistema" subtitle="Detalhes disponíveis somente após autenticação administrativa.">
@@ -762,7 +762,7 @@ function System({ data, diagnostics, loading, onDiagnostics }) {
       </Panel>
       <Panel title="Pagamentos e webhooks" subtitle="Teste autenticado da integração financeira.">
         <Button type="button" onClick={onDiagnostics} disabled={loading === "diagnostics"} className="mt-5 h-11 w-full rounded-lg bg-brand-plum text-white"><Activity className="mr-2 h-4 w-4" />{loading === "diagnostics" ? "Executando..." : "Executar diagnóstico"}</Button>
-        {diagnostics && <div className="mt-4 grid grid-cols-2 gap-2"><Mini label="API Stripe" value={diagnostics.stripe_api === "online" ? "Online" : "Erro"} /><Mini label="Modo" value={diagnostics.stripe_mode === "live" ? "Produção" : "Teste"} /><Mini label="Processados" value={diagnostics.webhook_processed || 0} /><Mini label="Falhas" value={diagnostics.webhook_failed || 0} /></div>}
+        {diagnostics && <div className="mt-4 grid grid-cols-2 gap-2"><Mini label="API Stripe" value={diagnostics.stripe_api === "online" ? "Online" : "Erro"} /><Mini label="Modo Stripe" value={diagnostics.stripe_mode === "live" ? "Produção" : "Teste"} /><Mini label="API Mercado Pago" value={diagnostics.mercado_pago_api === "online" ? "Online" : diagnostics.mercado_pago_api === "unconfigured" ? "Sem token" : "Erro"} /><Mini label="Modo Pix" value={diagnostics.mercado_pago_mode === "live" ? "Produção" : diagnostics.mercado_pago_mode === "test" ? "Teste" : "Configurar"} /><Mini label="Stripe OK" value={diagnostics.webhook_processed || 0} /><Mini label="Stripe Falhas" value={diagnostics.webhook_failed || 0} /><Mini label="Pix OK" value={diagnostics.mercado_pago_webhook_processed || 0} /><Mini label="Pix Falhas" value={diagnostics.mercado_pago_webhook_failed || 0} /></div>}
       </Panel>
     </div>
   );

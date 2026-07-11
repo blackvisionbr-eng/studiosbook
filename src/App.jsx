@@ -1584,8 +1584,15 @@ export default function App() {
     setActionLoading("billing-pix");
     try {
       const result = await base44.functions.invoke("create-pix-payment", { app_url: window.location.origin });
-      if (!result?.url) throw new Error("A Stripe não retornou o endereço do Pix.");
-      window.location.assign(result.url);
+      const payment = result?.payment || result?.latest_payment;
+      if (!payment?.pix_qr_code && !payment?.pix_qr_code_base64 && !payment?.pix_ticket_url) {
+        throw new Error("O Mercado Pago não retornou os dados do QR Code Pix.");
+      }
+      setBillingSubscription(result?.subscription || billingSubscription);
+      setBillingAccess(result?.access || billingAccess);
+      setPixPayment(payment);
+      setBillingCapabilities(result?.payment_capabilities || billingCapabilities);
+      showFeedback("Pix gerado com segurança pelo Mercado Pago.");
       return result;
     } catch (error) {
       console.error(error);
@@ -1617,7 +1624,9 @@ export default function App() {
   const refreshBillingStatus = async () => {
     setActionLoading("billing-refresh");
     try {
-      const result = await base44.functions.invoke("sync-billing-status", {});
+      const result = await base44.functions.invoke("sync-billing-status", {
+        payment_id: pixPayment?.mercado_pago_payment_id || "",
+      });
       setBillingSubscription(result?.subscription || billingSubscription);
       setBillingAccess(result?.access || billingAccess);
       setPixPayment(result?.payment || result?.latest_payment || pixPayment);
@@ -3818,6 +3827,7 @@ function BillingView({
   onRefreshStatus,
   actionLoading,
 }) {
+  const [pixCopied, setPixCopied] = useState(false);
   const status = billingSubscription?.status || "not_started";
   const providerSubscriptionStatus =
     billingSubscription?.stripe_subscription_status ||
@@ -3844,6 +3854,17 @@ function BillingView({
   const supportHref = supportWhatsAppLink("Oi, preciso de suporte para ativar minha assinatura do StudiosBook.");
   const hasStripeCustomer = Boolean(billingSubscription?.stripe_customer_id);
   const pixAvailable = billingCapabilities?.pix === true;
+  const pixQrBase64 = pixPayment?.pix_qr_code_base64 || pixPayment?.qr_code_base64 || "";
+  const pixQrCode = pixPayment?.pix_qr_code || pixPayment?.qr_code || "";
+  const pixTicketUrl = pixPayment?.pix_ticket_url || pixPayment?.ticket_url || "";
+  const pixPaymentStatus = pixPayment?.provider === "mercado_pago" ? pixPayment?.status : "";
+  const hasPendingPix = pixPaymentStatus === "pending" && Boolean(pixQrBase64 || pixQrCode || pixTicketUrl);
+  const copyPixCode = async () => {
+    if (!pixQrCode) return;
+    await navigator.clipboard?.writeText(pixQrCode);
+    setPixCopied(true);
+    window.setTimeout(() => setPixCopied(false), 1800);
+  };
   const manualAccessActive = billingAccess?.allowed === true && billingAccess?.reason === "admin_override";
   const manualAccessUntil = billingAccess?.expiresAt || billingSubscription?.admin_override_until;
 
@@ -3861,7 +3882,7 @@ function BillingView({
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
               {pixAvailable
-                ? "Checkout protegido pela Stripe, com cartão recorrente ou Pix avulso para 30 dias de acesso."
+                ? "Cartão recorrente pela Stripe ou Pix avulso via Mercado Pago para 30 dias de acesso."
                 : "Checkout protegido pela Stripe para assinatura mensal recorrente no cartão."}
             </p>
             <div className="mt-6 grid gap-3 sm:flex sm:flex-wrap">
@@ -3974,15 +3995,65 @@ function BillingView({
         {pixAvailable && <Panel>
           <PanelHeader
             title="Pagamento por Pix"
-            subtitle="Pagamento avulso de R$ 26,90, sem renovação automática, para liberar 30 dias."
+            subtitle="Pagamento avulso de R$ 26,90 via Mercado Pago, sem renovação automática, para liberar 30 dias."
           />
           <div className="mt-5 grid gap-4">
             <div className="flex min-w-0 items-start gap-3 rounded-[1.25rem] bg-emerald-50 p-4">
               <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
               <p className="min-w-0 text-sm leading-6 text-emerald-950">
-                O QR Code e a confirmação são exibidos no ambiente protegido da Stripe.
+                O QR Code é gerado pelo Mercado Pago e a liberação acontece após confirmação segura do pagamento.
               </p>
             </div>
+            {hasPendingPix && (
+              <div className="grid gap-4 rounded-[1.25rem] border border-emerald-200 bg-white p-4">
+                <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+                  {pixQrBase64 && (
+                    <img
+                      src={`data:image/png;base64,${pixQrBase64}`}
+                      alt="QR Code Pix Mercado Pago"
+                      className="h-44 w-44 shrink-0 rounded-2xl border border-zinc-100 bg-white p-2 shadow-sm"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-black text-zinc-950">Pix aguardando pagamento</p>
+                    <p className="mt-1 text-sm leading-6 text-zinc-500">
+                      Pague pelo app do seu banco e toque em “Atualizar status” após a confirmação.
+                    </p>
+                    {pixPayment?.pix_expires_at && (
+                      <p className="mt-2 text-xs font-bold text-amber-700">
+                        Válido até {formatDateTime(pixPayment.pix_expires_at)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {pixQrCode && (
+                  <div className="min-w-0 rounded-2xl bg-zinc-50 p-3">
+                    <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400">Pix copia e cola</p>
+                    <p className="mt-2 max-h-24 overflow-auto break-all text-xs leading-5 text-zinc-600">{pixQrCode}</p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={copyPixCode}
+                      className="mt-3 h-10 w-full rounded-full bg-white text-zinc-950 hover:bg-emerald-50"
+                    >
+                      <Copy className="mr-2 h-4 w-4" />
+                      {pixCopied ? "Código copiado" : "Copiar código Pix"}
+                    </Button>
+                  </div>
+                )}
+                {pixTicketUrl && (
+                  <a
+                    href={pixTicketUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-10 items-center justify-center rounded-full bg-zinc-950 px-4 text-sm font-black text-white transition hover:bg-zinc-800"
+                  >
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Abrir no Mercado Pago
+                  </a>
+                )}
+              </div>
+            )}
             <Button
               type="button"
               onClick={onCreatePix}
@@ -3990,7 +4061,7 @@ function BillingView({
               className="h-12 w-full rounded-full bg-emerald-600 px-4 text-white hover:bg-emerald-700"
             >
               <QrCode className="mr-2 h-4 w-4" />
-              {actionLoading === "billing-pix" ? "Abrindo Stripe..." : "Pagar R$ 26,90 por Pix"}
+              {actionLoading === "billing-pix" ? "Gerando Pix..." : hasPendingPix ? "Gerar novo Pix" : "Pagar R$ 26,90 por Pix"}
             </Button>
           </div>
         </Panel>}

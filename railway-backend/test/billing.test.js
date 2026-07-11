@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   billingAccess,
+  mercadoPagoPaymentStatus,
+  mercadoPagoPaymentUid,
   stripeChargeRefundState,
   stripeInvoicePaymentIntentId,
   stripeInvoicePaymentStatus,
@@ -11,6 +13,7 @@ import {
   stripeSubscriptionPeriod,
   stripeTimestampToIso,
   trialFromAccountCreation,
+  validateMercadoPagoPixPayment,
   validatePixPayment,
 } from "../src/billing.js";
 
@@ -237,6 +240,47 @@ test("accepts only a succeeded Pix with the expected product, currency and amoun
   assert.equal(validatePixPayment({ ...validPayment, currency: "usd" }, options).reason, "currency_mismatch");
   assert.equal(validatePixPayment({ ...validPayment, livemode: false }, options).reason, "live_mode_required");
   assert.equal(validatePixPayment({ ...validPayment, metadata: { product: "Outro" } }, options).reason, "product_mismatch");
+});
+
+test("maps Mercado Pago statuses to local payment states", () => {
+  assert.equal(mercadoPagoPaymentStatus({ status: "approved" }), "approved");
+  assert.equal(mercadoPagoPaymentStatus({ status: "in_process" }), "pending");
+  assert.equal(mercadoPagoPaymentStatus({ status: "cancelled" }), "cancelled");
+  assert.equal(mercadoPagoPaymentStatus({ status: "charged_back" }), "charged_back");
+  assert.equal(mercadoPagoPaymentStatus({ status: "expired" }), "rejected");
+});
+
+test("extracts StudiosBook UID from Mercado Pago metadata and external reference", () => {
+  assert.equal(mercadoPagoPaymentUid({ metadata: { studiosbook_uid: "user-1" } }), "user-1");
+  assert.equal(mercadoPagoPaymentUid({ external_reference: "studiosbook:user-2:attempt-1" }), "user-2");
+});
+
+test("validates Mercado Pago Pix payment before granting access", () => {
+  const validPayment = {
+    status: "approved",
+    transaction_amount: 26.9,
+    currency_id: "BRL",
+    payment_method_id: "pix",
+    payment_type_id: "bank_transfer",
+    live_mode: true,
+    metadata: { product: "StudiosBook" },
+  };
+  const options = {
+    expectedAmount: 26.9,
+    currency: "BRL",
+    productName: "StudiosBook",
+    requireLiveMode: true,
+  };
+  assert.deepEqual(validateMercadoPagoPixPayment(validPayment, options), { valid: true, reason: "verified" });
+  assert.deepEqual(
+    validateMercadoPagoPixPayment({ ...validPayment, metadata: {}, external_reference: "studiosbook:user-1:attempt-1" }, options),
+    { valid: true, reason: "verified" }
+  );
+  assert.equal(validateMercadoPagoPixPayment({ ...validPayment, transaction_amount: 10 }, options).reason, "amount_mismatch");
+  assert.equal(validateMercadoPagoPixPayment({ ...validPayment, currency_id: "USD" }, options).reason, "currency_mismatch");
+  assert.equal(validateMercadoPagoPixPayment({ ...validPayment, metadata: {} }, options).reason, "product_mismatch");
+  assert.equal(validateMercadoPagoPixPayment({ ...validPayment, payment_method_id: "visa", payment_type_id: "credit_card" }, options).reason, "payment_method_mismatch");
+  assert.equal(validateMercadoPagoPixPayment({ ...validPayment, live_mode: false }, options).reason, "live_mode_required");
 });
 
 test("classifies Stripe charge refunds without revoking on a partial refund", () => {
