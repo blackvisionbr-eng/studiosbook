@@ -17,6 +17,8 @@ import {
   ThumbnailTemplate,
   TutorialEnding,
   TutorialOpening,
+  YouTubeBanner,
+  YouTubeProfile,
   renderArtworkDocument,
 } from "./render-artwork.mjs";
 
@@ -58,6 +60,7 @@ async function loadAssets() {
   const files = {
     logo: ["public/brand/studiosbook-logo.svg", "image/svg+xml"],
     logoReversed: ["public/brand/studiosbook-logo-reversed.svg", "image/svg+xml"],
+    markReversed: ["public/brand/studiosbook-mark-reversed.svg", "image/svg+xml"],
     dmSans400: ["node_modules/@fontsource/dm-sans/files/dm-sans-latin-400-normal.woff2", "font/woff2"],
     dmSans500: ["node_modules/@fontsource/dm-sans/files/dm-sans-latin-500-normal.woff2", "font/woff2"],
     dmSans600: ["node_modules/@fontsource/dm-sans/files/dm-sans-latin-600-normal.woff2", "font/woff2"],
@@ -87,9 +90,10 @@ async function findChrome() {
 }
 
 function selectedFormats(formatName) {
+  if (formatName === "channel") return [];
   if (formatName === "all") return Object.entries(artworkFormats);
   if (!artworkFormats[formatName]) {
-    throw new Error(`Formato inválido: ${formatName}. Use youtube, horizontal, vertical, square, feed ou all.`);
+    throw new Error(`Formato inválido: ${formatName}. Use youtube, horizontal, vertical, square, feed, channel ou all.`);
   }
   return [[formatName, artworkFormats[formatName]]];
 }
@@ -208,6 +212,38 @@ async function generate() {
     }
 
     if (!options.category && !options.id) {
+      if (["all", "channel"].includes(options.format)) {
+        const channelArtworks = [
+          {
+            id: "studiosbook-youtube-profile",
+            width: 800,
+            height: 800,
+            body: YouTubeProfile({ assets }),
+          },
+          {
+            id: "studiosbook-youtube-banner",
+            width: 2560,
+            height: 1440,
+            body: YouTubeBanner({ assets }),
+          },
+        ];
+
+        for (const artwork of channelArtworks) {
+          const outputPath = path.join(outputRoot, "youtube-channel", `${artwork.id}.png`);
+          await exportArtwork(
+            page,
+            {
+              html: renderArtworkDocument({ body: artwork.body, assets }),
+              outputPath,
+              width: artwork.width,
+              height: artwork.height,
+              metadata: { type: "youtube-channel", format: "youtube-channel", id: artwork.id },
+            },
+            manifest,
+          );
+        }
+      }
+
       const editorialFormats = formats.filter(([name]) => ["horizontal", "vertical"].includes(name));
       for (const [formatName, format] of editorialFormats) {
         for (const artwork of tutorialOpenings) {

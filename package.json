@@ -14,6 +14,7 @@
     "artworks:vertical": "node tools/artworks/generate-artworks.mjs --format vertical",
     "artworks:square": "node tools/artworks/generate-artworks.mjs --format square",
     "artworks:feed": "node tools/artworks/generate-artworks.mjs --format feed",
+    "artworks:youtube-channel": "node tools/artworks/generate-artworks.mjs --format channel",
     "artworks:all": "node tools/artworks/generate-artworks.mjs --format all",
     "artworks:validate": "node tools/artworks/validate-artworks.mjs"
   },

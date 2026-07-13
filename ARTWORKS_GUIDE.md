@@ -4,7 +4,7 @@ Sistema oficial para gerar capas de tutoriais, peças para dispositivos, abertur
 
 ## Resultado atual
 
-O comando completo gera 229 arquivos PNG:
+O comando completo gera 231 arquivos PNG:
 
 | Tipo | Quantidade |
 | --- | ---: |
@@ -13,8 +13,11 @@ O comando completo gera 229 arquivos PNG:
 | Aberturas horizontais e verticais | 6 |
 | Encerramentos horizontais e verticais | 12 |
 | Telas demonstrativas sanitizadas | 11 |
+| Foto de perfil e banner do YouTube | 2 |
 
 Os arquivos finais ficam em `artworks/`. Essa pasta não é versionada para evitar aumentar o repositório com centenas de PNGs; todo o conteúdo pode ser regenerado pelo código.
+
+A foto de perfil e o banner oficiais do canal também possuem cópias versionadas em `public/brand/exports/studiosbook-youtube-profile.png` e `public/brand/exports/studiosbook-youtube-banner.png`.
 
 ## Instalação
 
@@ -40,6 +43,7 @@ npm run artworks:horizontal
 npm run artworks:vertical
 npm run artworks:square
 npm run artworks:feed
+npm run artworks:youtube-channel
 npm run artworks:all
 npm run artworks:validate
 ```
@@ -76,6 +80,7 @@ npm run artworks:generate -- --format vertical --id como-agendar-horario
 | `vertical` | 1080 x 1920 | Shorts, Reels e Stories |
 | `square` | 1080 x 1080 | Feed quadrado |
 | `feed` | 1080 x 1350 | Feed vertical |
+| `youtube-channel` | 800 x 800 e 2560 x 1440 | Perfil e banner do canal |
 
 Cada proporção possui composição própria. A versão vertical não é um recorte da versão horizontal.
 
@@ -98,6 +103,7 @@ artworks/
 |-- openings/
 |-- endings/
 |-- screenshots/
+|-- youtube-channel/
 `-- manifest.json
 ```
 
@@ -189,4 +195,3 @@ Depois, revise ao menos:
 5. Ortografia, área segura, contraste e dados exibidos.
 
 As telas demonstrativas usam nomes e contatos fictícios. Nunca publique capturas de uma conta real sem sanitização.
-
