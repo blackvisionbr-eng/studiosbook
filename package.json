@@ -16,7 +16,8 @@
     "artworks:feed": "node tools/artworks/generate-artworks.mjs --format feed",
     "artworks:youtube-channel": "node tools/artworks/generate-artworks.mjs --format channel",
     "artworks:all": "node tools/artworks/generate-artworks.mjs --format all",
-    "artworks:validate": "node tools/artworks/validate-artworks.mjs"
+    "artworks:validate": "node tools/artworks/validate-artworks.mjs",
+    "content:youtube": "node tools/content/generate-youtube-publication-kit.mjs"
   },
   "dependencies": {
     "firebase": "^12.14.0",
