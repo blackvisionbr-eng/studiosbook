@@ -2744,6 +2744,18 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
                 </div>
               )}
             </form>
+
+            <a
+              href={YOUTUBE_CHANNEL_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-12 w-full min-w-0 items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-5 text-center text-sm font-black text-[#7f3158] transition hover:scale-[1.01] hover:border-rose-300 hover:bg-rose-100"
+              aria-label="Videoaulas (abre em uma nova aba)"
+            >
+              <CirclePlay className="h-5 w-5 shrink-0" aria-hidden="true" />
+              <span>Videoaulas</span>
+              <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
+            </a>
           </div>
           <p className="mt-4 text-sm text-zinc-500">
             Ao entrar, você declara que leu a{" "}
