@@ -18,6 +18,7 @@ import {
   CalendarDays,
   Camera,
   CheckCircle2,
+  CirclePlay,
   Clock,
   Cloud,
   Copy,
@@ -70,6 +71,7 @@ const PRODUCT_NAME = "StudiosBook";
 const PRODUCT_COMPANY = "BlackVision";
 const PRODUCT_PRICE = "R$ 26,90/mês";
 const OFFICIAL_APP_URL = "https://studiosbook.com.br";
+const YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@Studiosbook";
 const SUPPORT_EMAIL = "getblackvision.br@gmail.com";
 const SUPPORT_PHONE = "73981068594";
 const WHATSAPP_DEFAULT = "";
@@ -2881,6 +2883,7 @@ function DashboardView({
               <QuickAction label="Registrar atendimento" icon={ShieldCheck} onClick={() => setActiveTab("service")} />
               <QuickAction label="Abrir agenda" icon={CalendarDays} onClick={() => setActiveTab("schedule")} />
               <QuickAction label="Retornos" icon={MessageCircle} onClick={() => setActiveTab("returns")} />
+              <QuickAction label="Videoaulas" icon={CirclePlay} href={YOUTUBE_CHANNEL_URL} />
             </div>
           </div>
           <div className="min-w-0 rounded-[1.25rem] border border-white/10 bg-white/10 p-4 sm:rounded-[1.75rem] sm:bg-white/8 sm:p-5 sm:backdrop-blur">
@@ -4717,11 +4720,31 @@ function PanelHeader({ title, subtitle, action }) {
   );
 }
 
-function QuickAction({ label, icon: Icon, onClick }) {
+function QuickAction({ label, icon: Icon, onClick, href }) {
+  const className =
+    "inline-flex min-w-0 max-w-full items-center gap-2 rounded-full bg-white px-4 py-2 text-center text-sm font-black leading-tight text-zinc-950 transition hover:scale-[1.02] hover:bg-rose-50";
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={className}
+        aria-label={`${label} (abre em uma nova aba)`}
+      >
+        <Icon className="h-4 w-4 shrink-0 text-rose-700" />
+        {label}
+        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
+      </a>
+    );
+  }
+
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-full bg-white px-4 py-2 text-center text-sm font-black leading-tight text-zinc-950 transition hover:scale-[1.02] hover:bg-rose-50"
+      className={className}
     >
       <Icon className="h-4 w-4 shrink-0 text-rose-700" />
       {label}
