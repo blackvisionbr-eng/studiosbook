@@ -306,3 +306,85 @@ Teste grátis por 7 dias e continue pela playlist “${category.playlist}”.`;
   };
 });
 
+export const youtubeInstallationConfig = {
+  playlist: "Instale o StudiosBook",
+  playlistDescription: "Aprenda a instalar o StudiosBook no Android, iPhone, iPad e tablets para acessar sua gestão diretamente pela tela inicial.",
+};
+
+const installationDetails = [
+  {
+    id: "como-instalar-studiosbook-android",
+    episode: 1,
+    thumbnailText: "Instale no Android",
+    title: "Como instalar o StudiosBook no Android | Passo a passo",
+    hook: "Aprenda a instalar o StudiosBook no Android e acesse clientes, agenda e serviços diretamente pela tela inicial do celular.",
+    bullets: ["Acessar o StudiosBook pelo navegador", "Usar a opção de instalação do aplicativo", "Abrir o StudiosBook pela tela inicial"],
+    question: "Você conseguiu instalar o StudiosBook na tela inicial do seu Android?",
+    hashtags: ["#StudiosBook", "#Android", "#AplicativoDeGestão"],
+    tags: ["instalar StudiosBook", "StudiosBook Android", "aplicativo para salão", "agenda para profissionais da beleza", "instalar aplicativo Android"],
+  },
+  {
+    id: "como-instalar-studiosbook-iphone",
+    episode: 2,
+    thumbnailText: "Instale no iPhone",
+    title: "Como instalar o StudiosBook no iPhone | Tutorial completo",
+    hook: "Veja como instalar o StudiosBook no iPhone pelo Safari e tenha sua gestão sempre disponível na tela inicial.",
+    bullets: ["Abrir o site oficial pelo Safari", "Usar a opção Adicionar à Tela de Início", "Confirmar o ícone do StudiosBook no iPhone"],
+    question: "O ícone do StudiosBook já está aparecendo na tela inicial do seu iPhone?",
+    hashtags: ["#StudiosBook", "#iPhone", "#GestãoParaBeleza"],
+    tags: ["instalar StudiosBook iPhone", "StudiosBook iOS", "adicionar à tela de início", "aplicativo para salão iPhone", "agenda para iPhone"],
+  },
+  {
+    id: "como-instalar-studiosbook-tablet",
+    episode: 3,
+    thumbnailText: "Instale no tablet",
+    title: "Como instalar o StudiosBook no tablet ou iPad",
+    hook: "Instale o StudiosBook no tablet ou iPad e gerencie seu negócio com mais espaço para visualizar agenda, clientes e indicadores.",
+    bullets: ["Acessar o StudiosBook no navegador do tablet", "Instalar no Android ou adicionar à tela inicial no iPad", "Abrir e utilizar o sistema em uma tela maior"],
+    question: "Você pretende usar o StudiosBook no tablet durante os atendimentos ou na gestão do negócio?",
+    hashtags: ["#StudiosBook", "#Tablet", "#GestãoDeSalão"],
+    tags: ["StudiosBook tablet", "StudiosBook iPad", "aplicativo para tablet", "sistema para salão", "agenda em tablet"],
+  },
+];
+
+export const youtubeInstallationContent = installationDetails.map((item) => {
+  const description = `${item.hook}
+
+👉 Comece agora e teste o StudiosBook grátis por 7 dias:
+https://studiosbook.com.br
+
+Neste tutorial você vai aprender:
+- ${item.bullets.join("\n- ")}
+
+📌 Série: ${youtubeInstallationConfig.playlist}
+Depois de instalar, continue pela playlist “Primeiros Passos no StudiosBook” para configurar seu negócio, serviços e horários.
+
+Inscreva-se no canal e ative as notificações para acompanhar os próximos tutoriais.
+
+StudiosBook — Seu talento em foco. Seu studio sob controle.
+
+${item.hashtags.join(" ")}`;
+
+  const pinnedComment = `${item.question}
+
+Conte nos comentários qual aparelho você utiliza. Sua dúvida pode virar um próximo tutorial.
+
+👉 Instale e teste agora: https://studiosbook.com.br
+São 7 dias gratuitos para organizar seu negócio na prática.`;
+
+  return {
+    id: item.id,
+    category: "instalacao",
+    categoryLabel: "Instalação",
+    playlist: youtubeInstallationConfig.playlist,
+    episode: item.episode,
+    thumbnailText: item.thumbnailText,
+    title: item.title,
+    description,
+    pinnedComment,
+    hashtags: item.hashtags,
+    tags: unique(["StudiosBook", "tutorial StudiosBook", ...item.tags]),
+  };
+});
+
+export const youtubeAllPublicationContent = [...youtubeInstallationContent, ...youtubePublicationContent];

@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { youtubePublicationContent } from "../src/data/youtube-publication-content.js";
+import {
+  youtubeAllPublicationContent,
+  youtubeInstallationContent,
+} from "../src/data/youtube-publication-content.js";
 
 test("provides complete conversion metadata for every tutorial", () => {
-  assert.equal(youtubePublicationContent.length, 36);
-  assert.equal(new Set(youtubePublicationContent.map((item) => item.title)).size, 36);
+  assert.equal(youtubeAllPublicationContent.length, 39);
+  assert.equal(youtubeInstallationContent.length, 3);
+  assert.equal(new Set(youtubeAllPublicationContent.map((item) => item.title)).size, 39);
 
-  for (const item of youtubePublicationContent) {
+  for (const item of youtubeAllPublicationContent) {
     assert.ok(item.title.length <= 100, `${item.id} has a title above 100 characters`);
     assert.match(item.description, /https:\/\/studiosbook\.com\.br/);
     assert.match(item.description, /grátis por 7 dias/);
@@ -15,4 +19,3 @@ test("provides complete conversion metadata for every tutorial", () => {
     assert.ok(item.tags.length <= 10);
   }
 });
-

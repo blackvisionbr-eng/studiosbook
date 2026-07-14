@@ -2,7 +2,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { youtubeCategoryConfig, youtubePublicationContent } from "../../src/data/youtube-publication-content.js";
+import {
+  youtubeAllPublicationContent,
+  youtubeCategoryConfig,
+  youtubeInstallationConfig,
+} from "../../src/data/youtube-publication-content.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(currentDir, "../..");
@@ -16,7 +20,7 @@ function csvCell(value) {
 function validate(items) {
   const errors = [];
   const titleSet = new Set();
-  if (items.length !== 36) errors.push(`Esperados 36 tutoriais, encontrados ${items.length}.`);
+  if (items.length !== 39) errors.push(`Esperados 39 tutoriais, encontrados ${items.length}.`);
 
   for (const item of items) {
     if (item.title.length > 100) errors.push(`${item.id}: título com ${item.title.length} caracteres.`);
@@ -32,11 +36,8 @@ function validate(items) {
   if (errors.length) throw new Error(errors.join("\n"));
 }
 
-function buildMarkdown(items) {
-  const categories = Object.entries(youtubeCategoryConfig);
-  const sections = categories.map(([categoryId, category]) => {
-    const videos = items.filter((item) => item.category === categoryId);
-    const videoSections = videos.map((item) => `### ${String(item.episode).padStart(2, "0")}. ${item.thumbnailText}
+function renderVideoSections(videos) {
+  return videos.map((item) => `### ${String(item.episode).padStart(2, "0")}. ${item.thumbnailText}
 
 **Título para publicação**
 
@@ -64,6 +65,20 @@ ${item.tags.join(", ")}
 
 **Texto da thumbnail:** ${item.thumbnailText}
 `).join("\n---\n\n");
+}
+
+function buildMarkdown(items) {
+  const installationSection = `## Playlist: ${youtubeInstallationConfig.playlist}
+
+**Descrição da playlist**
+
+${youtubeInstallationConfig.playlistDescription}
+
+${renderVideoSections(items.filter((item) => item.category === "instalacao"))}`;
+
+  const categories = Object.entries(youtubeCategoryConfig);
+  const sections = categories.map(([categoryId, category]) => {
+    const videos = items.filter((item) => item.category === categoryId);
 
     return `## Playlist: ${category.playlist}
 
@@ -71,12 +86,12 @@ ${item.tags.join(", ")}
 
 ${category.playlistDescription}
 
-${videoSections}`;
+${renderVideoSections(videos)}`;
   }).join("\n\n---\n\n");
 
   return `# Kit de Publicação para YouTube — StudiosBook
 
-Conteúdo oficial para os 36 tutoriais do StudiosBook.
+Conteúdo oficial para os 39 tutoriais do StudiosBook.
 
 ## Objetivo editorial
 
@@ -99,18 +114,25 @@ StudiosBook — Seu talento em foco. Seu studio sob controle.
 
 ## Ordem recomendada para o lançamento
 
-1. Como configurar o perfil do seu negócio.
-2. Como personalizar o StudiosBook.
-3. Como adicionar um serviço ao catálogo.
-4. Como cadastrar um cliente.
-5. Como agendar um horário.
-6. Como visualizar sua agenda.
-7. Como confirmar um atendimento.
-8. Como registrar um pagamento.
-9. Como visualizar o resumo do dia.
-10. Como acompanhar o faturamento.
+1. Como instalar o StudiosBook no Android.
+2. Como instalar o StudiosBook no iPhone.
+3. Como instalar o StudiosBook no tablet ou iPad.
+4. Como configurar o perfil do seu negócio.
+5. Como personalizar o StudiosBook.
+6. Como adicionar um serviço ao catálogo.
+7. Como cadastrar um cliente.
+8. Como agendar um horário.
+9. Como visualizar sua agenda.
+10. Como confirmar um atendimento.
+11. Como registrar um pagamento.
+12. Como visualizar o resumo do dia.
+13. Como acompanhar o faturamento.
 
 Depois dos dez vídeos iniciais, publique os demais dentro das respectivas playlists. Mantenha consistência de dois vídeos completos e dois Shorts derivados por semana.
+
+${installationSection}
+
+---
 
 ${sections}
 `;
@@ -133,18 +155,30 @@ function buildCsv(items) {
   return `${headers.map(csvCell).join(",")}\n${rows.map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
 }
 
+function buildInstallationMarkdown(items) {
+  const installationItems = items.filter((item) => item.category === "instalacao");
+  return `# Tutoriais de Instalação — StudiosBook
+
+## Playlist: ${youtubeInstallationConfig.playlist}
+
+${youtubeInstallationConfig.playlistDescription}
+
+${renderVideoSections(installationItems)}
+`;
+}
+
 async function generate() {
-  validate(youtubePublicationContent);
+  validate(youtubeAllPublicationContent);
   await mkdir(outputDir, { recursive: true });
   await Promise.all([
-    writeFile(path.join(outputDir, "YOUTUBE_PUBLICATION_KIT.md"), buildMarkdown(youtubePublicationContent), "utf8"),
-    writeFile(path.join(outputDir, "youtube-publication-kit.csv"), `\uFEFF${buildCsv(youtubePublicationContent)}`, "utf8"),
+    writeFile(path.join(outputDir, "YOUTUBE_PUBLICATION_KIT.md"), buildMarkdown(youtubeAllPublicationContent), "utf8"),
+    writeFile(path.join(outputDir, "INSTALLATION_TUTORIALS.md"), buildInstallationMarkdown(youtubeAllPublicationContent), "utf8"),
+    writeFile(path.join(outputDir, "youtube-publication-kit.csv"), `\uFEFF${buildCsv(youtubeAllPublicationContent)}`, "utf8"),
   ]);
-  console.log(`Kit do YouTube gerado: ${youtubePublicationContent.length} tutoriais em ${outputDir}`);
+  console.log(`Kit do YouTube gerado: ${youtubeAllPublicationContent.length} tutoriais em ${outputDir}`);
 }
 
 generate().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-
