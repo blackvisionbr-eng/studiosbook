@@ -19,7 +19,10 @@ import {
   doc,
   getDocs,
   getFirestore,
+  limit as firestoreLimit,
   onSnapshot,
+  orderBy,
+  query,
   updateDoc,
 } from "firebase/firestore";
 import {
@@ -110,6 +113,19 @@ function sortRows(rows, sort) {
   });
 }
 
+function queryWithSortAndLimit(ref, sort, limitCount) {
+  const constraints = [];
+  if (sort) {
+    const descending = String(sort).startsWith("-");
+    const field = descending ? String(sort).slice(1) : String(sort);
+    if (field) constraints.push(orderBy(field, descending ? "desc" : "asc"));
+  }
+  if (Number.isFinite(Number(limitCount)) && Number(limitCount) > 0) {
+    constraints.push(firestoreLimit(Number(limitCount)));
+  }
+  return constraints.length ? query(ref, ...constraints) : ref;
+}
+
 function matchesFilter(row, filter = {}) {
   return Object.entries(filter).every(([key, value]) => row?.[key] === value);
 }
@@ -119,7 +135,8 @@ function createEntity(entityName) {
     async list(sort, limitCount = 500) {
       const user = await requireUser();
       const ref = collection(db, ...entityPath(user.uid, entityName));
-      const snapshots = await getDocs(ref);
+      const target = queryWithSortAndLimit(ref, sort, limitCount);
+      const snapshots = await getDocs(target);
       const rows = snapshots.docs.map(serializeDoc);
       return sortRows(rows, sort).slice(0, limitCount || rows.length);
     },
@@ -261,8 +278,13 @@ async function invokeFunction(name, data = {}) {
 export const base44 = {
   auth: {
     async isAuthenticated() {
+      const user = await currentUser();
+      if (user) {
+        void redirectResultReady;
+        return true;
+      }
       await redirectResultReady;
-      return Boolean(await currentUser());
+      return Boolean(auth.currentUser);
     },
     getLastRedirectError() {
       return lastRedirectError;

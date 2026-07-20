@@ -976,6 +976,28 @@ export default function App() {
     error?.message ||
     "Não foi possível salvar. Verifique os campos e tente novamente.";
 
+  const applyBillingState = (result = {}) => {
+    setBillingSubscription(result?.subscription || null);
+    setBillingAccess(result?.access || null);
+    setPixPayment(result?.payment || result?.latest_payment || null);
+    setBillingCapabilities(result?.payment_capabilities || { card_recurring: true, pix: false });
+    setBillingClock(Date.now());
+  };
+
+  const syncBillingBootstrap = async ({ silent = true } = {}) => {
+    try {
+      const result = await base44.functions.invoke("ensure-billing-account", {});
+      applyBillingState(result);
+      return result;
+    } catch (billingError) {
+      console.warn("Billing bootstrap unavailable", billingError?.data?.code || billingError?.message);
+      if (!silent) {
+        showFeedback("Não foi possível sincronizar a assinatura agora. Tente atualizar o status em instantes.", "error");
+      }
+      return null;
+    }
+  };
+
   const loadAuth = async () => {
     try {
       const authenticated = await base44.auth.isAuthenticated();
@@ -996,31 +1018,24 @@ export default function App() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      let ensuredBilling = null;
-      try {
-        ensuredBilling = await base44.functions.invoke("ensure-billing-account", {});
-      } catch (billingError) {
-        console.error("Billing bootstrap error", billingError);
-      }
-      const [clientData, recordData, appointmentData, profileData, snapshotData, billingData] = await Promise.all([
+      const [clientData, recordData, appointmentData, profileData, billingData] = await Promise.all([
         Client.list("-updated_date", 500),
         ServiceRecord.list("-procedure_date", 500),
         Appointment.list("appointment_date", 500),
         StudioProfile.list("-updated_date", 20),
-        BackupSnapshot.list("-snapshot_date", 20),
         BillingSubscription.list("-updated_date", 5),
       ]);
       const normalizedProfile = normalizeProfile(profileData?.[0], user);
       setClients(clientData || []);
       setRecords(recordData || []);
       setAppointments(appointmentData || []);
-      setBackupSnapshots(snapshotData || []);
-      setBillingSubscription(ensuredBilling?.subscription || billingData?.[0] || null);
-      setBillingAccess(ensuredBilling?.access || null);
-      setPixPayment(ensuredBilling?.latest_payment || null);
-      setBillingCapabilities(ensuredBilling?.payment_capabilities || { card_recurring: true, pix: false });
+      setBillingSubscription(billingData?.[0] || null);
       setProfile(normalizedProfile);
       setProfileForm(normalizedProfile || createProfileForm(user));
+      void syncBillingBootstrap({ silent: true });
+      void BackupSnapshot.list("-snapshot_date", 20)
+        .then((snapshotData) => setBackupSnapshots(snapshotData || []))
+        .catch((snapshotError) => console.warn("Backup snapshots unavailable", snapshotError?.message));
     } catch (error) {
       console.error(error);
       showFeedback(`Erro ao carregar dados: ${getErrorMessage(error)}`, "error");
