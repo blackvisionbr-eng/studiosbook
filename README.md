@@ -33,6 +33,22 @@ Crie um `.env` local a partir de `.env.example` e configure:
 VITE_API_BASE_URLS=http://localhost:8080
 ```
 
+## Validação local
+
+Antes de publicar uma alteração, execute:
+
+```bash
+npm test
+npm run build
+npm run backend:test
+```
+
+Ou rode a sequência completa:
+
+```bash
+npm run verify
+```
+
 ## Deploy Firebase
 
 ```bash
