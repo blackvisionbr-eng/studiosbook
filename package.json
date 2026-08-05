@@ -7,7 +7,20 @@
     "dev": "vite",
     "build": "vite build",
     "test": "node --test tests/*.test.js",
-    "preview": "vite preview"
+    "backend:test": "npm --prefix railway-backend test",
+    "backend:start": "npm --prefix railway-backend start",
+    "verify": "npm test && npm run build && npm run backend:test",
+    "preview": "vite preview",
+    "artworks:generate": "node tools/artworks/generate-artworks.mjs",
+    "artworks:youtube": "node tools/artworks/generate-artworks.mjs --format youtube",
+    "artworks:horizontal": "node tools/artworks/generate-artworks.mjs --format horizontal",
+    "artworks:vertical": "node tools/artworks/generate-artworks.mjs --format vertical",
+    "artworks:square": "node tools/artworks/generate-artworks.mjs --format square",
+    "artworks:feed": "node tools/artworks/generate-artworks.mjs --format feed",
+    "artworks:youtube-channel": "node tools/artworks/generate-artworks.mjs --format channel",
+    "artworks:all": "node tools/artworks/generate-artworks.mjs --format all",
+    "artworks:validate": "node tools/artworks/validate-artworks.mjs",
+    "content:youtube": "node tools/content/generate-youtube-publication-kit.mjs"
   },
   "dependencies": {
     "firebase": "^12.14.0",
@@ -17,8 +30,11 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@fontsource/dm-sans": "^5.2.8",
+    "@fontsource/dm-serif-display": "^5.2.8",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "playwright-core": "^1.61.1",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "vite": "^6.1.0"

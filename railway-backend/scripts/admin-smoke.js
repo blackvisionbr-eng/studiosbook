@@ -50,6 +50,9 @@ const adminUser = await auth.getUserByEmail(adminEmail);
 if (adminUser.customClaims?.platform_admin !== true) {
   throw new Error("A conta de teste não possui a claim platform_admin.");
 }
+if (adminUser.customClaims?.platform_role !== "master_admin") {
+  throw new Error("A conta de teste não possui a claim platform_role=master_admin.");
+}
 const customToken = await auth.createCustomToken(adminUser.uid);
 const signInResponse = await fetch(
   `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(apiKey)}`,
@@ -75,10 +78,12 @@ async function invoke(name) {
   return { response, data };
 }
 
+const session = await invoke("admin-session");
 const overview = await invoke("admin-overview");
 const diagnostics = await invoke("admin-payment-diagnostics");
 const audit = await invoke("admin-audit-log");
 const result = {
+  master_session: session.response.ok && session.data?.admin?.role === "master_admin",
   admin_overview: overview.response.ok && overview.data.success === true,
   users_visible: Number(overview.data?.metrics?.users || 0) >= 1,
   recent_payments_available: Array.isArray(overview.data?.recent_payments),

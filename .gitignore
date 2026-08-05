@@ -4,6 +4,7 @@ node_modules
 # Build
 dist
 .firebase
+/artworks/
 
 # Environment
 .env

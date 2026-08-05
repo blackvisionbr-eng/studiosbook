@@ -10,6 +10,7 @@ export default defineConfig({
       input: {
         app: path.resolve(__dirname, "index.html"),
         admin: path.resolve(__dirname, "admin.html"),
+        authAction: path.resolve(__dirname, "auth-action.html"),
       },
     },
   },

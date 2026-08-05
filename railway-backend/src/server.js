@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
@@ -14,6 +14,8 @@ import {
   TRIAL_DAYS,
   addDays,
   billingAccess,
+  mercadoPagoPaymentStatus,
+  mercadoPagoPaymentUid,
   stripeChargeRefundState,
   stripeInvoicePaymentIntentId,
   stripeInvoicePaymentStatus,
@@ -23,6 +25,7 @@ import {
   stripeSubscriptionPeriod,
   stripeTimestampToIso,
   trialFromAccountCreation,
+  validateMercadoPagoPixPayment,
   validatePixPayment,
 } from "./billing.js";
 
@@ -30,6 +33,9 @@ const app = express();
 const PRODUCT_NAME = "StudiosBook";
 const PLAN_NAME = "StudiosBook Intermediário";
 const MONTHLY_AMOUNT = 26.9;
+const MASTER_ADMIN_EMAIL = String(process.env.MASTER_ADMIN_EMAIL || "getblackvision.br@gmail.com")
+  .trim()
+  .toLowerCase();
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "blackvision-27f1c";
 const FIREBASE_WEB_API_KEY =
   process.env.FIREBASE_WEB_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs";
@@ -38,6 +44,9 @@ const PUBLIC_API_URL =
   process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
 const STRIPE_WEBHOOK_URL =
   process.env.STRIPE_WEBHOOK_URL || `${PUBLIC_API_URL}/functions/stripe-webhook`;
+const MERCADO_PAGO_API_BASE = process.env.MERCADO_PAGO_API_BASE || "https://api.mercadopago.com";
+const MERCADO_PAGO_WEBHOOK_URL =
+  process.env.MERCADO_PAGO_WEBHOOK_URL || `${PUBLIC_API_URL}/functions/mercado-pago-webhook`;
 const EXTRA_FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -158,7 +167,7 @@ app.use(
     limit: 300,
     standardHeaders: "draft-7",
     legacyHeaders: false,
-    skip: (req) => req.path === "/functions/stripe-webhook",
+    skip: (req) => ["/functions/stripe-webhook", "/functions/mercado-pago-webhook"].includes(req.path),
     message: { error: "Muitas solicitações. Aguarde alguns minutos." },
   })
 );
@@ -220,6 +229,14 @@ function stripePortalConfigurationId() {
   return process.env.STRIPE_PORTAL_CONFIGURATION_ID || "";
 }
 
+function mercadoPagoAccessToken() {
+  return process.env.MERCADO_PAGO_ACCESS_TOKEN || "";
+}
+
+function mercadoPagoWebhookSecret() {
+  return process.env.MERCADO_PAGO_WEBHOOK_SECRET || "";
+}
+
 function stripeMode() {
   return stripeKeyMode(stripeSecretKey());
 }
@@ -241,20 +258,11 @@ async function stripePaymentCapabilities(force = false) {
   if (!force && stripeCapabilitiesCache.value && stripeCapabilitiesCache.expiresAt > Date.now()) {
     return stripeCapabilitiesCache.value;
   }
-  const value = { card_recurring: Boolean(stripeSecretKey() && stripePriceId()), pix: false };
-  if (stripeSecretKey()) {
-    try {
-      const configurations = await stripeClient().paymentMethodConfigurations.list({ limit: 100 });
-      value.pix = configurations.data.some(
-        (configuration) =>
-          configuration.active &&
-          configuration.pix?.available === true &&
-          configuration.pix?.display_preference?.value !== "off"
-      );
-    } catch (error) {
-      console.warn("Stripe payment capabilities unavailable", { message: error?.message || "capability_check_failed" });
-    }
-  }
+  const value = {
+    card_recurring: Boolean(stripeSecretKey() && stripePriceId()),
+    pix: Boolean(mercadoPagoAccessToken()),
+    pix_provider: mercadoPagoAccessToken() ? "mercado_pago" : "",
+  };
   stripeCapabilitiesCache = { expiresAt: Date.now() + 5 * 60 * 1000, value };
   return value;
 }
@@ -265,6 +273,8 @@ function adminStatusPayload() {
     stripe_ready: Boolean(stripeSecretKey() && stripePriceId()),
     stripe_mode: stripeMode(),
     webhook_ready: Boolean(stripeWebhookSecret()),
+    mercado_pago_ready: Boolean(mercadoPagoAccessToken()),
+    mercado_pago_webhook_ready: Boolean(mercadoPagoWebhookSecret()),
   };
 }
 
@@ -285,6 +295,7 @@ async function requireFirebaseUser(req, res, next) {
       name: payload.name || payload.email || "Profissional",
       emailVerified: payload.email_verified === true,
       platformAdmin: payload.platform_admin === true,
+      platformRole: String(payload.platform_role || ""),
       authTime: Number(payload.auth_time || 0),
     };
     return next();
@@ -292,6 +303,21 @@ async function requireFirebaseUser(req, res, next) {
     console.error(error);
     return res.status(401).json({ error: "Sessão inválida ou expirada." });
   }
+}
+
+function requireMasterAdmin(req, res, next) {
+  requireFirebaseUser(req, res, () => {
+    const email = String(req.user?.email || "").trim().toLowerCase();
+    if (
+      !req.user?.platformAdmin ||
+      req.user?.platformRole !== "master_admin" ||
+      !req.user?.emailVerified ||
+      email !== MASTER_ADMIN_EMAIL
+    ) {
+      return res.status(403).json({ error: "Ação restrita ao administrador mestre do StudiosBook." });
+    }
+    return next();
+  });
 }
 
 function requirePlatformAdmin(req, res, next) {
@@ -351,12 +377,16 @@ async function sendFirebasePasswordReset(email) {
     `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(FIREBASE_WEB_API_KEY)}`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Firebase-Locale": "pt-BR",
+      },
       body: JSON.stringify({
         requestType: "PASSWORD_RESET",
         email,
         continueUrl: `${PUBLIC_APP_URL}/admin`,
         canHandleCodeInApp: false,
+        linkDomain: "studiosbook.com.br",
       }),
     }
   );
@@ -374,6 +404,158 @@ function toJsonSafe(value) {
   if (value instanceof Date) return value.toISOString();
   if (Array.isArray(value)) return value.map(toJsonSafe);
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, toJsonSafe(item)]));
+}
+
+function mercadoPagoTokenMode() {
+  const token = mercadoPagoAccessToken();
+  if (/^APP_USR-/i.test(token)) return "live";
+  if (/^TEST-/i.test(token)) return "test";
+  return token ? "configured" : "unconfigured";
+}
+
+function mercadoPagoRequireLiveMode() {
+  return String(process.env.MERCADO_PAGO_REQUIRE_LIVE || "false").toLowerCase() === "true";
+}
+
+function mercadoPagoPaymentId(payment = {}) {
+  return String(payment.id || payment.data?.id || "").trim();
+}
+
+function mercadoPagoPaymentDocId(payment = {}) {
+  return `mp_${mercadoPagoPaymentId(payment).replace(/[^A-Za-z0-9._:-]/g, "_")}`;
+}
+
+function mercadoPagoPixData(payment = {}) {
+  const transactionData = payment.point_of_interaction?.transaction_data || {};
+  return {
+    qr_code: transactionData.qr_code || "",
+    qr_code_base64: transactionData.qr_code_base64 || "",
+    ticket_url: transactionData.ticket_url || payment.transaction_details?.external_resource_url || "",
+    expires_at: payment.date_of_expiration || "",
+  };
+}
+
+async function mercadoPagoRequest(path, options = {}) {
+  const token = mercadoPagoAccessToken();
+  if (!token) {
+    const error = new Error("Mercado Pago não configurado.");
+    error.missingSecret = "MERCADO_PAGO_ACCESS_TOKEN";
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const response = await fetch(`${MERCADO_PAGO_API_BASE}${path}`, {
+    method: options.method || "GET",
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      ...(options.body ? { "content-type": "application/json" } : {}),
+      ...(options.idempotencyKey ? { "X-Idempotency-Key": options.idempotencyKey } : {}),
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload?.message || payload?.error || "Falha na API do Mercado Pago.";
+    const error = new Error(message);
+    error.statusCode = response.status;
+    error.data = payload;
+    throw error;
+  }
+  return payload;
+}
+
+function mercadoPagoRecordFromPayment(uid, payment = {}, options = {}) {
+  const status = mercadoPagoPaymentStatus(payment);
+  const pix = mercadoPagoPixData(payment);
+  const paymentId = mercadoPagoPaymentId(payment);
+  const now = new Date().toISOString();
+  return {
+    user_uid: uid,
+    user_email: payment.payer?.email || options.email || "",
+    provider: "mercado_pago",
+    billing_flow: "pix",
+    mercado_pago_payment_id: paymentId,
+    external_reference: String(payment.external_reference || ""),
+    status,
+    status_detail: payment.status_detail || payment.status || "",
+    amount: Number(payment.transaction_amount || 0),
+    net_received_amount: Number(payment.transaction_details?.net_received_amount || 0),
+    currency_id: String(payment.currency_id || "BRL").toUpperCase(),
+    payment_method_id: payment.payment_method_id || "",
+    payment_type_id: payment.payment_type_id || "",
+    date_created: payment.date_created || now,
+    date_approved: status === "approved" ? payment.date_approved || now : "",
+    date_last_updated: payment.date_last_updated || now,
+    date_of_expiration: payment.date_of_expiration || "",
+    live_mode: Boolean(payment.live_mode),
+    pix_qr_code: pix.qr_code,
+    pix_qr_code_base64: pix.qr_code_base64,
+    pix_ticket_url: pix.ticket_url,
+    pix_expires_at: pix.expires_at,
+    updated_date: now,
+  };
+}
+
+function paymentWebhookDataId(req) {
+  return String(req.query?.["data.id"] || req.query?.id || req.body?.data?.id || req.body?.id || "").trim();
+}
+
+function parseMercadoPagoSignature(value = "") {
+  return String(value)
+    .split(",")
+    .map((entry) => entry.trim().split("="))
+    .reduce((acc, [key, val]) => {
+      if (key && val) acc[key] = val;
+      return acc;
+    }, {});
+}
+
+function safeSignatureEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left || ""), "hex");
+  const rightBuffer = Buffer.from(String(right || ""), "hex");
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function validateMercadoPagoWebhook(req) {
+  const secret = mercadoPagoWebhookSecret();
+  if (!secret) return { valid: false, reason: "missing_secret" };
+  const signature = parseMercadoPagoSignature(req.headers["x-signature"]);
+  const dataId = paymentWebhookDataId(req);
+  const requestId = String(req.headers["x-request-id"] || "");
+  if (!signature.ts || !signature.v1 || !dataId || !requestId) {
+    return { valid: false, reason: "missing_signature_parts" };
+  }
+  const manifest = `id:${dataId};request-id:${requestId};ts:${signature.ts};`;
+  const expected = createHmac("sha256", secret).update(manifest).digest("hex");
+  return safeSignatureEqual(expected, signature.v1)
+    ? { valid: true, dataId }
+    : { valid: false, reason: "signature_mismatch" };
+}
+
+async function claimMercadoPagoWebhookEvent(eventId, eventType) {
+  const safeId = String(eventId || randomUUID()).replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 180);
+  const ref = adminDb.collection("MercadoPagoWebhookEvent").doc(safeId);
+  return adminDb.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    const current = snapshot.exists ? snapshot.data() : null;
+    if (current?.status === "processed") return false;
+    const lastAttempt = new Date(current?.updated_date || 0).getTime();
+    if (current?.status === "processing" && Date.now() - lastAttempt < 5 * 60 * 1000) return false;
+    transaction.set(
+      ref,
+      {
+        event_id: safeId,
+        event_type: eventType || "",
+        status: "processing",
+        attempts: Number(current?.attempts || 0) + 1,
+        created_date: current?.created_date || new Date().toISOString(),
+        updated_date: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+    return true;
+  });
 }
 
 async function listCollection(ref, limit = 500) {
@@ -445,7 +627,7 @@ async function persistBillingState(uid, patch, options = {}) {
 
     const access = billingAccess(merged);
     merged.status = access.status;
-    const expiryCandidates = [merged.current_period_end, merged.trial_end_date]
+    const expiryCandidates = [merged.current_period_end, merged.trial_end_date, merged.admin_override_until]
       .map((value) => new Date(value || 0))
       .filter((date) => Number.isFinite(date.getTime()));
     const accessExpiresAt = expiryCandidates.length
@@ -459,7 +641,10 @@ async function persistBillingState(uid, patch, options = {}) {
         user_email: merged.user_email || options.email || "",
         billing_status: access.status,
         access_allowed: options.forceAccess === true || access.allowed,
+        access_reason: options.forceAccess === true ? "admin_override" : access.reason,
         access_expires_at: Timestamp.fromDate(accessExpiresAt),
+        admin_access_override: merged.admin_access_override || "",
+        admin_override_until: merged.admin_override_until || "",
         trial_start_date: merged.trial_start_date || "",
         trial_end_date: merged.trial_end_date || "",
         current_period_end: merged.current_period_end || "",
@@ -584,6 +769,7 @@ async function listAuthUsers() {
         lastSignInTime: user.metadata?.lastSignInTime || "",
         providers: user.providerData?.map((provider) => provider.providerId) || [],
         platformAdmin: user.customClaims?.platform_admin === true,
+        platformRole: String(user.customClaims?.platform_role || ""),
       }))
     );
     pageToken = result.pageToken;
@@ -1076,6 +1262,7 @@ async function applyStripePixPayment(uid, paymentIntent) {
         user_email: merged.user_email || account.subscription?.user_email || "",
         billing_status: access.status,
         access_allowed: access.allowed,
+        access_reason: access.reason,
         access_expires_at: Timestamp.fromDate(periodEnd),
         trial_start_date: merged.trial_start_date || "",
         trial_end_date: merged.trial_end_date || "",
@@ -1094,6 +1281,163 @@ async function applyStripePixPayment(uid, paymentIntent) {
   });
 
   return result;
+}
+
+async function applyMercadoPagoPixPayment(uid, payment, options = {}) {
+  const ownerUid = mercadoPagoPaymentUid(payment);
+  if (!uid || ownerUid !== uid) throw new Error("Pagamento Pix Mercado Pago não pertence à conta informada.");
+
+  const status = mercadoPagoPaymentStatus(payment);
+  const validation = validateMercadoPagoPixPayment(payment, {
+    expectedAmount: MONTHLY_AMOUNT,
+    currency: "BRL",
+    productName: PRODUCT_NAME,
+    requireLiveMode: mercadoPagoRequireLiveMode(),
+  });
+  if (!validation.valid) {
+    throw new Error(`Pagamento Pix Mercado Pago inválido: ${validation.reason}.`);
+  }
+
+  const account = await ensureBillingAccount(uid, payment.payer?.email || "");
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const paymentId = mercadoPagoPaymentId(payment);
+  const paymentDocId = mercadoPagoPaymentDocId(payment);
+  const record = mercadoPagoRecordFromPayment(uid, payment, {
+    email: account.subscription?.user_email || payment.payer?.email || "",
+  });
+  const patch = {
+    billing_provider: account.subscription?.billing_provider || "stripe",
+    last_payment_provider: "mercado_pago",
+    mercado_pago_payment_id: paymentId,
+    last_payment_status: status,
+    last_payment_detail: record.status_detail,
+    last_payment_date: record.date_approved || record.date_last_updated,
+    last_sync_date: nowIso,
+    notes: `Pagamento Pix Mercado Pago ${status} sincronizado.`,
+  };
+
+  const paymentRef = paymentCollection(uid).doc(paymentDocId);
+  const existingPaymentSnapshot = await paymentRef.get();
+  const existingPayment = existingPaymentSnapshot.exists ? toJsonSafe(existingPaymentSnapshot.data()) : {};
+
+  if (["refunded", "charged_back"].includes(status) && existingPayment.access_granted === true) {
+    await paymentRef.set(
+      {
+        ...existingPayment,
+        ...record,
+        access_granted: true,
+        date_refunded: nowIso,
+      },
+      { merge: true }
+    );
+    const billing = await persistBillingState(
+      uid,
+      {
+        ...patch,
+        current_period_end: nowIso,
+        next_payment_date: "",
+        access_revoked_at: nowIso,
+        access_revoked_reason: status,
+      },
+      { email: account.subscription?.user_email || record.user_email }
+    );
+    return { ...billing, payment: { id: paymentDocId, ...existingPayment, ...record, access_granted: true } };
+  }
+
+  if (status !== "approved") {
+    await paymentRef.set(record, { merge: true });
+    const billing = await persistBillingState(uid, patch, {
+      email: account.subscription?.user_email || record.user_email,
+    });
+    return { ...billing, payment: { id: paymentDocId, ...record } };
+  }
+
+  const current = await currentSubscription(uid);
+  const userRef = adminDb.collection("users").doc(uid);
+  return adminDb.runTransaction(async (transaction) => {
+    const [subscriptionSnapshot, paymentSnapshot] = await Promise.all([
+      transaction.get(current.ref),
+      transaction.get(paymentRef),
+    ]);
+    const storedPayment = paymentSnapshot.exists ? toJsonSafe(paymentSnapshot.data()) : {};
+    const subscription = subscriptionSnapshot.exists
+      ? { id: subscriptionSnapshot.id, ...toJsonSafe(subscriptionSnapshot.data()) }
+      : account.subscription || {};
+
+    if (storedPayment.access_granted === true) {
+      transaction.set(
+        paymentRef,
+        {
+          ...storedPayment,
+          ...record,
+          date_approved: storedPayment.date_approved || record.date_approved,
+          access_granted: true,
+        },
+        { merge: true }
+      );
+      return {
+        duplicate: true,
+        subscription,
+        access: billingAccess(subscription, now),
+        payment: { id: paymentDocId, ...storedPayment, ...record, access_granted: true },
+      };
+    }
+
+    const starts = [
+      now,
+      new Date(subscription.trial_end_date || 0),
+      new Date(subscription.current_period_end || 0),
+    ].filter((date) => Number.isFinite(date.getTime()));
+    const periodStart = new Date(Math.max(...starts.map((date) => date.getTime())));
+    const periodEnd = addDays(periodStart, PIX_ACCESS_DAYS);
+    const merged = {
+      ...subscription,
+      ...patch,
+      current_period_start: periodStart.toISOString(),
+      current_period_end: periodEnd.toISOString(),
+      next_payment_date: periodEnd.toISOString(),
+      last_approved_payment_id: paymentDocId,
+      last_approved_payment_date: nowIso,
+      access_revoked_at: "",
+      access_revoked_reason: "",
+      status: "active",
+      updated_date: nowIso,
+      ...(subscription.created_date ? {} : { created_date: nowIso }),
+    };
+    const access = billingAccess(merged, now);
+    const storedRecord = {
+      ...record,
+      access_granted: true,
+      access_period_start: periodStart.toISOString(),
+      access_period_end: periodEnd.toISOString(),
+    };
+
+    transaction.set(current.ref, merged, { merge: true });
+    transaction.set(paymentRef, storedRecord, { merge: true });
+    transaction.set(
+      userRef,
+      {
+        user_email: merged.user_email || account.subscription?.user_email || record.user_email || "",
+        billing_status: access.status,
+        access_allowed: access.allowed,
+        access_reason: access.reason,
+        access_expires_at: Timestamp.fromDate(periodEnd),
+        trial_start_date: merged.trial_start_date || "",
+        trial_end_date: merged.trial_end_date || "",
+        current_period_end: merged.current_period_end,
+        billing_updated_at: nowIso,
+      },
+      { merge: true }
+    );
+
+    return {
+      duplicate: false,
+      subscription: { id: current.ref.id, ...merged },
+      access,
+      payment: { id: paymentDocId, ...storedRecord },
+    };
+  });
 }
 
 async function findStripeSubscription(uid, customerId, preferredId = "") {
@@ -1153,6 +1497,23 @@ async function syncStripeBilling(uid, options = {}) {
       : await applyStripeChargeRefund(uid, charge, { invoice, eventType: "billing.sync" });
   }
   return { ...result, latest_payment: await latestBillingPayment(uid) };
+}
+
+async function syncMercadoPagoBilling(uid, options = {}) {
+  if (!mercadoPagoAccessToken()) return null;
+  const account = await ensureBillingAccount(uid, options.email || "");
+  const latestPayment = await latestBillingPayment(uid);
+  const paymentId =
+    String(options.paymentId || "").trim() ||
+    String(account.subscription?.mercado_pago_payment_id || "").trim() ||
+    String(latestPayment?.mercado_pago_payment_id || "").trim();
+  if (!paymentId) return { ...account, latest_payment: latestPayment };
+
+  const payment = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(paymentId)}`);
+  if (mercadoPagoPaymentUid(payment) !== uid) {
+    throw new Error("Pagamento Mercado Pago não pertence à conta informada.");
+  }
+  return { ...(await applyMercadoPagoPixPayment(uid, payment, { eventType: "billing.sync" })), latest_payment: await latestBillingPayment(uid) };
 }
 
 async function createSubscriptionFromSetupSession(session, uid) {
@@ -1478,67 +1839,55 @@ app.post("/functions/create-card-subscription", requireFirebaseUser, (_req, res)
 app.post("/functions/create-pix-payment", requireFirebaseUser, billingPaymentRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
-    const capabilities = await stripePaymentCapabilities();
-    if (!capabilities.pix) {
+    if (!mercadoPagoAccessToken()) {
       return res.status(503).json({
-        error: "Pagamento Pix ainda não está disponível nesta conta Stripe.",
+        error: "Pagamento Pix temporariamente indisponível.",
         code: "pix_unavailable",
       });
     }
     const account = await ensureBillingAccount(req.user.uid, req.user.email);
-    const customer = await ensureStripeCustomer(req.user.uid, req.user.email, req.user.name);
-    const appOrigin = safeOrigin(req.body?.app_url);
+    const attemptId = randomUUID();
+    const externalReference = `studiosbook:${req.user.uid}:${attemptId}`;
     const metadata = {
       studiosbook_uid: req.user.uid,
       product: PRODUCT_NAME,
       billing_flow: "pix",
     };
-    const session = await stripeClient().checkout.sessions.create(
-      {
-        mode: "payment",
-        customer: customer.id,
-        client_reference_id: req.user.uid,
-        locale: "pt-BR",
-        payment_method_types: ["pix"],
-        line_items: [
-          {
-            quantity: 1,
-            price_data: {
-              currency: "brl",
-              unit_amount: Math.round(MONTHLY_AMOUNT * 100),
-              product_data: {
-                name: `${PRODUCT_NAME} - 30 dias de acesso`,
-                description: "Pagamento avulso sem renovação automática.",
-                metadata,
-              },
-            },
-          },
-        ],
-        payment_intent_data: { metadata },
+    const payment = await mercadoPagoRequest("/v1/payments", {
+      method: "POST",
+      idempotencyKey: `studiosbook-pix-${req.user.uid}-${attemptId}`,
+      body: {
+        transaction_amount: MONTHLY_AMOUNT,
+        description: `${PRODUCT_NAME} - 30 dias de acesso`,
+        payment_method_id: "pix",
+        payer: {
+          email: req.user.email || account.subscription?.user_email || `${req.user.uid}@studiosbook.local`,
+          first_name: String(req.user.name || "Profissional").split(" ")[0],
+        },
+        external_reference: externalReference,
+        notification_url: MERCADO_PAGO_WEBHOOK_URL,
+        date_of_expiration: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         metadata,
-        success_url: `${appOrigin}/?checkout=stripe&session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${appOrigin}/?checkout=cancelled`,
+        additional_info: {
+          items: [
+            {
+              id: req.user.uid,
+              title: `${PRODUCT_NAME} - 30 dias de acesso`,
+              description: "Pagamento Pix avulso sem renovação automática.",
+              quantity: 1,
+              unit_price: MONTHLY_AMOUNT,
+            },
+          ],
+        },
       },
-      { idempotencyKey: `studiosbook-pix-${req.user.uid}-${Math.floor(Date.now() / 600000)}` }
-    );
-    await persistBillingState(
-      req.user.uid,
-      {
-        billing_provider: "stripe",
-        stripe_customer_id: customer.id,
-        stripe_checkout_session_id: session.id,
-        checkout_url: session.url,
-        last_payment_status: "pending",
-        last_sync_date: new Date().toISOString(),
-        notes: "Checkout Pix criado na Stripe.",
-      },
-      { email: req.user.email }
-    );
-    return res.json({ success: true, url: session.url, subscription: account.subscription, access: account.access });
+    });
+    payment.metadata = { ...metadata, ...(payment.metadata || {}) };
+    const result = await applyMercadoPagoPixPayment(req.user.uid, payment, { eventType: "pix.created" });
+    return res.json({ success: true, ...result, payment_capabilities: await stripePaymentCapabilities() });
   } catch (error) {
-    console.error("Stripe Pix checkout error", { requestId: req.requestId, type: error?.type, code: error?.code, message: error?.message });
-    return res.status(error?.statusCode && error.statusCode < 500 ? 422 : 500).json({
-      error: "Não foi possível abrir o pagamento Pix na Stripe. Use cartão ou fale com o suporte.",
+    console.error("Mercado Pago Pix error", { requestId: req.requestId, statusCode: error?.statusCode, message: error?.message });
+    return res.status(error?.statusCode && error.statusCode < 500 ? 422 : error?.statusCode || 500).json({
+      error: "Não foi possível gerar o Pix no Mercado Pago. Use cartão ou fale com o suporte.",
       request_id: req.requestId,
     });
   }
@@ -1547,10 +1896,20 @@ app.post("/functions/create-pix-payment", requireFirebaseUser, billingPaymentRat
 app.post("/functions/sync-subscription-status", requireFirebaseUser, billingSyncRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
-    const result = await syncStripeBilling(req.user.uid, {
+    const checkoutSessionId = String(req.body?.session_id || "").trim();
+    let result = null;
+    if (checkoutSessionId || stripeSecretKey()) {
+      result = await syncStripeBilling(req.user.uid, {
+        email: req.user.email,
+        checkoutSessionId,
+      });
+    }
+    const mercadoPagoResult = await syncMercadoPagoBilling(req.user.uid, {
       email: req.user.email,
-      checkoutSessionId: String(req.body?.session_id || "").trim(),
+      paymentId: String(req.body?.payment_id || "").trim(),
     });
+    if (mercadoPagoResult) result = mercadoPagoResult;
+    if (!result) result = await ensureBillingAccount(req.user.uid, req.user.email);
     res.json({ success: true, ...result, payment_capabilities: await stripePaymentCapabilities() });
   } catch (error) {
     console.error(error);
@@ -1564,10 +1923,28 @@ app.post("/functions/sync-subscription-status", requireFirebaseUser, billingSync
 app.post("/functions/sync-billing-status", requireFirebaseUser, billingSyncRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
-    const result = await syncStripeBilling(req.user.uid, {
+    const checkoutSessionId = String(req.body?.session_id || "").trim();
+    let result = null;
+    if (checkoutSessionId || stripeSecretKey()) {
+      try {
+        result = await syncStripeBilling(req.user.uid, {
+          email: req.user.email,
+          checkoutSessionId,
+        });
+      } catch (stripeError) {
+        if (checkoutSessionId) throw stripeError;
+        console.warn("Stripe sync skipped during billing refresh", {
+          requestId: req.requestId,
+          message: stripeError?.message || "stripe_sync_failed",
+        });
+      }
+    }
+    const mercadoPagoResult = await syncMercadoPagoBilling(req.user.uid, {
       email: req.user.email,
-      checkoutSessionId: String(req.body?.session_id || "").trim(),
+      paymentId: String(req.body?.payment_id || "").trim(),
     });
+    if (mercadoPagoResult) result = mercadoPagoResult;
+    if (!result) result = await ensureBillingAccount(req.user.uid, req.user.email);
     res.json({ success: true, ...result, payment_capabilities: await stripePaymentCapabilities() });
   } catch (error) {
     console.error(error);
@@ -1582,6 +1959,69 @@ app.get("/functions/stripe-webhook", (_req, res) => {
   res.json({ ok: true, service: "StudiosBook webhook" });
 });
 
+app.get("/functions/mercado-pago-webhook", (_req, res) => {
+  res.json({ ok: true, service: "StudiosBook Mercado Pago webhook" });
+});
+
+app.post("/functions/mercado-pago-webhook", async (req, res) => {
+  if (!requireFirebaseAdminSdk(res)) return;
+  if (!mercadoPagoWebhookSecret()) {
+    return res.status(503).json({ error: "Webhook Mercado Pago não configurado." });
+  }
+
+  const validation = validateMercadoPagoWebhook(req);
+  if (!validation.valid) {
+    return res.status(401).json({ error: "Assinatura do webhook Mercado Pago inválida." });
+  }
+
+  const dataId = validation.dataId || paymentWebhookDataId(req);
+  const eventType = String(req.body?.action || req.body?.type || req.query?.type || "payment").toLowerCase();
+  if (!dataId) return res.json({ received: true, ignored: true });
+
+  const eventId = req.body?.id
+    ? `mp_event_${req.body.id}`
+    : `mp_${eventType}_${dataId}_${String(req.headers["x-request-id"] || randomUUID())}`;
+  const eventRef = adminDb.collection("MercadoPagoWebhookEvent").doc(
+    String(eventId).replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 180)
+  );
+
+  try {
+    const claimed = await claimMercadoPagoWebhookEvent(eventRef.id, eventType);
+    if (!claimed) return res.json({ received: true, duplicate: true });
+
+    const payment = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(dataId)}`);
+    const uid = mercadoPagoPaymentUid(payment);
+    if (!uid) throw new Error("Webhook Mercado Pago sem vínculo com conta StudiosBook.");
+    await applyMercadoPagoPixPayment(uid, payment, { eventType });
+    await eventRef.set(
+      {
+        status: "processed",
+        mercado_pago_payment_id: dataId,
+        updated_date: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+    return res.json({ received: true });
+  } catch (error) {
+    console.error("Mercado Pago webhook processing error", {
+      requestId: req.requestId,
+      eventType,
+      dataId,
+      message: error?.message,
+    });
+    await eventRef.set(
+      {
+        status: "failed",
+        mercado_pago_payment_id: dataId,
+        error: String(error?.message || "processing_failed").slice(0, 240),
+        updated_date: new Date().toISOString(),
+      },
+      { merge: true }
+    ).catch(() => {});
+    return res.status(500).json({ error: "Falha ao processar evento Mercado Pago." });
+  }
+});
+
 app.post("/functions/admin-session", requirePlatformAdmin, adminRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   await safeAdminAudit(req, "admin.session.validated");
@@ -1590,7 +2030,11 @@ app.post("/functions/admin-session", requirePlatformAdmin, adminRateLimit, async
     admin: {
       uid: req.user.uid,
       email: req.user.email,
-      role: "platform_admin",
+      role:
+        req.user.platformRole === "master_admin" &&
+        String(req.user.email || "").toLowerCase() === MASTER_ADMIN_EMAIL
+          ? "master_admin"
+          : "platform_admin",
     },
   });
 });
@@ -1622,6 +2066,7 @@ app.post("/functions/admin-overview", requirePlatformAdmin, adminRateLimit, asyn
         displayName: authUser.displayName || workspace.profile?.owner_name || "",
         disabled: Boolean(authUser.disabled),
         platform_admin: Boolean(authUser.platformAdmin),
+        platform_role: authUser.platformRole || "",
         creationTime: authUser.creationTime || "",
         lastSignInTime: authUser.lastSignInTime || "",
         providers: authUser.providers || [],
@@ -1652,6 +2097,8 @@ app.post("/functions/admin-overview", requirePlatformAdmin, adminRateLimit, asyn
         acc.records += user.counts.ServiceRecord || 0;
         acc.appointments += user.counts.Appointment || 0;
         if (user.access?.allowed) acc.active_subscriptions += 1;
+        if (user.subscription?.admin_access_override === "active") acc.manual_access_users += 1;
+        if (user.subscription?.admin_access_override === "suspended") acc.suspended_subscriptions += 1;
         if (user.subscription?.status === "trialing") acc.trialing_users += 1;
         if (user.subscription?.status === "expired") acc.expired_users += 1;
         if (user.latest_payment?.status === "pending") acc.pending_payments += 1;
@@ -1664,6 +2111,8 @@ app.post("/functions/admin-overview", requirePlatformAdmin, adminRateLimit, asyn
         records: 0,
         appointments: 0,
         active_subscriptions: 0,
+        manual_access_users: 0,
+        suspended_subscriptions: 0,
         trialing_users: 0,
         expired_users: 0,
         pending_payments: 0,
@@ -1696,13 +2145,20 @@ app.post("/functions/admin-overview", requirePlatformAdmin, adminRateLimit, asyn
 app.post("/functions/admin-payment-diagnostics", requirePlatformAdmin, adminRateLimit, async (req, res) => {
   if (!requireFirebaseAdminSdk(res)) return;
   try {
-    const [balance, price, webhookEvents, paymentCapabilities] = await Promise.all([
-      stripeClient().balance.retrieve(),
-      stripeClient().prices.retrieve(stripePriceId()),
+    const paymentCapabilities = await stripePaymentCapabilities(true);
+    const [balanceResult, priceResult, webhookEvents, mercadoPagoWebhookEvents, mercadoPagoUserResult] = await Promise.allSettled([
+      stripeSecretKey() ? stripeClient().balance.retrieve() : Promise.resolve(null),
+      stripePriceId() ? stripeClient().prices.retrieve(stripePriceId()) : Promise.resolve(null),
       adminDb.collection("StripeWebhookEvent").limit(50).get(),
-      stripePaymentCapabilities(true),
+      adminDb.collection("MercadoPagoWebhookEvent").limit(50).get(),
+      mercadoPagoAccessToken() ? mercadoPagoRequest("/users/me") : Promise.resolve(null),
     ]);
-    const eventRows = webhookEvents.docs.map((doc) => doc.data());
+    const balance = balanceResult.status === "fulfilled" ? balanceResult.value : null;
+    const price = priceResult.status === "fulfilled" ? priceResult.value : null;
+    const eventRows = webhookEvents.status === "fulfilled" ? webhookEvents.value.docs.map((doc) => doc.data()) : [];
+    const mercadoPagoEventRows =
+      mercadoPagoWebhookEvents.status === "fulfilled" ? mercadoPagoWebhookEvents.value.docs.map((doc) => doc.data()) : [];
+    const mercadoPagoUser = mercadoPagoUserResult.status === "fulfilled" ? mercadoPagoUserResult.value : null;
     await safeAdminAudit(req, "admin.payments.diagnostics");
     res.json({
       success: true,
@@ -1711,11 +2167,19 @@ app.post("/functions/admin-payment-diagnostics", requirePlatformAdmin, adminRate
       recurring_price_ready: price?.active === true && price?.currency === "brl",
       recurring_amount: Number(price?.unit_amount || 0) / 100,
       pix_available: paymentCapabilities.pix,
+      pix_provider: paymentCapabilities.pix_provider || "",
+      mercado_pago_api: mercadoPagoUser?.id ? "online" : mercadoPagoAccessToken() ? "error" : "unconfigured",
+      mercado_pago_mode: mercadoPagoTokenMode(),
       webhook_ready: Boolean(stripeWebhookSecret()),
       webhook_url: STRIPE_WEBHOOK_URL,
+      mercado_pago_webhook_ready: Boolean(mercadoPagoWebhookSecret()),
+      mercado_pago_webhook_url: MERCADO_PAGO_WEBHOOK_URL,
       webhook_events: eventRows.length,
       webhook_processed: eventRows.filter((event) => event.status === "processed").length,
       webhook_failed: eventRows.filter((event) => event.status === "failed").length,
+      mercado_pago_webhook_events: mercadoPagoEventRows.length,
+      mercado_pago_webhook_processed: mercadoPagoEventRows.filter((event) => event.status === "processed").length,
+      mercado_pago_webhook_failed: mercadoPagoEventRows.filter((event) => event.status === "failed").length,
       checked_at: new Date().toISOString(),
     });
   } catch (error) {
@@ -1776,6 +2240,103 @@ app.post("/functions/admin-update-subscription", requirePlatformAdmin, requireRe
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Erro ao atualizar assinatura.", request_id: req.requestId });
+  }
+});
+
+app.post("/functions/admin-set-subscription-override", requireMasterAdmin, requireRecentAdminAuth, adminRateLimit, async (req, res) => {
+  if (!requireFirebaseAdminSdk(res)) return;
+
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    const action = String(req.body?.action || "").trim().toLowerCase();
+    const reason = String(req.body?.reason || "Ajuste administrativo").trim().slice(0, 200);
+    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(uid)) {
+      return res.status(400).json({ error: "UID inválido." });
+    }
+    if (!new Set(["grant", "suspend", "automatic"]).has(action)) {
+      return res.status(400).json({ error: "Ação de assinatura inválida." });
+    }
+    const targetUser = await adminAuth.getUser(uid);
+
+    const now = new Date();
+    const current = await currentSubscription(uid);
+    const patch = {
+      user_email: targetUser.email || current.data?.user_email || "",
+      admin_access_override: action === "grant" ? "active" : action === "suspend" ? "suspended" : "",
+      admin_override_until: "",
+      admin_override_reason: action === "automatic" ? "" : reason,
+      admin_override_updated_at: now.toISOString(),
+      admin_override_updated_by: req.user.email,
+    };
+
+    let grantedDays = 0;
+    if (action === "grant") {
+      grantedDays = Number(req.body?.days || 30);
+      if (!Number.isInteger(grantedDays) || grantedDays < 1 || grantedDays > 3650) {
+        return res.status(400).json({ error: "Informe um período entre 1 e 3650 dias." });
+      }
+      patch.admin_override_until = addDays(now, grantedDays).toISOString();
+    }
+
+    const result = await persistBillingState(uid, patch, { email: patch.user_email });
+
+    await safeAdminAudit(req, `admin.subscription.${action}`, {
+      target_uid: uid,
+      metadata: {
+        reason: patch.admin_override_reason,
+        days: grantedDays,
+        override_until: patch.admin_override_until,
+      },
+    });
+
+    res.json({ success: true, action, ...result });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erro ao alterar o acesso da assinatura.", request_id: req.requestId });
+  }
+});
+
+app.post("/functions/admin-set-stripe-renewal", requireMasterAdmin, requireRecentAdminAuth, adminRateLimit, async (req, res) => {
+  if (!requireFirebaseAdminSdk(res)) return;
+
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    if (typeof req.body?.cancel_at_period_end !== "boolean") {
+      return res.status(400).json({ error: "Informe uma opção válida para a renovação." });
+    }
+    const cancelAtPeriodEnd = req.body.cancel_at_period_end;
+    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(uid)) {
+      return res.status(400).json({ error: "UID inválido." });
+    }
+
+    const current = await currentSubscription(uid);
+    const subscriptionId = String(current.data?.stripe_subscription_id || "").trim();
+    if (!subscriptionId) {
+      return res.status(400).json({ error: "Esta conta não possui assinatura recorrente na Stripe." });
+    }
+
+    const existing = await stripeClient().subscriptions.retrieve(subscriptionId);
+    const ownerUid = stripeObjectUid(existing);
+    if (ownerUid && ownerUid !== uid) {
+      return res.status(409).json({ error: "A assinatura não pertence a esta conta." });
+    }
+    assertStripeSubscriptionPlan(existing);
+
+    const updated = await stripeClient().subscriptions.update(subscriptionId, {
+      cancel_at_period_end: cancelAtPeriodEnd,
+    });
+    const result = await applyStripeSubscription(uid, updated);
+
+    await safeAdminAudit(req, "admin.subscription.renewal_changed", {
+      target_uid: uid,
+      metadata: { subscription_id: subscriptionId, cancel_at_period_end: cancelAtPeriodEnd },
+    });
+
+    res.json({ success: true, cancel_at_period_end: cancelAtPeriodEnd, ...result });
+  } catch (error) {
+    console.error(error);
+    const status = error?.statusCode && error.statusCode < 500 ? 422 : 500;
+    res.status(status).json({ error: "Erro ao alterar a renovação da assinatura.", request_id: req.requestId });
   }
 });
 

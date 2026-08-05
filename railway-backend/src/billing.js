@@ -30,6 +30,8 @@ export function trialFromAccountCreation(creationTime, now = new Date()) {
 
 export function billingAccess(subscription = {}, now = new Date()) {
   const currentTime = new Date(now).getTime();
+  const adminOverride = String(subscription.admin_access_override || "").toLowerCase();
+  const adminOverrideUntil = new Date(subscription.admin_override_until || 0).getTime();
   const status = String(subscription.status || "not_started").toLowerCase();
   const providerStatus = String(subscription.stripe_subscription_status || "").toLowerCase();
   const paymentStatus = String(subscription.last_payment_status || "").toLowerCase();
@@ -37,6 +39,24 @@ export function billingAccess(subscription = {}, now = new Date()) {
   const periodEnd = new Date(subscription.current_period_end || 0).getTime();
   const trialActive = Number.isFinite(trialEnd) && trialEnd > currentTime;
   const paidPeriodActive = Number.isFinite(periodEnd) && periodEnd > currentTime;
+
+  if (adminOverride === "suspended") {
+    return { allowed: false, reason: "admin_suspended", status: "suspended", daysLeft: 0, expiresAt: "" };
+  }
+
+  const adminOverrideIsCurrent =
+    adminOverride === "active" &&
+    Number.isFinite(adminOverrideUntil) &&
+    adminOverrideUntil > currentTime;
+  if (adminOverrideIsCurrent) {
+    return {
+      allowed: true,
+      reason: "admin_override",
+      status: "authorized",
+      daysLeft: Math.ceil((adminOverrideUntil - currentTime) / 86400000),
+      expiresAt: new Date(adminOverrideUntil).toISOString(),
+    };
+  }
 
   const revokedStatuses = new Set(["refunded", "charged_back", "blocked", "revoked"]);
   const revokedStatus = [
@@ -47,7 +67,7 @@ export function billingAccess(subscription = {}, now = new Date()) {
   ].find((value) => revokedStatuses.has(String(value || "").toLowerCase()));
   if (revokedStatus) {
     const normalized = String(revokedStatus).toLowerCase();
-    return { allowed: false, reason: normalized, status: normalized, daysLeft: 0 };
+    return { allowed: false, reason: normalized, status: normalized, daysLeft: 0, expiresAt: "" };
   }
 
   if (paidPeriodActive) {
@@ -56,6 +76,7 @@ export function billingAccess(subscription = {}, now = new Date()) {
       reason: "paid_period_active",
       status: "active",
       daysLeft: Math.ceil((periodEnd - currentTime) / 86400000),
+      expiresAt: new Date(periodEnd).toISOString(),
     };
   }
 
@@ -65,6 +86,7 @@ export function billingAccess(subscription = {}, now = new Date()) {
       reason: "trial_active",
       status: "trialing",
       daysLeft: Math.ceil((trialEnd - currentTime) / 86400000),
+      expiresAt: new Date(trialEnd).toISOString(),
     };
   }
 
@@ -79,14 +101,14 @@ export function billingAccess(subscription = {}, now = new Date()) {
     "incomplete_expired",
   ]);
   if (failedStatuses.has(paymentStatus) || failedStatuses.has(status) || failedStatuses.has(providerStatus)) {
-    return { allowed: false, reason: "payment_failed", status: "payment_failed", daysLeft: 0 };
+    return { allowed: false, reason: "payment_failed", status: "payment_failed", daysLeft: 0, expiresAt: "" };
   }
 
   if (paymentStatus === "pending" || ["pending", "trialing", "paused"].includes(providerStatus)) {
-    return { allowed: false, reason: "payment_pending", status: "pending", daysLeft: 0 };
+    return { allowed: false, reason: "payment_pending", status: "pending", daysLeft: 0, expiresAt: "" };
   }
 
-  return { allowed: false, reason: "trial_expired", status: "expired", daysLeft: 0 };
+  return { allowed: false, reason: "trial_expired", status: "expired", daysLeft: 0, expiresAt: "" };
 }
 
 export function stripeTimestampToIso(value) {
@@ -138,6 +160,53 @@ export function validatePixPayment(paymentIntent = {}, options = {}) {
   if (currency !== String(options.currency || "brl").toLowerCase()) return { valid: false, reason: "currency_mismatch" };
   if (options.productName && product !== options.productName) return { valid: false, reason: "product_mismatch" };
   if (options.requireLiveMode === true && paymentIntent.livemode !== true) return { valid: false, reason: "live_mode_required" };
+  return { valid: true, reason: "verified" };
+}
+
+export function mercadoPagoPaymentStatus(payment = {}) {
+  const status = String(payment.status || "").toLowerCase();
+  if (status === "approved") return "approved";
+  if (["pending", "in_process", "in_mediation", "authorized"].includes(status)) return "pending";
+  if (["cancelled", "canceled"].includes(status)) return "cancelled";
+  if (status === "refunded") return "refunded";
+  if (status === "charged_back") return "charged_back";
+  if (["rejected", "expired"].includes(status)) return "rejected";
+  return status || "pending";
+}
+
+export function mercadoPagoPaymentUid(payment = {}) {
+  const metadataUid = String(
+    payment?.metadata?.studiosbook_uid ||
+      payment?.metadata?.user_uid ||
+      payment?.additional_info?.items?.[0]?.id ||
+      ""
+  ).trim();
+  if (metadataUid) return metadataUid;
+
+  const externalReference = String(payment.external_reference || "").trim();
+  const colonMatch = externalReference.match(/^studiosbook:([^:]+):/);
+  if (colonMatch?.[1]) return colonMatch[1];
+  const dashMatch = externalReference.match(/^studiosbook-([A-Za-z0-9_-]+)-/);
+  return dashMatch?.[1] || "";
+}
+
+export function validateMercadoPagoPixPayment(payment = {}, options = {}) {
+  const expectedAmount = Number(options.expectedAmount || 0);
+  const amount = Number(payment.transaction_amount || 0);
+  const currency = String(payment.currency_id || "").toUpperCase();
+  const product = String(payment.metadata?.product || "");
+  const externalReference = String(payment.external_reference || "");
+  const methodId = String(payment.payment_method_id || payment.payment_method?.id || "").toLowerCase();
+  const methodType = String(payment.payment_type_id || payment.payment_method?.type || "").toLowerCase();
+
+  if (methodId !== "pix" && methodType !== "bank_transfer") return { valid: false, reason: "payment_method_mismatch" };
+  if (!Number.isFinite(expectedAmount) || expectedAmount <= 0) return { valid: false, reason: "invalid_expected_amount" };
+  if (Math.abs(amount - expectedAmount) > 0.001) return { valid: false, reason: "amount_mismatch" };
+  if (currency && currency !== String(options.currency || "BRL").toUpperCase()) return { valid: false, reason: "currency_mismatch" };
+  if (options.productName && product !== options.productName && !externalReference.startsWith("studiosbook:")) {
+    return { valid: false, reason: "product_mismatch" };
+  }
+  if (options.requireLiveMode === true && payment.live_mode !== true) return { valid: false, reason: "live_mode_required" };
   return { valid: true, reason: "verified" };
 }
 

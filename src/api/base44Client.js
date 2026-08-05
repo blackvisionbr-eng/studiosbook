@@ -19,6 +19,10 @@ import {
   doc,
   getDocs,
   getFirestore,
+  limit as firestoreLimit,
+  onSnapshot,
+  orderBy,
+  query,
   updateDoc,
 } from "firebase/firestore";
 import {
@@ -28,6 +32,7 @@ import {
   ref as storageRef,
   uploadBytes,
 } from "firebase/storage";
+import { sanitizeFirestorePayload } from "../lib/firestorePayload.js";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs",
@@ -44,6 +49,7 @@ const apiBaseUrls = (import.meta.env.VITE_API_BASE_URLS || import.meta.env.VITE_
   .filter(Boolean);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+auth.languageCode = "pt-BR";
 const db = getFirestore(app);
 const storage = getStorage(app);
 
@@ -107,6 +113,19 @@ function sortRows(rows, sort) {
   });
 }
 
+function queryWithSortAndLimit(ref, sort, limitCount) {
+  const constraints = [];
+  if (sort) {
+    const descending = String(sort).startsWith("-");
+    const field = descending ? String(sort).slice(1) : String(sort);
+    if (field) constraints.push(orderBy(field, descending ? "desc" : "asc"));
+  }
+  if (Number.isFinite(Number(limitCount)) && Number(limitCount) > 0) {
+    constraints.push(firestoreLimit(Number(limitCount)));
+  }
+  return constraints.length ? query(ref, ...constraints) : ref;
+}
+
 function matchesFilter(row, filter = {}) {
   return Object.entries(filter).every(([key, value]) => row?.[key] === value);
 }
@@ -116,7 +135,8 @@ function createEntity(entityName) {
     async list(sort, limitCount = 500) {
       const user = await requireUser();
       const ref = collection(db, ...entityPath(user.uid, entityName));
-      const snapshots = await getDocs(ref);
+      const target = queryWithSortAndLimit(ref, sort, limitCount);
+      const snapshots = await getDocs(target);
       const rows = snapshots.docs.map(serializeDoc);
       return sortRows(rows, sort).slice(0, limitCount || rows.length);
     },
@@ -129,12 +149,12 @@ function createEntity(entityName) {
     async create(data) {
       const user = await requireUser();
       const now = new Date().toISOString();
-      const payload = {
+      const payload = sanitizeFirestorePayload({
         ...data,
         created_by: user.email || user.uid,
         created_date: data?.created_date || now,
         updated_date: now,
-      };
+      });
       const ref = await addDoc(collection(db, ...entityPath(user.uid, entityName)), payload);
       return { id: ref.id, ...payload };
     },
@@ -142,10 +162,10 @@ function createEntity(entityName) {
     async update(id, data) {
       const user = await requireUser();
       const now = new Date().toISOString();
-      const payload = {
+      const payload = sanitizeFirestorePayload({
         ...data,
         updated_date: now,
-      };
+      });
       await updateDoc(doc(db, ...entityPath(user.uid, entityName), id), payload);
       return { id, ...payload };
     },
@@ -156,6 +176,16 @@ function createEntity(entityName) {
       return { success: true };
     },
   };
+}
+
+function subscribeBillingAccess(onChange, onError) {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Login obrigatório.");
+  return onSnapshot(
+    doc(db, "users", user.uid),
+    (snapshot) => onChange(snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null),
+    onError
+  );
 }
 
 function assertProcedurePhoto(file) {
@@ -248,8 +278,13 @@ async function invokeFunction(name, data = {}) {
 export const base44 = {
   auth: {
     async isAuthenticated() {
+      const user = await currentUser();
+      if (user) {
+        void redirectResultReady;
+        return true;
+      }
       await redirectResultReady;
-      return Boolean(await currentUser());
+      return Boolean(auth.currentUser);
     },
     getLastRedirectError() {
       return lastRedirectError;
@@ -284,6 +319,7 @@ export const base44 = {
       await sendEmailVerification(credential.user, {
         url: "https://studiosbook.com.br/",
         handleCodeInApp: false,
+        linkDomain: "studiosbook.com.br",
       }).catch((error) => console.warn("E-mail de verificação não enviado", error?.code || error?.message));
       await credential.user.getIdToken(true);
       return toBaseUser(credential.user);
@@ -292,6 +328,7 @@ export const base44 = {
       await sendPasswordResetEmail(auth, String(email || "").trim().toLowerCase(), {
         url: "https://studiosbook.com.br/",
         handleCodeInApp: false,
+        linkDomain: "studiosbook.com.br",
       });
       return { success: true };
     },
@@ -310,6 +347,9 @@ export const base44 = {
   },
   functions: {
     invoke: invokeFunction,
+  },
+  billing: {
+    subscribeAccess: subscribeBillingAccess,
   },
   storage: {
     uploadProcedurePhoto,

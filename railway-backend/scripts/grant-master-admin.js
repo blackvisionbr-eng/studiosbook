@@ -32,25 +32,13 @@ function serviceAccount() {
   };
 }
 
-const email = String(process.env.ADMIN_BOOTSTRAP_EMAIL || "").trim().toLowerCase();
-const password = String(process.env.ADMIN_BOOTSTRAP_PASSWORD || "");
-if (!email || !password || password.length < 8) {
-  throw new Error("Defina ADMIN_BOOTSTRAP_EMAIL e uma ADMIN_BOOTSTRAP_PASSWORD com pelo menos 8 caracteres.");
-}
-
+const email = String(process.env.MASTER_ADMIN_EMAIL || "getblackvision.br@gmail.com").trim().toLowerCase();
 const projectId = process.env.FIREBASE_PROJECT_ID || "blackvision-27f1c";
 if (!getApps().length) initializeApp({ credential: cert(serviceAccount()), projectId });
+
 const auth = getAuth();
-
-let user;
-try {
-  user = await auth.getUserByEmail(email);
-  user = await auth.updateUser(user.uid, { password, emailVerified: true, disabled: false });
-} catch (error) {
-  if (error?.code !== "auth/user-not-found") throw error;
-  user = await auth.createUser({ email, password, emailVerified: true, disabled: false });
-}
-
+const user = await auth.getUserByEmail(email);
+await auth.updateUser(user.uid, { emailVerified: true, disabled: false });
 await auth.setCustomUserClaims(user.uid, {
   ...(user.customClaims || {}),
   platform_admin: true,

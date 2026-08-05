@@ -13,6 +13,7 @@
     "retest:refund": "node scripts/retest-refund-webhook.js",
     "e2e:stripe": "node scripts/e2e-stripe-sandbox.js",
     "bootstrap:admin": "node scripts/bootstrap-admin.js",
+    "grant:master-admin": "node scripts/grant-master-admin.js",
     "audit:billing": "node scripts/audit-billing-account.js",
     "reconcile:billing": "node scripts/reconcile-billing-account.js"
   },

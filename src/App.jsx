@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import {
   serviceBelongsToCatalog,
 } from "@/lib/serviceCatalog";
 import { toCsv } from "@/lib/csv";
-import { hasBillingAccessNow } from "@/lib/billingAccess";
+import { billingAccessFromRoot, hasBillingAccessNow, shouldForceBillingTab } from "@/lib/billingAccess";
 import {
   Activity,
   AlertTriangle,
@@ -18,6 +18,7 @@ import {
   CalendarDays,
   Camera,
   CheckCircle2,
+  CirclePlay,
   Clock,
   Cloud,
   Copy,
@@ -70,6 +71,7 @@ const PRODUCT_NAME = "StudiosBook";
 const PRODUCT_COMPANY = "BlackVision";
 const PRODUCT_PRICE = "R$ 26,90/mês";
 const OFFICIAL_APP_URL = "https://studiosbook.com.br";
+const YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@Studiosbook";
 const SUPPORT_EMAIL = "getblackvision.br@gmail.com";
 const SUPPORT_PHONE = "73981068594";
 const WHATSAPP_DEFAULT = "";
@@ -442,7 +444,7 @@ function authErrorMessage(error) {
     return "Este e-mail já possui uma conta. Entre com a senha ou use o Google.";
   }
   if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) {
-    return "E-mail ou senha inválidos.";
+    return "Conta não encontrada ou senha incorreta. Confira os dados ou crie uma conta.";
   }
   if (code.includes("weak-password")) {
     return "Use uma senha mais forte, com pelo menos 8 caracteres.";
@@ -974,6 +976,28 @@ export default function App() {
     error?.message ||
     "Não foi possível salvar. Verifique os campos e tente novamente.";
 
+  const applyBillingState = (result = {}) => {
+    setBillingSubscription(result?.subscription || null);
+    setBillingAccess(result?.access || null);
+    setPixPayment(result?.payment || result?.latest_payment || null);
+    setBillingCapabilities(result?.payment_capabilities || { card_recurring: true, pix: false });
+    setBillingClock(Date.now());
+  };
+
+  const syncBillingBootstrap = async ({ silent = true } = {}) => {
+    try {
+      const result = await base44.functions.invoke("ensure-billing-account", {});
+      applyBillingState(result);
+      return result;
+    } catch (billingError) {
+      console.warn("Billing bootstrap unavailable", billingError?.data?.code || billingError?.message);
+      if (!silent) {
+        showFeedback("Não foi possível sincronizar a assinatura agora. Tente atualizar o status em instantes.", "error");
+      }
+      return null;
+    }
+  };
+
   const loadAuth = async () => {
     try {
       const authenticated = await base44.auth.isAuthenticated();
@@ -994,31 +1018,24 @@ export default function App() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      let ensuredBilling = null;
-      try {
-        ensuredBilling = await base44.functions.invoke("ensure-billing-account", {});
-      } catch (billingError) {
-        console.error("Billing bootstrap error", billingError);
-      }
-      const [clientData, recordData, appointmentData, profileData, snapshotData, billingData] = await Promise.all([
+      const [clientData, recordData, appointmentData, profileData, billingData] = await Promise.all([
         Client.list("-updated_date", 500),
         ServiceRecord.list("-procedure_date", 500),
         Appointment.list("appointment_date", 500),
         StudioProfile.list("-updated_date", 20),
-        BackupSnapshot.list("-snapshot_date", 20),
         BillingSubscription.list("-updated_date", 5),
       ]);
       const normalizedProfile = normalizeProfile(profileData?.[0], user);
       setClients(clientData || []);
       setRecords(recordData || []);
       setAppointments(appointmentData || []);
-      setBackupSnapshots(snapshotData || []);
-      setBillingSubscription(ensuredBilling?.subscription || billingData?.[0] || null);
-      setBillingAccess(ensuredBilling?.access || null);
-      setPixPayment(ensuredBilling?.latest_payment || null);
-      setBillingCapabilities(ensuredBilling?.payment_capabilities || { card_recurring: true, pix: false });
+      setBillingSubscription(billingData?.[0] || null);
       setProfile(normalizedProfile);
       setProfileForm(normalizedProfile || createProfileForm(user));
+      void syncBillingBootstrap({ silent: true });
+      void BackupSnapshot.list("-snapshot_date", 20)
+        .then((snapshotData) => setBackupSnapshots(snapshotData || []))
+        .catch((snapshotError) => console.warn("Backup snapshots unavailable", snapshotError?.message));
     } catch (error) {
       console.error(error);
       showFeedback(`Erro ao carregar dados: ${getErrorMessage(error)}`, "error");
@@ -1095,13 +1112,42 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const billingLocked = !hasBillingAccessNow(billingSubscription, billingAccess, billingClock);
+  useEffect(() => {
+    if (!user) return undefined;
+    let unsubscribe = () => {};
+    try {
+      unsubscribe = base44.billing.subscribeAccess(
+        (root) => {
+          if (!root) return;
+          const nextAccess = billingAccessFromRoot(root, Date.now());
+          setBillingAccess(nextAccess);
+          setBillingSubscription((current) => ({
+            ...(current || {}),
+            status: nextAccess.status,
+            current_period_end: root.current_period_end || current?.current_period_end || "",
+            trial_end_date: root.trial_end_date || current?.trial_end_date || "",
+            admin_access_override: root.admin_access_override || "",
+            admin_override_until: root.admin_override_until || "",
+          }));
+          setBillingClock(Date.now());
+        },
+        (snapshotError) => console.warn("Atualização de acesso indisponível", snapshotError?.code || snapshotError?.message)
+      );
+    } catch (snapshotError) {
+      console.warn("Não foi possível acompanhar o acesso", snapshotError?.message);
+    }
+    return () => unsubscribe();
+  }, [user?.id]);
+
+  const billingStateReady = Boolean(billingSubscription || billingAccess);
+  const billingLocked = billingStateReady && !hasBillingAccessNow(billingSubscription, billingAccess, billingClock);
+  const mustResolveBilling = billingStateReady && shouldForceBillingTab(billingSubscription, billingAccess, billingClock);
 
   useEffect(() => {
-    if (billingLocked && !["billing", "security", "privacy"].includes(activeTab)) {
+    if (mustResolveBilling && !["billing", "security", "privacy"].includes(activeTab)) {
       setActiveTab("billing");
     }
-  }, [activeTab, billingLocked]);
+  }, [activeTab, mustResolveBilling]);
 
   useEffect(() => {
     if (!user || typeof window === "undefined") return;
@@ -1337,7 +1383,7 @@ export default function App() {
         ? await base44.auth.registerWithEmail(email, password, fullName)
         : await base44.auth.loginWithEmail(email, password);
       setUser(loggedUser);
-      showFeedback(mode === "register" ? "Conta criada. Enviamos a verificação do seu e-mail." : "Login realizado.");
+      showFeedback(mode === "register" ? "Conta criada. Enviamos a verificação do seu e-mail. Confira também Spam ou Lixo eletrônico." : "Login realizado.");
     } catch (error) {
       console.error(error);
       showFeedback(authErrorMessage(error), "error");
@@ -1354,7 +1400,7 @@ export default function App() {
     setActionLoading("password-reset");
     try {
       await base44.auth.sendPasswordReset(email);
-      showFeedback("Enviamos o link de redefinição para seu e-mail.");
+      showFeedback("Se houver uma conta ativa para este e-mail, enviaremos o link de redefinição. Confira também Spam ou Lixo eletrônico.");
     } catch (error) {
       console.error(error);
       showFeedback(authErrorMessage(error), "error");
@@ -1557,8 +1603,15 @@ export default function App() {
     setActionLoading("billing-pix");
     try {
       const result = await base44.functions.invoke("create-pix-payment", { app_url: window.location.origin });
-      if (!result?.url) throw new Error("A Stripe não retornou o endereço do Pix.");
-      window.location.assign(result.url);
+      const payment = result?.payment || result?.latest_payment;
+      if (!payment?.pix_qr_code && !payment?.pix_qr_code_base64 && !payment?.pix_ticket_url) {
+        throw new Error("O Mercado Pago não retornou os dados do QR Code Pix.");
+      }
+      setBillingSubscription(result?.subscription || billingSubscription);
+      setBillingAccess(result?.access || billingAccess);
+      setPixPayment(payment);
+      setBillingCapabilities(result?.payment_capabilities || billingCapabilities);
+      showFeedback("Pix gerado com segurança pelo Mercado Pago.");
       return result;
     } catch (error) {
       console.error(error);
@@ -1590,7 +1643,9 @@ export default function App() {
   const refreshBillingStatus = async () => {
     setActionLoading("billing-refresh");
     try {
-      const result = await base44.functions.invoke("sync-billing-status", {});
+      const result = await base44.functions.invoke("sync-billing-status", {
+        payment_id: pixPayment?.mercado_pago_payment_id || "",
+      });
       setBillingSubscription(result?.subscription || billingSubscription);
       setBillingAccess(result?.access || billingAccess);
       setPixPayment(result?.payment || result?.latest_payment || pixPayment);
@@ -1697,9 +1752,9 @@ export default function App() {
           : selectedService?.duration_minutes,
         maintenance_days: maintenanceDays,
         amount: Number(serviceForm.amount || 0),
-        retention_percent: serviceForm.retention_percent
-          ? Number(serviceForm.retention_percent)
-          : undefined,
+        ...(serviceForm.retention_percent !== "" && serviceForm.retention_percent !== null
+          ? { retention_percent: Number(serviceForm.retention_percent) }
+          : {}),
         next_maintenance_date: nextMaintenance,
       });
       const photoPaths = {};
@@ -1842,7 +1897,7 @@ export default function App() {
         adhesive: "Produto padrão",
         duration_minutes: service.duration_minutes,
         maintenance_days: maintenanceDays,
-        retention_percent: service.category === "lash_design" ? 55 : undefined,
+        ...(service.category === "lash_design" ? { retention_percent: 55 } : {}),
         amount: service.price || 0,
         payment_status: "paid",
         next_maintenance_date: maintenanceDate,
@@ -1894,7 +1949,7 @@ export default function App() {
     );
   }
 
-  if (!isLoading && billingLocked && !profile) {
+  if (!isLoading && mustResolveBilling && !profile) {
     return (
       <BillingAccessScreen
         user={user}
@@ -2696,11 +2751,26 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
                 {actionLoading === "email-auth" ? "Validando..." : mode === "register" ? "Criar minha conta" : "Entrar com e-mail"}
               </Button>
               {mode === "login" && (
-                <button type="button" disabled={actionLoading === "password-reset"} onClick={() => onPasswordReset(form.email)} className="min-h-10 text-sm font-bold text-[#7f3158] disabled:opacity-50">
-                  {actionLoading === "password-reset" ? "Enviando..." : "Esqueci minha senha"}
-                </button>
+                <div className="grid gap-1 text-center">
+                  <button type="button" disabled={actionLoading === "password-reset"} onClick={() => onPasswordReset(form.email)} className="min-h-10 text-sm font-bold text-[#7f3158] disabled:opacity-50">
+                    {actionLoading === "password-reset" ? "Enviando..." : "Esqueci minha senha"}
+                  </button>
+                  <p className="text-xs leading-5 text-zinc-500">Não recebeu? Verifique Spam ou Lixo eletrônico e marque a mensagem como “Não é spam”.</p>
+                </div>
               )}
             </form>
+
+            <a
+              href={YOUTUBE_CHANNEL_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-12 w-full min-w-0 items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-5 text-center text-sm font-black text-[#7f3158] transition hover:scale-[1.01] hover:border-rose-300 hover:bg-rose-100"
+              aria-label="Videoaulas (abre em uma nova aba)"
+            >
+              <CirclePlay className="h-5 w-5 shrink-0" aria-hidden="true" />
+              <span>Videoaulas</span>
+              <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
+            </a>
           </div>
           <p className="mt-4 text-sm text-zinc-500">
             Ao entrar, você declara que leu a{" "}
@@ -2730,9 +2800,29 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
 }
 
 function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, billingLocked }) {
+  const navigationRef = useRef(null);
+  const tabRefs = useRef(new Map());
   const accountTabs = billingLocked
     ? tabs.filter((tab) => ["billing", "security", "privacy"].includes(tab.id))
     : tabs;
+
+  useEffect(() => {
+    const navigation = navigationRef.current;
+    const selectedTab = tabRefs.current.get(activeTab);
+    if (!navigation || !selectedTab) return;
+    const navigationRect = navigation.getBoundingClientRect();
+    const selectedRect = selectedTab.getBoundingClientRect();
+    const maxScroll = Math.max(0, navigation.scrollWidth - navigation.clientWidth);
+    const targetLeft = Math.min(
+      maxScroll,
+      Math.max(
+        0,
+        navigation.scrollLeft + selectedRect.left - navigationRect.left -
+          (navigation.clientWidth - selectedRect.width) / 2
+      )
+    );
+    navigation.scrollTo({ left: targetLeft, behavior: "smooth" });
+  }, [activeTab, accountTabs.length]);
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/70 bg-white/95 sm:bg-white/80 sm:backdrop-blur-xl">
@@ -2748,14 +2838,19 @@ function AppHeader({ user, profile, activeTab, setActiveTab, onLogout, billingLo
           </Button>
         </div>
       </div>
-      <nav className="mx-auto flex max-w-7xl gap-2 overflow-x-auto overscroll-x-contain px-3 pb-3 sm:px-6 sm:pb-4 lg:px-8">
+      <nav ref={navigationRef} className="mx-auto flex max-w-7xl scroll-smooth gap-2 overflow-x-auto overscroll-x-contain px-3 pb-3 sm:px-6 sm:pb-4 lg:px-8">
         {accountTabs.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
           return (
             <button
               key={tab.id}
+              ref={(node) => {
+                if (node) tabRefs.current.set(tab.id, node);
+                else tabRefs.current.delete(tab.id);
+              }}
               onClick={() => setActiveTab(tab.id)}
+              aria-current={active ? "page" : undefined}
               className={`inline-flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-black transition ${
                 active
                   ? "bg-zinc-950 text-white shadow-lg"
@@ -2815,6 +2910,7 @@ function DashboardView({
               <QuickAction label="Registrar atendimento" icon={ShieldCheck} onClick={() => setActiveTab("service")} />
               <QuickAction label="Abrir agenda" icon={CalendarDays} onClick={() => setActiveTab("schedule")} />
               <QuickAction label="Retornos" icon={MessageCircle} onClick={() => setActiveTab("returns")} />
+              <QuickAction label="Videoaulas" icon={CirclePlay} href={YOUTUBE_CHANNEL_URL} />
             </div>
           </div>
           <div className="min-w-0 rounded-[1.25rem] border border-white/10 bg-white/10 p-4 sm:rounded-[1.75rem] sm:bg-white/8 sm:p-5 sm:backdrop-blur">
@@ -3711,6 +3807,9 @@ function BillingAccessScreen({
   feedback,
   feedbackType,
 }) {
+  const accessMessage = billingAccess?.reason === "admin_suspended"
+    ? "Seu acesso foi suspenso pelo administrador. Seus dados continuam salvos; fale com o suporte para revisar a liberação."
+    : "O período gratuito terminou. Seus dados continuam salvos; regularize o pagamento para voltar a editar agenda, clientes e atendimentos.";
   return (
     <div className="min-h-dvh bg-brand-ivory text-brand-charcoal">
       <header className="border-b border-white/70 bg-white sm:bg-white/85 sm:backdrop-blur-xl">
@@ -3729,7 +3828,7 @@ function BillingAccessScreen({
           </div>
         )}
         <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
-          O período gratuito terminou. Seus dados continuam salvos; regularize o pagamento para voltar a editar agenda, clientes e atendimentos.
+          {accessMessage}
         </div>
         <BillingView
           user={user}
@@ -3760,6 +3859,7 @@ function BillingView({
   onRefreshStatus,
   actionLoading,
 }) {
+  const [pixCopied, setPixCopied] = useState(false);
   const status = billingSubscription?.status || "not_started";
   const providerSubscriptionStatus =
     billingSubscription?.stripe_subscription_status ||
@@ -3786,6 +3886,19 @@ function BillingView({
   const supportHref = supportWhatsAppLink("Oi, preciso de suporte para ativar minha assinatura do StudiosBook.");
   const hasStripeCustomer = Boolean(billingSubscription?.stripe_customer_id);
   const pixAvailable = billingCapabilities?.pix === true;
+  const pixQrBase64 = pixPayment?.pix_qr_code_base64 || pixPayment?.qr_code_base64 || "";
+  const pixQrCode = pixPayment?.pix_qr_code || pixPayment?.qr_code || "";
+  const pixTicketUrl = pixPayment?.pix_ticket_url || pixPayment?.ticket_url || "";
+  const pixPaymentStatus = pixPayment?.provider === "mercado_pago" ? pixPayment?.status : "";
+  const hasPendingPix = pixPaymentStatus === "pending" && Boolean(pixQrBase64 || pixQrCode || pixTicketUrl);
+  const copyPixCode = async () => {
+    if (!pixQrCode) return;
+    await navigator.clipboard?.writeText(pixQrCode);
+    setPixCopied(true);
+    window.setTimeout(() => setPixCopied(false), 1800);
+  };
+  const manualAccessActive = billingAccess?.allowed === true && billingAccess?.reason === "admin_override";
+  const manualAccessUntil = billingAccess?.expiresAt || billingSubscription?.admin_override_until;
 
   return (
     <div className="grid gap-6">
@@ -3801,7 +3914,7 @@ function BillingView({
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
               {pixAvailable
-                ? "Checkout protegido pela Stripe, com cartão recorrente ou Pix avulso para 30 dias de acesso."
+                ? "Cartão recorrente pela Stripe ou Pix avulso via Mercado Pago para 30 dias de acesso."
                 : "Checkout protegido pela Stripe para assinatura mensal recorrente no cartão."}
             </p>
             <div className="mt-6 grid gap-3 sm:flex sm:flex-wrap">
@@ -3842,6 +3955,12 @@ function BillingView({
           </div>
 
           <div className="min-w-0 rounded-2xl border border-white/10 bg-white/10 p-4 sm:rounded-[1.75rem] sm:p-5 sm:backdrop-blur">
+            {manualAccessActive && (
+              <div className="mb-4 rounded-xl border border-emerald-300/25 bg-emerald-400/15 p-3 text-sm leading-6 text-emerald-50">
+                <p className="font-black">Acesso liberado pelo painel mestre</p>
+                <p>Válido até {formatDateTime(manualAccessUntil)}. Um eventual status “Cancelada” abaixo se refere somente à cobrança anterior da Stripe.</p>
+              </div>
+            )}
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-white/55">Status da conta</p>
@@ -3852,7 +3971,8 @@ function BillingView({
             <div className="mt-5 grid gap-3">
               <MiniMetric label="Profissional" value={user?.email || "-"} />
               <MiniMetric label="Plano" value={billingSubscription?.plan_name || "StudiosBook Intermediário"} />
-              <MiniMetric label="Assinatura Stripe" value={billingStatusLabel(providerSubscriptionStatus)} />
+              <MiniMetric label="Acesso ao aplicativo" value={billingStatusLabel(status)} />
+              <MiniMetric label="Cobrança recorrente Stripe" value={billingStatusLabel(providerSubscriptionStatus)} />
               <MiniMetric label="Último pagamento" value={billingStatusLabel(recurringPaymentStatus)} />
               <MiniMetric label="Teste grátis" value={trialEnd ? `${trialDaysLeft} dia(s) restantes` : "7 dias desde o cadastro"} />
               <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
@@ -3907,15 +4027,65 @@ function BillingView({
         {pixAvailable && <Panel>
           <PanelHeader
             title="Pagamento por Pix"
-            subtitle="Pagamento avulso de R$ 26,90, sem renovação automática, para liberar 30 dias."
+            subtitle="Pagamento avulso de R$ 26,90 via Mercado Pago, sem renovação automática, para liberar 30 dias."
           />
           <div className="mt-5 grid gap-4">
             <div className="flex min-w-0 items-start gap-3 rounded-[1.25rem] bg-emerald-50 p-4">
               <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
               <p className="min-w-0 text-sm leading-6 text-emerald-950">
-                O QR Code e a confirmação são exibidos no ambiente protegido da Stripe.
+                O QR Code é gerado pelo Mercado Pago e a liberação acontece após confirmação segura do pagamento.
               </p>
             </div>
+            {hasPendingPix && (
+              <div className="grid gap-4 rounded-[1.25rem] border border-emerald-200 bg-white p-4">
+                <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+                  {pixQrBase64 && (
+                    <img
+                      src={`data:image/png;base64,${pixQrBase64}`}
+                      alt="QR Code Pix Mercado Pago"
+                      className="h-44 w-44 shrink-0 rounded-2xl border border-zinc-100 bg-white p-2 shadow-sm"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-black text-zinc-950">Pix aguardando pagamento</p>
+                    <p className="mt-1 text-sm leading-6 text-zinc-500">
+                      Pague pelo app do seu banco e toque em “Atualizar status” após a confirmação.
+                    </p>
+                    {pixPayment?.pix_expires_at && (
+                      <p className="mt-2 text-xs font-bold text-amber-700">
+                        Válido até {formatDateTime(pixPayment.pix_expires_at)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {pixQrCode && (
+                  <div className="min-w-0 rounded-2xl bg-zinc-50 p-3">
+                    <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400">Pix copia e cola</p>
+                    <p className="mt-2 max-h-24 overflow-auto break-all text-xs leading-5 text-zinc-600">{pixQrCode}</p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={copyPixCode}
+                      className="mt-3 h-10 w-full rounded-full bg-white text-zinc-950 hover:bg-emerald-50"
+                    >
+                      <Copy className="mr-2 h-4 w-4" />
+                      {pixCopied ? "Código copiado" : "Copiar código Pix"}
+                    </Button>
+                  </div>
+                )}
+                {pixTicketUrl && (
+                  <a
+                    href={pixTicketUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-10 items-center justify-center rounded-full bg-zinc-950 px-4 text-sm font-black text-white transition hover:bg-zinc-800"
+                  >
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Abrir no Mercado Pago
+                  </a>
+                )}
+              </div>
+            )}
             <Button
               type="button"
               onClick={onCreatePix}
@@ -3923,7 +4093,7 @@ function BillingView({
               className="h-12 w-full rounded-full bg-emerald-600 px-4 text-white hover:bg-emerald-700"
             >
               <QrCode className="mr-2 h-4 w-4" />
-              {actionLoading === "billing-pix" ? "Abrindo Stripe..." : "Pagar R$ 26,90 por Pix"}
+              {actionLoading === "billing-pix" ? "Gerando Pix..." : hasPendingPix ? "Gerar novo Pix" : "Pagar R$ 26,90 por Pix"}
             </Button>
           </div>
         </Panel>}
@@ -4577,11 +4747,31 @@ function PanelHeader({ title, subtitle, action }) {
   );
 }
 
-function QuickAction({ label, icon: Icon, onClick }) {
+function QuickAction({ label, icon: Icon, onClick, href }) {
+  const className =
+    "inline-flex min-w-0 max-w-full items-center gap-2 rounded-full bg-white px-4 py-2 text-center text-sm font-black leading-tight text-zinc-950 transition hover:scale-[1.02] hover:bg-rose-50";
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={className}
+        aria-label={`${label} (abre em uma nova aba)`}
+      >
+        <Icon className="h-4 w-4 shrink-0 text-rose-700" />
+        {label}
+        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
+      </a>
+    );
+  }
+
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-full bg-white px-4 py-2 text-center text-sm font-black leading-tight text-zinc-950 transition hover:scale-[1.02] hover:bg-rose-50"
+      className={className}
     >
       <Icon className="h-4 w-4 shrink-0 text-rose-700" />
       {label}

@@ -1,25 +1,26 @@
 # StudiosBook
 
-Sistema privado para agenda, clientes, atendimentos, retornos, backups e assinatura mensal para profissionais da beleza.
+Sistema privado para agenda, clientes, atendimentos, retornos, controle de acesso e assinatura mensal para profissionais da beleza.
 
-## Infraestrutura atual
+## Stack
 
-- Frontend/PWA: React + Vite + Tailwind
-- Hospedagem: Firebase Hosting
-- Login e dados: Firebase Auth + Firestore
-- Backend de cobrança: Railway + Express
-- Cobrança: cartão recorrente e Pix mensal via Mercado Pago
-- Painel admin: aba `Admin` para `sobrinhonewton@gmail.com` e `getblackvision.br@gmail.com`
-- Domínio oficial: `https://studiosbook.com.br`
+- Frontend/PWA: React, Vite e Tailwind CSS.
+- Hospedagem: Firebase Hosting.
+- Login e dados: Firebase Auth e Firestore.
+- Backend de cobrança: Express em ambiente Railway.
+- Pagamentos: cartão recorrente e Pix.
+- Painel administrativo para gestão operacional e suporte.
 
 ## Desenvolvimento local
+
+Instale as dependências do frontend:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Backend Railway em desenvolvimento:
+Instale as dependências do backend:
 
 ```bash
 cd railway-backend
@@ -27,105 +28,63 @@ npm install
 npm start
 ```
 
-Crie um `.env` local a partir de `.env.example` e configure:
+Crie os arquivos `.env` locais a partir dos exemplos:
 
 ```bash
+cp .env.example .env
+cp railway-backend/.env.example railway-backend/.env
+```
+
+Use URLs locais durante o desenvolvimento:
+
+```txt
 VITE_API_BASE_URLS=http://localhost:8080
+PUBLIC_API_URL=http://localhost:8080
+PUBLIC_APP_URL=http://localhost:5173
 ```
 
-## Deploy Firebase
+## Validação local
+
+Antes de publicar uma alteração, execute:
 
 ```bash
+npm test
 npm run build
-firebase deploy --project blackvision-27f1c --only hosting:studiosbook,firestore
+npm run backend:test
 ```
 
-URL Firebase:
-
-```txt
-https://studiosbook.web.app
-```
-
-## Deploy Railway
+Ou rode a sequência completa:
 
 ```bash
-cd railway-backend
-npx @railway/cli link --project ac1e0e53-ce4d-49df-a61c-3d766cfc74e1 --environment production --service studiosbook-api
-npx @railway/cli up --detach --message "Deploy StudiosBook API"
+npm run verify
 ```
 
-Variáveis obrigatórias no Railway:
+## Deploy
 
-```txt
-FIREBASE_PROJECT_ID=blackvision-27f1c
-PUBLIC_APP_URL=https://studiosbook.com.br
-PUBLIC_API_URL=https://studiosbook-api-production.up.railway.app
-FRONTEND_ORIGINS=https://studiosbook.com.br,https://www.studiosbook.com.br,https://studiosbook.web.app
-ADMIN_EMAILS=sobrinhonewton@gmail.com,getblackvision.br@gmail.com
-SUPPORT_EMAIL=getblackvision.br@gmail.com
-SUPPORT_PHONE=73981068594
-MERCADO_PAGO_ACCESS_TOKEN=token_do_mercado_pago
-MERCADO_PAGO_WEBHOOK_SECRET=chave_secreta_da_integracao
-MERCADO_PAGO_WEBHOOK_URL=https://studiosbook-api-production.up.railway.app/functions/mercado-pago-webhook
-FIREBASE_SERVICE_ACCOUNT_JSON=json_ou_base64_da_service_account
-```
+O deploy de produção depende de projetos, domínios, credenciais e webhooks específicos. Esses dados não devem ficar no README público.
 
-Variáveis opcionais:
+Mantenha as instruções operacionais completas em documentação privada, incluindo:
 
-```txt
-FIREBASE_CLIENT_EMAIL=email_da_service_account
-FIREBASE_PRIVATE_KEY=private_key_da_service_account
-```
+- IDs de projeto Firebase.
+- IDs de projeto Railway.
+- Domínios oficiais.
+- URLs de webhook.
+- E-mails administrativos.
+- Telefones de suporte.
+- Chaves, secrets, service accounts e tokens de pagamento.
 
-## Cobrança e webhooks
+## Variáveis de ambiente
 
-- Os 7 dias de teste começam na data de criação da conta no Firebase Auth.
-- Cartão usa assinatura recorrente mensal de R$ 26,90.
-- Pix usa pagamento avulso de R$ 26,90 e libera 30 dias após aprovação.
-- URL do webhook: `https://studiosbook-api-production.up.railway.app/functions/mercado-pago-webhook`
-- Eventos necessários no Mercado Pago: `payment`, `subscription_preapproval` e `subscription_authorized_payment`.
-- A chave exibida em `Suas integrações > Webhooks` deve ser salva como `MERCADO_PAGO_WEBHOOK_SECRET` no Railway.
-- O painel Admin possui diagnóstico que valida token, disponibilidade do Pix e estado do webhook sem criar cobrança.
+Os arquivos `.env.example` mostram apenas nomes de variáveis e placeholders. Nunca publique `.env`, chaves reais, secrets, service accounts ou tokens de gateway de pagamento.
 
-Por padrão, o frontend chama:
+## Segurança operacional
 
-```txt
-https://studiosbook-api-production.up.railway.app
-```
+- Secrets de produção ficam somente nos provedores de infraestrutura.
+- Contas administrativas devem usar autenticação forte e acesso mínimo necessário.
+- Webhooks devem validar assinatura antes de atualizar acesso ou pagamentos.
+- Exportações de dados devem proteger contra CSV injection.
+- Alterações de cobrança e acesso precisam passar por testes antes de deploy.
 
-O domínio público ativo do backend é `https://studiosbook-api-production.up.railway.app`.
-Um domínio customizado para a API só deve ser ativado depois de habilitar esse recurso no plano da Railway e concluir o DNS.
+## Documentação interna
 
-## Firebase Auth
-
-Se o botão `Entrar com Google` retornar `CONFIGURATION_NOT_FOUND`, o Firebase Authentication ainda não foi inicializado.
-Se retornar `auth/operation-not-allowed`, o provedor Google existe no código, mas está desativado no Firebase.
-
-No Firebase Console:
-
-1. Abrir `https://console.firebase.google.com/project/blackvision-27f1c/authentication/providers`
-2. Clicar em `Get started`
-3. Habilitar o provedor `Google`
-4. Usar `getblackvision.br@gmail.com` como e-mail de suporte do projeto
-5. Em `Authentication > Settings > Authorized domains`, adicionar:
-   - `studiosbook.com.br`
-   - `www.studiosbook.com.br`
-   - `studiosbook.web.app`
-   - `blackvision-27f1c.web.app`
-6. Em Google Cloud/OAuth, se aparecer `redirect_uri_mismatch`, abrir o OAuth Client abaixo:
-   - Client ID: `574358182772-8253mh8lasfvvo9cu19gsor1ko4q2hjb.apps.googleusercontent.com`
-   - Link direto: `https://console.cloud.google.com/apis/credentials/oauthclient/574358182772-8253mh8lasfvvo9cu19gsor1ko4q2hjb.apps.googleusercontent.com?project=blackvision-27f1c`
-7. Em `Authorized JavaScript origins`, adicionar:
-   - `https://studiosbook.com.br`
-   - `https://www.studiosbook.com.br`
-   - `https://studiosbook.web.app`
-8. Em `Authorized redirect URIs`, adicionar:
-   - `https://studiosbook.com.br/__/auth/handler`
-   - `https://www.studiosbook.com.br/__/auth/handler`
-   - `https://studiosbook.web.app/__/auth/handler`
-
-O frontend usa `studiosbook.com.br` como `authDomain` para evitar que clientes vejam `blackvision-27f1c.firebaseapp.com` na tela de login do Google.
-
-## Domínio
-
-As instruções de DNS estão em `DOMAIN_SETUP.md`.
+Documentos de DNS, Firebase, Railway, OAuth, cobrança e recuperação de produção devem ficar em ambiente privado ou em repositório interno com controle de acesso.
