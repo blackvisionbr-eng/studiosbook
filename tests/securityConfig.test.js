@@ -9,6 +9,9 @@ const appAuthClient = readFileSync(new URL("../src/api/base44Client.js", import.
 const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
 const adminSource = readFileSync(new URL("../src/admin/AdminApp.jsx", import.meta.url), "utf8");
 const adminAuthClient = readFileSync(new URL("../src/admin/firebaseAdminClient.js", import.meta.url), "utf8");
+const publicPrivacy = readFileSync(new URL("../public/privacy.html", import.meta.url), "utf8");
+const publicTerms = readFileSync(new URL("../public/terms.html", import.meta.url), "utf8");
+const trackingSource = readFileSync(new URL("../src/lib/tracking.js", import.meta.url), "utf8");
 
 test("hosting does not rewrite every unknown path to the authenticated app", () => {
   const rewrites = firebaseConfig.hosting.rewrites || [];
@@ -111,4 +114,30 @@ test("the app supports Google and email account flows", () => {
   assert.match(appAuthClient, /linkDomain:\s*"studiosbook\.com\.br"/);
   assert.match(appSource, /Se houver uma conta ativa para este e-mail/);
   assert.match(appSource, /Spam ou Lixo eletrônico/);
+});
+
+test("public sales page discloses billing terms before signup", () => {
+  assert.match(appSource, /7 dias grátis/);
+  assert.match(appSource, /R\$ 26,90\/mês/);
+  assert.match(appSource, /Sem fidelidade/);
+  assert.match(appSource, /Pix.*Mercado Pago/s);
+  assert.match(appSource, /Termos de Uso e Assinatura/);
+});
+
+test("public legal pages cover subscription and payment processors", () => {
+  assert.match(publicTerms, /7 dias gratuitos/);
+  assert.match(publicTerms, /R\$ 26,90/);
+  assert.match(publicTerms, /Stripe/);
+  assert.match(publicTerms, /Mercado Pago/);
+  assert.match(publicTerms, /cancelada pelo portal de cobrança/);
+  assert.match(publicPrivacy, /Stripe e Mercado Pago/);
+  assert.match(publicPrivacy, /privacidade@studiosbook\.com\.br/);
+});
+
+test("marketing tracking is optional and consent-aware", () => {
+  assert.match(trackingSource, /VITE_GTM_ID/);
+  assert.match(trackingSource, /VITE_GA4_ID/);
+  assert.match(trackingSource, /VITE_META_PIXEL_ID/);
+  assert.match(trackingSource, /ad_storage: "denied"/);
+  assert.match(trackingSource, /marketingTrackingConfigured/);
 });

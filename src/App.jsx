@@ -9,6 +9,7 @@ import {
 } from "@/lib/serviceCatalog";
 import { toCsv } from "@/lib/csv";
 import { billingAccessFromRoot, hasBillingAccessNow, shouldForceBillingTab } from "@/lib/billingAccess";
+import { initializeMarketingTracking, marketingTrackingConfigured, trackEvent } from "@/lib/tracking";
 import {
   Activity,
   AlertTriangle,
@@ -73,9 +74,12 @@ const PRODUCT_PRICE = "R$ 26,90/mês";
 const OFFICIAL_APP_URL = "https://studiosbook.com.br";
 const YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@Studiosbook";
 const SUPPORT_EMAIL = "getblackvision.br@gmail.com";
+const PUBLIC_SUPPORT_EMAIL = "suporte@studiosbook.com.br";
+const PRIVACY_EMAIL = "privacidade@studiosbook.com.br";
 const SUPPORT_PHONE = "73981068594";
 const WHATSAPP_DEFAULT = "";
 const INSTALL_DISMISS_KEY = "studiosbook_install_dismissed_until";
+const MARKETING_CONSENT_KEY = "studiosbook_marketing_consent";
 
 const PROFESSIONAL_CATEGORIES = [
   {
@@ -932,6 +936,10 @@ export default function App() {
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
   const [isIosInstall, setIsIosInstall] = useState(false);
   const [billingClock, setBillingClock] = useState(Date.now());
+  const [marketingConsent, setMarketingConsent] = useState(() => {
+    if (typeof window === "undefined") return "unknown";
+    return window.localStorage.getItem(MARKETING_CONSENT_KEY) || "unknown";
+  });
 
   const showFeedback = (message, type = "success") => {
     setFeedbackType(type);
@@ -1047,6 +1055,10 @@ export default function App() {
   useEffect(() => {
     loadAuth();
   }, []);
+
+  useEffect(() => {
+    initializeMarketingTracking(marketingConsent === "accepted");
+  }, [marketingConsent]);
 
   useEffect(() => {
     document.title = profile?.business_name
@@ -1358,6 +1370,7 @@ export default function App() {
   }, [clients, reports.revenue, returnItems, todayAppointments]);
 
   const handleLogin = async () => {
+    trackEvent("login_google_click", { product: PRODUCT_NAME });
     setActionLoading("login");
     try {
       const loggedUser = await base44.auth.loginWithProvider("google", window.location.href);
@@ -1383,6 +1396,10 @@ export default function App() {
         ? await base44.auth.registerWithEmail(email, password, fullName)
         : await base44.auth.loginWithEmail(email, password);
       setUser(loggedUser);
+      trackEvent(mode === "register" ? "trial_signup" : "login_email", {
+        method: "email",
+        product: PRODUCT_NAME,
+      });
       showFeedback(mode === "register" ? "Conta criada. Enviamos a verificação do seu e-mail. Confira também Spam ou Lixo eletrônico." : "Login realizado.");
     } catch (error) {
       console.error(error);
@@ -1578,6 +1595,7 @@ export default function App() {
   };
 
   const startSubscriptionCheckout = async () => {
+    trackEvent("begin_checkout_card", { value: 26.9, currency: "BRL", product: PRODUCT_NAME });
     setActionLoading("billing-card");
     try {
       const result = await base44.functions.invoke("create-subscription-checkout", {
@@ -1600,6 +1618,7 @@ export default function App() {
   };
 
   const createPixPayment = async () => {
+    trackEvent("begin_checkout_pix", { value: 26.9, currency: "BRL", product: PRODUCT_NAME });
     setActionLoading("billing-pix");
     try {
       const result = await base44.functions.invoke("create-pix-payment", { app_url: window.location.origin });
@@ -1676,6 +1695,14 @@ export default function App() {
     setShowInstallPrompt(false);
   };
 
+  const updateMarketingConsent = (value) => {
+    window.localStorage.setItem(MARKETING_CONSENT_KEY, value);
+    setMarketingConsent(value);
+    trackEvent(value === "accepted" ? "marketing_consent_accepted" : "marketing_consent_declined", {
+      product: PRODUCT_NAME,
+    });
+  };
+
   const installPromptNode = (
     <InstallAppPrompt
       show={showInstallPrompt && !billingLocked && activeTab !== "billing"}
@@ -1683,6 +1710,14 @@ export default function App() {
       isIosInstall={isIosInstall}
       onInstall={installApp}
       onDismiss={dismissInstallPrompt}
+    />
+  );
+
+  const consentNode = (
+    <MarketingConsentBanner
+      show={marketingTrackingConfigured() && marketingConsent === "unknown"}
+      onAccept={() => updateMarketingConsent("accepted")}
+      onDecline={() => updateMarketingConsent("declined")}
     />
   );
 
@@ -1929,6 +1964,7 @@ export default function App() {
       <>
         <LoadingScreen />
         {installPromptNode}
+        {consentNode}
       </>
     );
   }
@@ -1945,27 +1981,31 @@ export default function App() {
           actionLoading={actionLoading}
         />
         {installPromptNode}
+        {consentNode}
       </>
     );
   }
 
   if (!isLoading && mustResolveBilling && !profile) {
     return (
-      <BillingAccessScreen
-        user={user}
-        billingSubscription={billingSubscription}
-        billingAccess={billingAccess}
-        pixPayment={pixPayment}
-        billingCapabilities={billingCapabilities}
-        onStartSubscription={startSubscriptionCheckout}
-        onCreatePix={createPixPayment}
-        onManageBilling={openBillingPortal}
-        onRefreshStatus={refreshBillingStatus}
-        onLogout={handleLogout}
-        actionLoading={actionLoading}
-        feedback={feedback}
-        feedbackType={feedbackType}
-      />
+      <>
+        <BillingAccessScreen
+          user={user}
+          billingSubscription={billingSubscription}
+          billingAccess={billingAccess}
+          pixPayment={pixPayment}
+          billingCapabilities={billingCapabilities}
+          onStartSubscription={startSubscriptionCheckout}
+          onCreatePix={createPixPayment}
+          onManageBilling={openBillingPortal}
+          onRefreshStatus={refreshBillingStatus}
+          onLogout={handleLogout}
+          actionLoading={actionLoading}
+          feedback={feedback}
+          feedbackType={feedbackType}
+        />
+        {consentNode}
+      </>
     );
   }
 
@@ -1986,6 +2026,7 @@ export default function App() {
           feedbackType={feedbackType}
         />
         {installPromptNode}
+        {consentNode}
       </div>
     );
   }
@@ -2161,6 +2202,7 @@ export default function App() {
         )}
       </main>
       {installPromptNode}
+      {consentNode}
     </div>
   );
 }
@@ -2220,6 +2262,28 @@ function InstallAppPrompt({ show, canInstall, isIosInstall, onInstall, onDismiss
               </div>
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MarketingConsentBanner({ show, onAccept, onDecline }) {
+  if (!show) return null;
+
+  return (
+    <div className="fixed inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[80] px-3 sm:px-4">
+      <div className="mx-auto flex max-w-3xl flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-4 text-sm text-zinc-600 shadow-2xl sm:flex-row sm:items-center sm:justify-between">
+        <p className="min-w-0 leading-6">
+          Usamos cookies e eventos de marketing para medir visitas, cadastro, teste e assinatura. Você pode continuar sem aceitar.
+        </p>
+        <div className="flex shrink-0 gap-2">
+          <Button type="button" variant="ghost" onClick={onDecline} className="h-10 rounded-full border border-zinc-200 px-4">
+            Recusar
+          </Button>
+          <Button type="button" onClick={onAccept} className="h-10 rounded-full bg-brand-plum px-4 text-white">
+            Aceitar
+          </Button>
         </div>
       </div>
     </div>
@@ -2691,110 +2755,206 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
     event.preventDefault();
     onEmailAuth({ mode, ...form });
   };
+  const switchToRegister = () => {
+    setMode("register");
+    trackEvent("landing_trial_cta_click", { product: PRODUCT_NAME });
+    window.setTimeout(() => document.getElementById("public-signup-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+  };
+  const resources = [
+    ["Agenda privada", "Organize horários, bloqueios e atendimentos sem misturar vida pessoal com trabalho."],
+    ["Clientes e retornos", "Veja quem precisa de manutenção, quem está atrasada e quem merece contato pelo WhatsApp."],
+    ["Ficha técnica", "Registre procedimento, serviço, valor, observações, fotos e PDF quando concluir."],
+    ["Catálogo editável", "Comece com serviços padrão por área e ajuste nomes, preços, duração e retorno."],
+    ["Relatórios", "Acompanhe faturamento, ticket médio, serviços mais vendidos e oportunidades."],
+    ["Backup", "Exporte clientes, agenda e dados do studio em CSV, JSON e PDF quando precisar."],
+  ];
+  const faqs = [
+    ["O teste gratuito cobra automaticamente?", "Não durante os 7 dias grátis. Para continuar depois do teste, a profissional escolhe cartão recorrente ou Pix avulso quando disponível."],
+    ["Quanto custa depois do teste?", `${PRODUCT_PRICE} no cartão, em cobrança mensal recorrente pela Stripe. Pix, quando ativo, libera 30 dias sem renovação automática.`],
+    ["Como cancelar?", "A assinatura no cartão pode ser gerenciada pelo portal de cobrança da Stripe dentro do próprio app ou pelo suporte. O Pix não renova sozinho."],
+    ["Posso exportar meus dados?", "Sim. O StudiosBook possui exportação de clientes, agenda e backup operacional para apoiar segurança e portabilidade."],
+  ];
+
   return (
-    <div className="min-h-dvh bg-brand-ivory px-4 py-6 text-brand-charcoal sm:px-5 sm:py-10">
-      <div className="mx-auto grid min-h-[calc(100dvh-3rem)] max-w-6xl items-center gap-7 sm:min-h-[calc(100dvh-5rem)] sm:gap-10 lg:grid-cols-[0.9fr_1.1fr]">
-        <div>
-          <BrandLockup size="hero" heading subtitle="Seu talento em foco. Seu studio sob controle." />
-          <div className="mt-6 inline-flex max-w-full items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-2 text-sm font-black text-rose-800 shadow-sm sm:mt-7 sm:px-4">
-            <Lock className="h-4 w-4 shrink-0" />
-            Agenda privada
-          </div>
-          <p className="mt-5 max-w-xl text-lg leading-8 text-zinc-600">
-            Controle premium para clientes, agenda privada, procedimentos, retornos e relacionamento via WhatsApp.
-          </p>
-          {feedback && (
-            <div
-              className={`mt-6 max-w-xl rounded-2xl border px-4 py-3 text-sm font-bold leading-6 shadow-sm ${
-                feedbackType === "error"
-                  ? "border-red-200 bg-red-50 text-red-800"
-                  : "border-emerald-200 bg-emerald-50 text-emerald-800"
-              }`}
-            >
-              {feedback}
-            </div>
-          )}
-          <div className="mt-8 grid w-full max-w-md gap-4">
-            <Button
-              type="button"
-              onClick={onLogin}
-              disabled={actionLoading === "login"}
-              className="h-12 w-full rounded-full bg-white px-5 text-zinc-900 shadow-sm ring-1 ring-zinc-200 hover:bg-zinc-50"
-            >
-              <span className="mr-3 flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-black text-[#4285f4] ring-1 ring-zinc-200">G</span>
-              {actionLoading === "login" ? "Abrindo Google..." : "Continuar com Google"}
-            </Button>
-
-            <div className="flex items-center gap-3 text-xs font-bold uppercase text-zinc-400"><span className="h-px flex-1 bg-zinc-200" /><span>ou use seu e-mail</span><span className="h-px flex-1 bg-zinc-200" /></div>
-
-            <div className="grid grid-cols-2 rounded-full bg-white p-1 ring-1 ring-zinc-200" role="group" aria-label="Modo de acesso">
-              <button type="button" onClick={() => setMode("login")} className={`h-10 rounded-full text-sm font-black transition ${mode === "login" ? "bg-brand-plum text-white" : "text-zinc-500"}`}>Entrar</button>
-              <button type="button" onClick={() => setMode("register")} className={`h-10 rounded-full text-sm font-black transition ${mode === "register" ? "bg-brand-plum text-white" : "text-zinc-500"}`}>Criar conta</button>
-            </div>
-
-            <form onSubmit={submitEmail} className="grid min-w-0 gap-3">
-              {mode === "register" && (
-                <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
-                  Seu nome
-                  <Input type="text" autoComplete="name" required value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
-                </label>
-              )}
-              <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
-                E-mail
-                <Input type="email" autoComplete="email" required value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
-              </label>
-              <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
-                Senha
-                <Input type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={mode === "register" ? 8 : 6} required value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
-              </label>
-              <Button type="submit" disabled={actionLoading === "email-auth"} className="mt-1 h-12 rounded-full bg-brand-plum text-white hover:bg-[#573048]">
-                {actionLoading === "email-auth" ? "Validando..." : mode === "register" ? "Criar minha conta" : "Entrar com e-mail"}
-              </Button>
-              {mode === "login" && (
-                <div className="grid gap-1 text-center">
-                  <button type="button" disabled={actionLoading === "password-reset"} onClick={() => onPasswordReset(form.email)} className="min-h-10 text-sm font-bold text-[#7f3158] disabled:opacity-50">
-                    {actionLoading === "password-reset" ? "Enviando..." : "Esqueci minha senha"}
-                  </button>
-                  <p className="text-xs leading-5 text-zinc-500">Não recebeu? Verifique Spam ou Lixo eletrônico e marque a mensagem como “Não é spam”.</p>
-                </div>
-              )}
-            </form>
-
-            <a
-              href={YOUTUBE_CHANNEL_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex min-h-12 w-full min-w-0 items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-5 text-center text-sm font-black text-[#7f3158] transition hover:scale-[1.01] hover:border-rose-300 hover:bg-rose-100"
-              aria-label="Videoaulas (abre em uma nova aba)"
-            >
-              <CirclePlay className="h-5 w-5 shrink-0" aria-hidden="true" />
-              <span>Videoaulas</span>
-              <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
+    <div className="min-h-dvh bg-brand-ivory text-brand-charcoal">
+      <header className="sticky top-0 z-40 border-b border-white/70 bg-white/92 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <BrandLockup size="header" subtitle="Gestão para beleza" />
+          <div className="flex items-center gap-2">
+            <a href={YOUTUBE_CHANNEL_URL} target="_blank" rel="noopener noreferrer" className="hidden h-10 items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 text-sm font-black text-[#7f3158] sm:inline-flex">
+              <CirclePlay className="h-4 w-4" />
+              Videoaulas
             </a>
+            <Button type="button" onClick={switchToRegister} className="h-10 rounded-full bg-brand-plum px-4 text-white">
+              Testar grátis
+            </Button>
           </div>
-          <p className="mt-4 text-sm text-zinc-500">
-            Ao entrar, você declara que leu a{" "}
-            <a href="/privacy.html" target="_blank" rel="noreferrer" className="font-bold text-[#7f3158] underline underline-offset-4">
-              Política de Privacidade e LGPD
-            </a>.
-          </p>
         </div>
-        <div className="overflow-hidden rounded-2xl border border-white bg-white p-4 shadow-2xl sm:rounded-[2rem] sm:bg-white/86 sm:p-6 sm:backdrop-blur">
-          <div className="grid gap-4 sm:grid-cols-2">
+      </header>
+
+      <main className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+        <section className="grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_440px]">
+          <div className="min-w-0">
+            <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-black uppercase text-rose-800 shadow-sm">
+              <Sparkles className="h-4 w-4 shrink-0" />
+              7 dias grátis para organizar seu studio
+            </div>
+            <h1 className="mt-6 max-w-3xl break-words text-5xl font-black leading-[0.95] tracking-normal text-zinc-950 sm:text-6xl lg:text-7xl">
+              Gestão simples para profissionais da beleza venderem mais retorno.
+            </h1>
+            <p className="mt-6 max-w-2xl text-lg leading-8 text-zinc-600">
+              Agenda privada, clientes, ficha técnica, catálogo, retornos, relatórios e exportação em uma central leve para lash designers, nail designers, sobrancelhas, cabelo e massoterapia.
+            </p>
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+              <Button type="button" onClick={switchToRegister} className="h-12 rounded-full bg-brand-plum px-6 text-white hover:bg-[#573048]">
+                Começar teste grátis
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+              <a href={YOUTUBE_CHANNEL_URL} target="_blank" rel="noopener noreferrer" className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-zinc-200 bg-white px-6 text-sm font-black text-zinc-900 shadow-sm">
+                <CirclePlay className="h-5 w-5 text-[#7f3158]" />
+                Ver videoaulas
+              </a>
+            </div>
+            <div className="mt-8 grid gap-3 sm:grid-cols-3">
+              <MiniMetric label="Teste" value="7 dias grátis" />
+              <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
+              <MiniMetric label="Cancelamento" value="Sem fidelidade" />
+            </div>
+          </div>
+
+          <section id="public-signup-card" className="min-w-0 rounded-2xl border border-white bg-white p-4 shadow-2xl sm:rounded-[2rem] sm:p-6">
+            <div className="rounded-2xl bg-zinc-950 p-5 text-white">
+              <p className="text-xs font-black uppercase text-rose-200">Acesso ao aplicativo</p>
+              <p className="mt-2 text-2xl font-black">Crie sua conta ou entre no seu studio.</p>
+              <p className="mt-2 text-sm leading-6 text-white/65">
+                O teste gratuito dura 7 dias. Depois, a assinatura no cartão custa {PRODUCT_PRICE}.
+              </p>
+            </div>
+
+            {feedback && (
+              <div className={`mt-5 rounded-2xl border px-4 py-3 text-sm font-bold leading-6 shadow-sm ${feedbackType === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+                {feedback}
+              </div>
+            )}
+
+            <div className="mt-5 grid gap-4">
+              <Button type="button" onClick={onLogin} disabled={actionLoading === "login"} className="h-12 w-full rounded-full bg-white px-5 text-zinc-900 shadow-sm ring-1 ring-zinc-200 hover:bg-zinc-50">
+                <span className="mr-3 flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm font-black text-[#4285f4] ring-1 ring-zinc-200">G</span>
+                {actionLoading === "login" ? "Abrindo Google..." : "Continuar com Google"}
+              </Button>
+
+              <div className="flex items-center gap-3 text-xs font-bold uppercase text-zinc-400"><span className="h-px flex-1 bg-zinc-200" /><span>ou use seu e-mail</span><span className="h-px flex-1 bg-zinc-200" /></div>
+
+              <div className="grid grid-cols-2 rounded-full bg-zinc-50 p-1 ring-1 ring-zinc-200" role="group" aria-label="Modo de acesso">
+                <button type="button" onClick={() => setMode("login")} className={`h-10 rounded-full text-sm font-black transition ${mode === "login" ? "bg-brand-plum text-white" : "text-zinc-500"}`}>Entrar</button>
+                <button type="button" onClick={() => setMode("register")} className={`h-10 rounded-full text-sm font-black transition ${mode === "register" ? "bg-brand-plum text-white" : "text-zinc-500"}`}>Criar conta</button>
+              </div>
+
+              <form onSubmit={submitEmail} className="grid min-w-0 gap-3">
+                {mode === "register" && (
+                  <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
+                    Seu nome
+                    <Input type="text" autoComplete="name" required value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
+                  </label>
+                )}
+                <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
+                  E-mail
+                  <Input type="email" autoComplete="email" required value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
+                </label>
+                <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
+                  Senha
+                  <Input type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={mode === "register" ? 8 : 6} required value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
+                </label>
+                <Button type="submit" disabled={actionLoading === "email-auth"} className="mt-1 h-12 rounded-full bg-brand-plum text-white hover:bg-[#573048]">
+                  {actionLoading === "email-auth" ? "Validando..." : mode === "register" ? "Criar conta e iniciar teste" : "Entrar com e-mail"}
+                </Button>
+                {mode === "login" && (
+                  <div className="grid gap-1 text-center">
+                    <button type="button" disabled={actionLoading === "password-reset"} onClick={() => onPasswordReset(form.email)} className="min-h-10 text-sm font-bold text-[#7f3158] disabled:opacity-50">
+                      {actionLoading === "password-reset" ? "Enviando..." : "Esqueci minha senha"}
+                    </button>
+                    <p className="text-xs leading-5 text-zinc-500">Não recebeu? Verifique Spam ou Lixo eletrônico e marque a mensagem como “Não é spam”.</p>
+                  </div>
+                )}
+              </form>
+            </div>
+            <p className="mt-4 text-xs leading-5 text-zinc-500">
+              Ao entrar, você declara que leu a{" "}
+              <a href="/privacy.html" target="_blank" rel="noreferrer" className="font-bold text-[#7f3158] underline underline-offset-4">Política de Privacidade</a>
+              {" "}e os{" "}
+              <a href="/terms.html" target="_blank" rel="noreferrer" className="font-bold text-[#7f3158] underline underline-offset-4">Termos de Uso e Assinatura</a>.
+            </p>
+          </section>
+        </section>
+
+        <section className="mt-16 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Recursos do StudiosBook">
+          {resources.map(([title, text]) => (
+            <article key={title} className="min-w-0 rounded-lg border border-white bg-white p-5 shadow-sm">
+              <CheckCircle2 className="h-5 w-5 text-[#7f3158]" />
+              <h2 className="mt-4 break-words text-lg font-black text-zinc-950">{title}</h2>
+              <p className="mt-2 text-sm leading-6 text-zinc-600">{text}</p>
+            </article>
+          ))}
+        </section>
+
+        <section className="mt-16 grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
+          <div className="rounded-lg bg-zinc-950 p-6 text-white sm:p-8">
+            <p className="text-xs font-black uppercase text-rose-200">Preço claro</p>
+            <h2 className="mt-3 text-4xl font-black tracking-normal">{PRODUCT_PRICE}</h2>
+            <p className="mt-4 text-sm leading-6 text-white/70">
+              7 dias gratuitos. Depois, cobrança mensal recorrente no cartão pela Stripe. Sem fidelidade.
+            </p>
+            <Button type="button" onClick={switchToRegister} className="mt-6 h-12 rounded-full bg-white px-6 text-zinc-950 hover:bg-rose-50">
+              Iniciar teste
+            </Button>
+          </div>
+          <div className="grid gap-3 rounded-lg border border-white bg-white p-5 shadow-sm sm:p-6">
             {[
-              ["Agenda fechada", "A profissional decide quando atende."],
-              ["Ficha técnica", "Produtos, técnica, observações e retorno."],
-              ["Retornos", "Clientes no prazo ideal de manutenção."],
-              ["WhatsApp", "Mensagem pronta e histórico de contato."],
+              ["Cartão", "Após o teste, assinatura mensal recorrente de R$ 26,90 processada pela Stripe."],
+              ["Pix", "Quando disponível, pagamento avulso via Mercado Pago libera 30 dias e não renova automaticamente."],
+              ["Cancelamento", "A profissional pode cancelar pelo portal de cobrança no app ou solicitar suporte."],
+              ["Arrependimento", "Contratações online seguem o prazo legal de 7 dias para solicitação, quando aplicável."],
             ].map(([title, text]) => (
-              <div key={title} className="rounded-[1.5rem] bg-rose-50 p-5">
-                <p className="font-black text-zinc-950">{title}</p>
-                <p className="mt-2 text-sm leading-6 text-zinc-600">{text}</p>
+              <div key={title} className="flex gap-3 rounded-lg bg-rose-50 p-4">
+                <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[#7f3158]" />
+                <div className="min-w-0">
+                  <h3 className="font-black text-zinc-950">{title}</h3>
+                  <p className="mt-1 text-sm leading-6 text-zinc-600">{text}</p>
+                </div>
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="mt-16">
+          <div className="max-w-2xl">
+            <p className="text-xs font-black uppercase text-[#7f3158]">Perguntas frequentes</p>
+            <h2 className="mt-2 text-3xl font-black tracking-normal text-zinc-950 sm:text-4xl">Antes de criar sua conta</h2>
+          </div>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            {faqs.map(([question, answer]) => (
+              <details key={question} className="rounded-lg border border-white bg-white p-5 shadow-sm">
+                <summary className="cursor-pointer text-base font-black text-zinc-950">{question}</summary>
+                <p className="mt-3 text-sm leading-6 text-zinc-600">{answer}</p>
+              </details>
+            ))}
+          </div>
+        </section>
+      </main>
+
+      <footer className="border-t border-white/70 bg-white px-4 py-8 text-sm text-zinc-500">
+        <div className="mx-auto grid max-w-7xl gap-4 sm:grid-cols-[1fr_auto] sm:items-center">
+          <div>
+            <p className="font-black text-zinc-950">StudiosBook é um produto desenvolvido e operado pela BlackVision.</p>
+            <p className="mt-1">Suporte: <a className="font-bold text-[#7f3158]" href={`mailto:${PUBLIC_SUPPORT_EMAIL}`}>{PUBLIC_SUPPORT_EMAIL}</a> | WhatsApp <a className="font-bold text-[#7f3158]" href={supportWhatsAppLink("Olá, preciso de suporte sobre o StudiosBook.")}>+55 73 98106-8594</a></p>
+          </div>
+          <div className="flex flex-wrap gap-3 font-bold">
+            <a href="/terms.html" target="_blank" rel="noreferrer">Termos</a>
+            <a href="/privacy.html" target="_blank" rel="noreferrer">Privacidade</a>
+            <a href={YOUTUBE_CHANNEL_URL} target="_blank" rel="noopener noreferrer">Videoaulas</a>
+          </div>
         </div>
-      </div>
+      </footer>
     </div>
   );
 }
@@ -4137,7 +4297,7 @@ function BillingView({
 }
 
 function PrivacyPolicyView() {
-  const supportMailHref = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+  const supportMailHref = `mailto:${PRIVACY_EMAIL}?subject=${encodeURIComponent(
     `Privacidade e LGPD - ${PRODUCT_NAME}`
   )}&body=${encodeURIComponent("Oi, preciso falar sobre privacidade, dados ou LGPD no StudiosBook.")}`;
   const supportWhatsappHref = supportWhatsAppLink("Oi, preciso falar sobre privacidade, dados ou LGPD no StudiosBook.");
@@ -4158,7 +4318,7 @@ function PrivacyPolicyView() {
             armazena e protege dados dentro do sistema de gestão para profissionais da beleza.
           </p>
           <p className="mt-4 break-words text-[11px] font-bold uppercase tracking-[0.1em] text-white/45 sm:text-xs sm:tracking-[0.18em]">
-            Última atualização: 12/06/2026
+            Última atualização: 10/08/2026
           </p>
         </div>
       </section>
@@ -4171,7 +4331,7 @@ function PrivacyPolicyView() {
               "Dados da conta: nome, e-mail e autenticação da profissional.",
               "Dados do negócio: nome do studio, categorias, serviços, agenda e configurações.",
               "Dados de clientes cadastradas pela profissional: nome, WhatsApp, preferências, histórico de atendimento e observações operacionais.",
-              "Dados de cobrança: status de assinatura, referência de checkout e identificadores retornados pela Stripe.",
+              "Dados de cobrança: status de assinatura, referência de checkout, Pix e identificadores retornados pela Stripe e pelo Mercado Pago.",
             ]}
           />
         </Panel>
@@ -4182,7 +4342,7 @@ function PrivacyPolicyView() {
             items={[
               "Permitir cadastro de clientes, agenda, atendimentos, retornos e relatórios.",
               "Gerar backups, exportações CSV/JSON/PDF e documentos de procedimento.",
-              "Processar assinatura mensal e suporte financeiro via Stripe.",
+              "Processar assinatura mensal pela Stripe, Pix avulso pelo Mercado Pago quando disponível e suporte financeiro.",
               "Melhorar segurança, estabilidade, experiência do produto e atendimento de suporte.",
             ]}
           />
@@ -4204,7 +4364,7 @@ function PrivacyPolicyView() {
           <PanelHeader title="4. Compartilhamento" subtitle="Quando dados podem ser enviados a terceiros." />
           <PolicyList
             items={[
-              "Dados de pagamento são processados pela Stripe para assinatura, Pix e cobrança recorrente.",
+              "Dados de assinatura recorrente são processados pela Stripe, e dados de Pix avulso podem ser processados pelo Mercado Pago quando essa opção estiver disponível.",
               "Prestadores de infraestrutura podem processar dados apenas para hospedagem, autenticação e funcionamento do app.",
               "Dados podem ser apresentados quando houver obrigação legal, ordem de autoridade competente ou defesa de direitos.",
               "A BlackVision não vende listas de clientes cadastradas pelas profissionais.",
@@ -4240,7 +4400,7 @@ function PrivacyPolicyView() {
       <Panel>
         <PanelHeader title="Contato oficial" subtitle="Canal para suporte, privacidade e solicitações de dados." />
         <div className="mt-5 grid gap-3 md:grid-cols-3">
-          <InfoCard title="E-mail" value={SUPPORT_EMAIL} />
+          <InfoCard title="E-mail" value={PRIVACY_EMAIL} />
           <InfoCard title="WhatsApp" value={`+55 ${SUPPORT_PHONE}`} />
           <InfoCard title="Produto" value={`${PRODUCT_NAME} by ${PRODUCT_COMPANY}`} />
         </div>
