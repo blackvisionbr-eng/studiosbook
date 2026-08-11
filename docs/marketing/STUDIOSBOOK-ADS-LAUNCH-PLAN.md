@@ -30,6 +30,8 @@ Data da revisão: 11/08/2026.
 ### Bloqueios antes da mídia
 
 - Inserir no ambiente de produção os IDs de GTM/GA4/Meta e os segredos server-side.
+- Criar e validar as ações de conversão na conta Google Ads `Black Vision` antes de vincular qualquer campanha.
+- Ativar a verificação em duas etapas na Conta do Google responsável pelo Google Ads.
 - Conceder perfil de administrador ou desenvolvedor no portfólio Meta para gerar o token CAPI.
 - Desativar a correspondência avançada automática do Pixel antes de instalar o código no site, ou atualizar formalmente consentimento e política para a coleta pretendida.
 - Validar o Pix de ponta a ponta antes de anunciá-lo.
@@ -251,8 +253,12 @@ Nenhuma campanha foi publicada ou ativada.
 - Meta: geração do token CAPI bloqueada porque o usuário atual não é administrador ou desenvolvedor do portfólio.
 - Meta: correspondência avançada automática ainda aparece ativa; o Pixel permanecerá fora da produção até esse ponto ser resolvido.
 - Meta: a plataforma criou um orçamento padrão de R$ 25/dia durante a tentativa de rascunho. Como não havia orçamento aprovado, o rascunho foi desativado e descartado sem publicação ou gasto.
-- Google Ads: conta autenticada, porém suspensa por não conformidade com os Termos e Condições. Nenhuma campanha nova foi criada.
-- Google Ads: uma campanha preexistente chamada `Campanha Teste` aparece ativa com R$ 20/dia; ela não foi criada nem alterada nesta entrega.
+- Google Ads: conta correta `Black Vision`, cliente `829-332-6606`, autenticada com `getblackvision.br@gmail.com`, sem sinal de suspensão.
+- Google Ads: zero campanhas ativas e zero rascunhos na conta correta. Nenhuma campanha foi criada, publicada ou ativada.
+- Google Ads: nenhuma ação de conversão está configurada. A criação das campanhas permanece bloqueada até a mensuração e o orçamento serem aprovados.
+- Google Ads: o faturamento apresenta saldo de R$ 0,00, nenhum pagamento anterior e nenhum pagamento futuro. Nenhuma configuração de cobrança foi alterada.
+- Google Ads: a plataforma recomenda ativar a verificação em duas etapas; essa proteção deve ser concluída antes da veiculação.
+- Correção de auditoria: as referências anteriores a uma conta suspensa e à `Campanha Teste` pertenciam a outra conta Google Ads. Essa conta não foi alterada e foi removida do diagnóstico do StudiosBook.
 
 ## 16. Checklist de aprovação do Newton
 
@@ -262,7 +268,8 @@ Nenhuma campanha foi publicada ou ativada.
 - [ ] Aprovar títulos, descrições e criativos.
 - [ ] Confirmar que nenhum vídeo exibe dados pessoais.
 - [ ] Fornecer/configurar GTM, GA4 e Meta Pixel.
-- [ ] Corrigir a suspensão da conta Google Ads.
+- [ ] Criar e validar as conversões na conta Google Ads `Black Vision` (`829-332-6606`).
+- [ ] Ativar a verificação em duas etapas na Conta do Google responsável.
 - [ ] Conceder permissão Meta para gerar token CAPI e desativar correspondência avançada automática.
 - [ ] Configurar segredos de mensuração server-side no Railway.
 - [ ] Validar primeira compra no cartão e estorno.
