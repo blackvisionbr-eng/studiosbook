@@ -12,6 +12,9 @@ const adminAuthClient = readFileSync(new URL("../src/admin/firebaseAdminClient.j
 const publicPrivacy = readFileSync(new URL("../public/privacy.html", import.meta.url), "utf8");
 const publicTerms = readFileSync(new URL("../public/terms.html", import.meta.url), "utf8");
 const trackingSource = readFileSync(new URL("../src/lib/tracking.js", import.meta.url), "utf8");
+const viteConfig = readFileSync(new URL("../vite.config.js", import.meta.url), "utf8");
+const appHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const assetRecovery = readFileSync(new URL("../public/asset-recovery.js", import.meta.url), "utf8");
 
 test("hosting does not rewrite every unknown path to the authenticated app", () => {
   const rewrites = firebaseConfig.hosting.rewrites || [];
@@ -117,6 +120,20 @@ test("the app supports Google and email account flows", () => {
   assert.match(appSource, /Seu navegador bloqueou a janela segura de login/);
   assert.match(appSource, /Se houver uma conta ativa para este e-mail/);
   assert.match(appSource, /Spam ou Lixo eletrônico/);
+});
+
+test("browser releases recover from stale application assets", () => {
+  assert.match(viteConfig, /entryFileNames: "assets\/\[name\]\.js"/);
+  assert.match(viteConfig, /modulePreload: false/);
+  assert.match(viteConfig, /cssCodeSplit: false/);
+  assert.match(appHtml, /src="\/asset-recovery\.js"/);
+  assert.match(assetRecovery, /startsWith\("\/assets\/"\)/);
+  assert.match(assetRecovery, /window\.location\.replace/);
+
+  const assetHeaders = firebaseConfig.hosting.headers.find((item) => item.source === "/assets/**");
+  const cacheControl = assetHeaders?.headers?.find((header) => header.key === "Cache-Control")?.value || "";
+  assert.match(cacheControl, /max-age=0/);
+  assert.match(cacheControl, /must-revalidate/);
 });
 
 test("the public campaign landing has an explicit rewrite and CSP", () => {

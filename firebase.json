@@ -88,7 +88,16 @@
         ]
       },
       {
-        "source": "**/*.@(js|css|png|jpg|jpeg|webp|svg|ico)",
+        "source": "/assets/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public,max-age=0,must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(png|jpg|jpeg|webp|svg|ico)",
         "headers": [
           {
             "key": "Cache-Control",
@@ -107,6 +116,12 @@
       },
       {
         "source": "/canonical-redirect.js",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      },
+      {
+        "source": "/asset-recovery.js",
         "headers": [
           { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
         ]
