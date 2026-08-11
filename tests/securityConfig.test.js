@@ -107,11 +107,14 @@ test("the operations header centers the selected horizontal tab", () => {
 
 test("the app supports Google and email account flows", () => {
   assert.match(appAuthClient, /loginWithProvider\(providerName = "google"\)/);
+  assert.match(appAuthClient, /signInWithPopup\(auth, provider\)/);
+  assert.doesNotMatch(appAuthClient, /signInWithRedirect/);
   assert.match(appAuthClient, /loginWithEmail\(email, password\)/);
   assert.match(appAuthClient, /registerWithEmail\(email, password, fullName\)/);
   assert.match(appAuthClient, /sendPasswordReset\(email\)/);
   assert.match(appAuthClient, /auth\.languageCode\s*=\s*"pt-BR"/);
   assert.match(appAuthClient, /linkDomain:\s*"studiosbook\.com\.br"/);
+  assert.match(appSource, /Seu navegador bloqueou a janela segura de login/);
   assert.match(appSource, /Se houver uma conta ativa para este e-mail/);
   assert.match(appSource, /Spam ou Lixo eletrônico/);
 });

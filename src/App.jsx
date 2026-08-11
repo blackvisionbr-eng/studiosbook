@@ -459,6 +459,16 @@ function authErrorMessage(error) {
   if (code.includes("too-many-requests")) {
     return "Muitas tentativas seguidas. Aguarde alguns minutos e tente novamente.";
   }
+  if (
+    code.includes("popup-blocked") ||
+    code.includes("popup-closed-by-user") ||
+    code.includes("web-storage-unsupported") ||
+    code.includes("missing-or-invalid-nonce") ||
+    raw.includes("storage") ||
+    raw.includes("state")
+  ) {
+    return "Seu navegador bloqueou a janela segura de login. Abra pelo Chrome ou Safari no endereço studiosbook.com.br, permita pop-ups para o site ou entre com e-mail e senha.";
+  }
   if (code.includes("configuration-not-found") || raw.includes("CONFIGURATION_NOT_FOUND")) {
     return "O login está temporariamente indisponível. Tente novamente ou fale com o suporte.";
   }

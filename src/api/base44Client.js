@@ -1,14 +1,16 @@
 import { initializeApp } from "firebase/app";
 import {
+  browserLocalPersistence,
   createUserWithEmailAndPassword,
   getAuth,
-  getRedirectResult,
   GoogleAuthProvider,
+  inMemoryPersistence,
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
+  setPersistence,
   signInWithEmailAndPassword,
-  signInWithRedirect,
+  signInWithPopup,
   signOut,
   updateProfile,
 } from "firebase/auth";
@@ -56,11 +58,14 @@ const storage = getStorage(app);
 const MAX_PROCEDURE_PHOTO_BYTES = 8 * 1024 * 1024;
 const ALLOWED_PROCEDURE_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
-let lastRedirectError = null;
-const redirectResultReady = getRedirectResult(auth).catch((error) => {
-  lastRedirectError = error;
-  console.error("Firebase redirect login error", error);
-  return null;
+let lastAuthProviderError = null;
+const authPersistenceReady = setPersistence(auth, browserLocalPersistence).catch(async (error) => {
+  console.warn("Firebase local persistence unavailable; using memory persistence", error?.code || error?.message);
+  try {
+    await setPersistence(auth, inMemoryPersistence);
+  } catch (memoryError) {
+    console.warn("Firebase memory persistence unavailable", memoryError?.code || memoryError?.message);
+  }
 });
 
 let authReadyResolved = false;
@@ -278,16 +283,12 @@ async function invokeFunction(name, data = {}) {
 export const base44 = {
   auth: {
     async isAuthenticated() {
+      await authPersistenceReady;
       const user = await currentUser();
-      if (user) {
-        void redirectResultReady;
-        return true;
-      }
-      await redirectResultReady;
-      return Boolean(auth.currentUser);
+      return Boolean(user || auth.currentUser);
     },
     getLastRedirectError() {
-      return lastRedirectError;
+      return lastAuthProviderError;
     },
     async me() {
       const user = await requireUser();
@@ -295,9 +296,18 @@ export const base44 = {
     },
     async loginWithProvider(providerName = "google") {
       if (providerName !== "google") throw new Error("Provedor não suportado.");
+      await authPersistenceReady;
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
-      await signInWithRedirect(auth, provider);
+      try {
+        const credential = await signInWithPopup(auth, provider);
+        await credential.user.getIdToken(true);
+        lastAuthProviderError = null;
+        return toBaseUser(credential.user);
+      } catch (error) {
+        lastAuthProviderError = error;
+        throw error;
+      }
     },
     async loginWithEmail(email, password) {
       const credential = await signInWithEmailAndPassword(
