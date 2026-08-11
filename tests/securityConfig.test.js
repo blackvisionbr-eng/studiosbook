@@ -117,7 +117,7 @@ test("the app supports Google and email account flows", () => {
 });
 
 test("public sales page discloses billing terms before signup", () => {
-  assert.match(appSource, /7 dias grátis/);
+  assert.match(appSource, /7 dias gratuitos/);
   assert.match(appSource, /R\$ 26,90\/mês/);
   assert.match(appSource, /Sem fidelidade/);
   assert.match(appSource, /Pix.*Mercado Pago/s);

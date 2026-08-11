@@ -493,7 +493,7 @@ function formatDateTime(value) {
 function billingStatusLabel(status) {
   const labels = {
     not_started: "Não iniciada",
-    trialing: "Teste grátis",
+    trialing: "Período gratuito",
     pending: "Pendente",
     authorized: "Autorizada",
     active: "Ativa",
@@ -1912,7 +1912,7 @@ export default function App() {
         preferred_category: service.category,
         preferred_service: service.name,
         allergies: "Sem alergias registradas",
-        notes: "Cliente usada para testar o fluxo do MVP.",
+        notes: "Cliente usada para demonstrar o fluxo do StudiosBook.",
         last_service_date: procedureDate,
         next_maintenance_date: maintenanceDate,
       });
@@ -1946,7 +1946,7 @@ export default function App() {
         service_name: service.name,
         status: "scheduled",
         is_blocked: false,
-        private_note: "Teste de horário do MVP.",
+        private_note: "Horário de demonstração do StudiosBook.",
       });
       setSelectedClientId(createdClient.id);
       await loadData();
@@ -2275,7 +2275,7 @@ function MarketingConsentBanner({ show, onAccept, onDecline }) {
     <div className="fixed inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[80] px-3 sm:px-4">
       <div className="mx-auto flex max-w-3xl flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-4 text-sm text-zinc-600 shadow-2xl sm:flex-row sm:items-center sm:justify-between">
         <p className="min-w-0 leading-6">
-          Usamos cookies e eventos de marketing para medir visitas, cadastro, teste e assinatura. Você pode continuar sem aceitar.
+          Usamos cookies e eventos de marketing para medir visitas, cadastro, período gratuito e assinatura. Você pode continuar sem aceitar.
         </p>
         <div className="flex shrink-0 gap-2">
           <Button type="button" variant="ghost" onClick={onDecline} className="h-10 rounded-full border border-zinc-200 px-4">
@@ -2769,8 +2769,8 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
     ["Backup", "Exporte clientes, agenda e dados do studio em CSV, JSON e PDF quando precisar."],
   ];
   const faqs = [
-    ["O teste gratuito cobra automaticamente?", "Não durante os 7 dias grátis. Para continuar depois do teste, a profissional escolhe cartão recorrente ou Pix avulso quando disponível."],
-    ["Quanto custa depois do teste?", `${PRODUCT_PRICE} no cartão, em cobrança mensal recorrente pela Stripe. Pix, quando ativo, libera 30 dias sem renovação automática.`],
+    ["Os 7 dias gratuitos cobram automaticamente?", "Não. Durante os 7 dias gratuitos não há cobrança. Para continuar depois desse período, a profissional escolhe cartão recorrente ou Pix avulso quando disponível."],
+    ["Quanto custa depois dos 7 dias gratuitos?", `${PRODUCT_PRICE} no cartão, em cobrança mensal recorrente pela Stripe. Pix, quando ativo, libera 30 dias sem renovação automática.`],
     ["Como cancelar?", "A assinatura no cartão pode ser gerenciada pelo portal de cobrança da Stripe dentro do próprio app ou pelo suporte. O Pix não renova sozinho."],
     ["Posso exportar meus dados?", "Sim. O StudiosBook possui exportação de clientes, agenda e backup operacional para apoiar segurança e portabilidade."],
   ];
@@ -2786,7 +2786,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
               Videoaulas
             </a>
             <Button type="button" onClick={switchToRegister} className="h-10 rounded-full bg-brand-plum px-4 text-white">
-              Testar grátis
+              Começar agora
             </Button>
           </div>
         </div>
@@ -2797,7 +2797,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
           <div className="min-w-0">
             <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-black uppercase text-rose-800 shadow-sm">
               <Sparkles className="h-4 w-4 shrink-0" />
-              7 dias grátis para organizar seu studio
+              7 dias gratuitos para organizar seu studio
             </div>
             <h1 className="mt-6 max-w-3xl break-words text-5xl font-black leading-[0.95] tracking-normal text-zinc-950 sm:text-6xl lg:text-7xl">
               Gestão simples para profissionais da beleza venderem mais retorno.
@@ -2807,7 +2807,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
             </p>
             <div className="mt-7 flex flex-col gap-3 sm:flex-row">
               <Button type="button" onClick={switchToRegister} className="h-12 rounded-full bg-brand-plum px-6 text-white hover:bg-[#573048]">
-                Começar teste grátis
+                Começar agora
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
               <a href={YOUTUBE_CHANNEL_URL} target="_blank" rel="noopener noreferrer" className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-zinc-200 bg-white px-6 text-sm font-black text-zinc-900 shadow-sm">
@@ -2816,7 +2816,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
               </a>
             </div>
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              <MiniMetric label="Teste" value="7 dias grátis" />
+              <MiniMetric label="Período gratuito" value="7 dias" />
               <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
               <MiniMetric label="Cancelamento" value="Sem fidelidade" />
             </div>
@@ -2827,7 +2827,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
               <p className="text-xs font-black uppercase text-rose-200">Acesso ao aplicativo</p>
               <p className="mt-2 text-2xl font-black">Crie sua conta ou entre no seu studio.</p>
               <p className="mt-2 text-sm leading-6 text-white/65">
-                O teste gratuito dura 7 dias. Depois, a assinatura no cartão custa {PRODUCT_PRICE}.
+                Você tem 7 dias gratuitos. Depois, a assinatura no cartão custa {PRODUCT_PRICE}.
               </p>
             </div>
 
@@ -2866,7 +2866,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
                   <Input type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={mode === "register" ? 8 : 6} required value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
                 </label>
                 <Button type="submit" disabled={actionLoading === "email-auth"} className="mt-1 h-12 rounded-full bg-brand-plum text-white hover:bg-[#573048]">
-                  {actionLoading === "email-auth" ? "Validando..." : mode === "register" ? "Criar conta e iniciar teste" : "Entrar com e-mail"}
+                  {actionLoading === "email-auth" ? "Validando..." : mode === "register" ? "Criar conta e começar" : "Entrar com e-mail"}
                 </Button>
                 {mode === "login" && (
                   <div className="grid gap-1 text-center">
@@ -2899,18 +2899,18 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
 
         <section className="mt-16 grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
           <div className="rounded-lg bg-zinc-950 p-6 text-white sm:p-8">
-            <p className="text-xs font-black uppercase text-rose-200">Preço claro</p>
+            <p className="text-xs font-black uppercase text-rose-200">Plano StudiosBook</p>
             <h2 className="mt-3 text-4xl font-black tracking-normal">{PRODUCT_PRICE}</h2>
             <p className="mt-4 text-sm leading-6 text-white/70">
               7 dias gratuitos. Depois, cobrança mensal recorrente no cartão pela Stripe. Sem fidelidade.
             </p>
             <Button type="button" onClick={switchToRegister} className="mt-6 h-12 rounded-full bg-white px-6 text-zinc-950 hover:bg-rose-50">
-              Iniciar teste
+              Começar agora
             </Button>
           </div>
           <div className="grid gap-3 rounded-lg border border-white bg-white p-5 shadow-sm sm:p-6">
             {[
-              ["Cartão", "Após o teste, assinatura mensal recorrente de R$ 26,90 processada pela Stripe."],
+              ["Cartão", "Após os 7 dias gratuitos, assinatura mensal recorrente de R$ 26,90 processada pela Stripe."],
               ["Pix", "Quando disponível, pagamento avulso via Mercado Pago libera 30 dias e não renova automaticamente."],
               ["Cancelamento", "A profissional pode cancelar pelo portal de cobrança no app ou solicitar suporte."],
               ["Arrependimento", "Contratações online seguem o prazo legal de 7 dias para solicitação, quando aplicável."],
@@ -4070,7 +4070,7 @@ function BillingView({
               Assinatura StudiosBook
             </p>
             <h2 className="mt-5 max-w-3xl break-words text-3xl font-black leading-tight tracking-normal sm:text-5xl">
-              7 dias grátis desde o cadastro. Depois {PRODUCT_PRICE}.
+              7 dias gratuitos desde o cadastro. Depois {PRODUCT_PRICE}.
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
               {pixAvailable
@@ -4130,11 +4130,11 @@ function BillingView({
             </div>
             <div className="mt-5 grid gap-3">
               <MiniMetric label="Profissional" value={user?.email || "-"} />
-              <MiniMetric label="Plano" value={billingSubscription?.plan_name || "StudiosBook Intermediário"} />
+              <MiniMetric label="Plano" value={billingSubscription?.plan_name || "StudiosBook Profissional"} />
               <MiniMetric label="Acesso ao aplicativo" value={billingStatusLabel(status)} />
               <MiniMetric label="Cobrança recorrente Stripe" value={billingStatusLabel(providerSubscriptionStatus)} />
               <MiniMetric label="Último pagamento" value={billingStatusLabel(recurringPaymentStatus)} />
-              <MiniMetric label="Teste grátis" value={trialEnd ? `${trialDaysLeft} dia(s) restantes` : "7 dias desde o cadastro"} />
+              <MiniMetric label="Período gratuito" value={trialEnd ? `${trialDaysLeft} dia(s) restantes` : "7 dias desde o cadastro"} />
               <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
             </div>
           </div>
@@ -4149,7 +4149,7 @@ function BillingView({
           />
           <div className="mt-5 grid gap-4">
             {[
-              ["Teste preservado", "Os 7 dias continuam contados desde a criação da conta.", Sparkles],
+              ["Período preservado", "Os 7 dias continuam contados desde a criação da conta.", Sparkles],
               ["Controle completo", "Troque o cartão, consulte faturas ou cancele pelo portal da Stripe.", CreditCard],
             ].map(([title, text, Icon]) => (
               <div key={title} className="flex items-start gap-3 rounded-[1.25rem] bg-zinc-50 p-4">
@@ -4265,8 +4265,8 @@ function BillingView({
           subtitle="Acompanhe período gratuito, vencimento e situação financeira."
         />
         <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          <InfoCard title="Início do teste" value={formatDateTime(billingSubscription?.trial_start_date)} />
-          <InfoCard title="Fim do teste" value={formatDateTime(billingSubscription?.trial_end_date)} />
+          <InfoCard title="Início do período gratuito" value={formatDateTime(billingSubscription?.trial_start_date)} />
+          <InfoCard title="Fim do período gratuito" value={formatDateTime(billingSubscription?.trial_end_date)} />
           <InfoCard title="Acesso válido até" value={formatDateTime(billingSubscription?.current_period_end)} />
           <InfoCard title="Próxima cobrança" value={formatDateTime(billingSubscription?.next_payment_date)} />
           <InfoCard title="Última sincronização" value={formatDateTime(billingSubscription?.last_sync_date)} />
@@ -4566,8 +4566,8 @@ function SecurityView({
         <div className="grid gap-6">
           <Panel>
             <PanelHeader
-              title="Plano intermediário"
-              subtitle="Etapa beta paga, com segurança operacional sem grande mudança visual."
+              title="Plano profissional"
+              subtitle="Organização completa para agenda, clientes, atendimentos, retornos e backups do studio."
             />
             <div className="mt-5 rounded-[1.5rem] bg-zinc-950 p-5 text-white">
               <p className="text-sm font-bold text-white/55">StudiosBook by BlackVision</p>
