@@ -119,6 +119,14 @@ test("the app supports Google and email account flows", () => {
   assert.match(appSource, /Spam ou Lixo eletrônico/);
 });
 
+test("the public campaign landing has an explicit rewrite and CSP", () => {
+  const rewrite = firebaseConfig.hosting.rewrites.find((item) => item.source === "/gestao-para-studios");
+  assert.equal(rewrite?.destination, "/index.html");
+  const headers = firebaseConfig.hosting.headers.find((item) => item.source === "/gestao-para-studios");
+  const csp = headers?.headers?.find((header) => header.key === "Content-Security-Policy")?.value || "";
+  assert.match(csp, /frame-ancestors 'none'/);
+});
+
 test("public sales page discloses billing terms before signup", () => {
   assert.match(appSource, /7 dias gratuitos/);
   assert.match(appSource, /R\$ 26,90\/mês/);
@@ -143,4 +151,18 @@ test("marketing tracking is optional and consent-aware", () => {
   assert.match(trackingSource, /VITE_META_PIXEL_ID/);
   assert.match(trackingSource, /ad_storage: "denied"/);
   assert.match(trackingSource, /marketingTrackingConfigured/);
+  assert.match(trackingSource, /CompleteRegistration/);
+  assert.match(trackingSource, /StartTrial/);
+  assert.match(trackingSource, /InitiateCheckout/);
+  assert.match(trackingSource, /Purchase/);
+  assert.match(trackingSource, /eventID: eventId/);
+  assert.match(trackingSource, /fbq\("consent", "revoke"\)/);
+  assert.match(trackingSource, /studiosbook_marketing_attribution/);
+  assert.match(appSource, /createCheckoutMarketingContext/);
+  assert.match(appSource, /trackConfirmedPurchase/);
+  assert.match(backendServer, /MarketingAcquisition/);
+  assert.match(backendServer, /excluded_internal_account/);
+  assert.match(backendServer, /excluded_test_payment/);
+  assert.match(backendServer, /META_CAPI_ACCESS_TOKEN/);
+  assert.match(backendServer, /GA4_API_SECRET/);
 });

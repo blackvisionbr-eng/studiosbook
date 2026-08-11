@@ -1,0 +1,19 @@
+id,pilar,profissão,formato,proporção,gancho,cta,status
+CR01,Agenda sem conflito,Geral,Imagem,1:1,"Sua agenda e seus clientes em uma central","Começar 7 dias gratuitos",PRONTO_PARA_DESIGN
+CR02,Agenda sem conflito,Geral,Story,9:16,"Pare de procurar horários em conversas antigas","Organizar meu studio",PRONTO_PARA_DESIGN
+CR03,Cliente e histórico,Lash e sobrancelhas,Carrossel,1:1,"Histórico de cada cliente sem depender da memória","Conhecer o StudiosBook",PRONTO_PARA_DESIGN
+CR04,Cliente e histórico,Nails,Imagem,4:5,"Clientes, serviços e retornos organizados","Começar 7 dias gratuitos",PRONTO_PARA_DESIGN
+CR05,Ficha técnica,Lash e sobrancelhas,Carrossel,4:5,"Registre procedimentos e acompanhe retornos","Ver como funciona",PRONTO_PARA_DESIGN
+CR06,Ficha técnica,Massoterapia,Imagem,1:1,"Ficha técnica organizada para cada atendimento","Organizar meu studio",PRONTO_PARA_DESIGN
+CR07,Catálogo editável,Cabelo,Carrossel,1:1,"Edite serviços e valores conforme sua rotina","Conhecer recursos",PRONTO_PARA_DESIGN
+CR08,Catálogo editável,Nails,Story,9:16,"Seu catálogo muda. Seu sistema acompanha.","Começar 7 dias gratuitos",PRONTO_PARA_DESIGN
+CR09,Backup e exportação,Geral,Imagem,4:5,"Seus dados organizados com opções de exportação","Conhecer o StudiosBook",PRONTO_PARA_DESIGN
+CR10,Relatórios,Geral,Carrossel,1:1,"Entenda atendimentos e retornos sem planilhas soltas","Ver demonstração",PRONTO_PARA_DESIGN
+CR11,Multiárea,Geral,Imagem,1:1,"Um sistema para diferentes profissionais da beleza","Começar 7 dias gratuitos",PRONTO_PARA_DESIGN
+CR12,Oferta,Geral,Imagem,4:5,"Use por 7 dias sem cobrança automática","Começar gratuitamente",PRONTO_PARA_DESIGN
+CR13,Demonstração,Geral,Vídeo,9:16,"Veja a rotina no StudiosBook em menos de um minuto","Assistir demonstração",EM_ESPERA_PRIVACIDADE
+CR14,Instalação,Geral,Vídeo,9:16,"Instale o StudiosBook no celular","Ver videoaula",EM_ESPERA_PRIVACIDADE
+CR15,Instalação,Geral,Vídeo,16:9,"Acesse o StudiosBook no computador","Ver videoaula",EM_ESPERA_PRIVACIDADE
+CR16,Retorno,Lash e sobrancelhas,Imagem,4:5,"Não deixe o retorno da cliente se perder","Organizar retornos",PRONTO_PARA_DESIGN
+CR17,Retorno,Cabelo,Imagem,1:1,"Acompanhe clientes e próximos atendimentos","Conhecer o StudiosBook",PRONTO_PARA_DESIGN
+CR18,Produto BlackVision,Geral,Imagem,1:1,"Gestão simples para a rotina de quem trabalha com beleza","Começar 7 dias gratuitos",PRONTO_PARA_DESIGN

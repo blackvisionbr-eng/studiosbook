@@ -47,6 +47,7 @@ const STRIPE_WEBHOOK_URL =
 const MERCADO_PAGO_API_BASE = process.env.MERCADO_PAGO_API_BASE || "https://api.mercadopago.com";
 const MERCADO_PAGO_WEBHOOK_URL =
   process.env.MERCADO_PAGO_WEBHOOK_URL || `${PUBLIC_API_URL}/functions/mercado-pago-webhook`;
+const META_GRAPH_API_VERSION = String(process.env.META_GRAPH_API_VERSION || "v23.0").trim();
 const EXTRA_FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -211,6 +212,49 @@ function safeOrigin(value) {
   } catch {
     return PUBLIC_APP_URL;
   }
+}
+
+function safeMarketingString(value, maxLength = 180) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function normalizeMarketingContext(value = {}) {
+  if (!value || value.consent !== true) return null;
+  const attributionKeys = [
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "gclid",
+    "gbraid",
+    "wbraid",
+    "fbclid",
+  ];
+  const attribution = attributionKeys.reduce((result, key) => {
+    const current = safeMarketingString(value.attribution?.[key], 180);
+    if (current) result[key] = current;
+    return result;
+  }, {});
+  return {
+    consent: true,
+    checkout_event_id: safeMarketingString(value.checkout_event_id, 180),
+    client_id: safeMarketingString(value.client_id, 80),
+    client_user_agent: safeMarketingString(value.client_user_agent, 300),
+    landing_page: safeMarketingString(value.landing_page, 500),
+    referrer: safeMarketingString(value.referrer, 500),
+    fbp: safeMarketingString(value.fbp, 180),
+    fbc: safeMarketingString(value.fbc, 220),
+    attribution,
+    captured_at: new Date().toISOString(),
+  };
+}
+
+function marketingConfiguration() {
+  return {
+    meta_capi: Boolean(process.env.META_PIXEL_ID && process.env.META_CAPI_ACCESS_TOKEN),
+    ga4_measurement_protocol: Boolean(process.env.GA4_MEASUREMENT_ID && process.env.GA4_API_SECRET),
+  };
 }
 
 function stripeSecretKey() {
@@ -609,6 +653,169 @@ async function currentSubscription(uid) {
 async function latestBillingPayment(uid) {
   const rows = sortByLatest(await listCollection(paymentCollection(uid), 30));
   return rows[0] || null;
+}
+
+function marketingPaymentId(payment = {}) {
+  return safeMarketingString(
+    payment.id || payment.stripe_invoice_id || payment.mercado_pago_payment_id || payment.stripe_payment_intent_id,
+    180
+  );
+}
+
+async function claimFirstPurchase(uid, payment = {}) {
+  const paymentId = marketingPaymentId(payment);
+  if (!uid || !paymentId) return { firstPayment: false, eventId: "", reason: "missing_payment_id" };
+  const conversionRef = adminDb.collection("MarketingAcquisition").doc(uid);
+  const eventId = `purchase-${safeMarketingString(payment.provider || "payment", 32)}-${paymentId}`
+    .replace(/[^A-Za-z0-9._:-]/g, "_")
+    .slice(0, 180);
+  return adminDb.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(conversionRef);
+    const current = snapshot.exists ? toJsonSafe(snapshot.data()) : null;
+    if (current && current.payment_id !== paymentId) {
+      return { firstPayment: false, eventId: current.event_id || "", reason: "renewal" };
+    }
+    const now = new Date().toISOString();
+    transaction.set(
+      conversionRef,
+      {
+        uid,
+        payment_id: paymentId,
+        provider: payment.provider || "",
+        event_id: current?.event_id || eventId,
+        status: "processing",
+        attempts: Number(current?.attempts || 0) + 1,
+        created_date: current?.created_date || now,
+        updated_date: now,
+      },
+      { merge: true }
+    );
+    return { firstPayment: true, eventId: current?.event_id || eventId, reason: current ? "retry" : "first_payment" };
+  });
+}
+
+async function sendMetaPurchase(context, payment, eventId) {
+  if (!marketingConfiguration().meta_capi) return { target: "meta", status: "unconfigured" };
+  const eventTimestamp = Math.floor(new Date(payment.date_approved || Date.now()).getTime() / 1000);
+  const userData = {};
+  if (context.client_user_agent) userData.client_user_agent = context.client_user_agent;
+  if (context.fbp) userData.fbp = context.fbp;
+  if (context.fbc) userData.fbc = context.fbc;
+  const response = await fetch(
+    `https://graph.facebook.com/${encodeURIComponent(META_GRAPH_API_VERSION)}/${encodeURIComponent(process.env.META_PIXEL_ID)}/events?access_token=${encodeURIComponent(process.env.META_CAPI_ACCESS_TOKEN)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        data: [
+          {
+            event_name: "Purchase",
+            event_time: Number.isFinite(eventTimestamp) ? eventTimestamp : Math.floor(Date.now() / 1000),
+            event_id: eventId,
+            action_source: "website",
+            event_source_url: context.landing_page || `${PUBLIC_APP_URL}/gestao-para-studios`,
+            user_data: userData,
+            custom_data: {
+              currency: "BRL",
+              value: Number(payment.amount || MONTHLY_AMOUNT),
+              content_ids: ["studiosbook-monthly"],
+              content_type: "product",
+            },
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(8000),
+    }
+  );
+  if (!response.ok) throw new Error(`Meta CAPI respondeu ${response.status}.`);
+  return { target: "meta", status: "sent" };
+}
+
+async function sendGa4Purchase(context, payment, eventId) {
+  if (!marketingConfiguration().ga4_measurement_protocol) return { target: "ga4", status: "unconfigured" };
+  if (!context.client_id) return { target: "ga4", status: "missing_client_id" };
+  const url = new URL("https://www.google-analytics.com/mp/collect");
+  url.searchParams.set("measurement_id", process.env.GA4_MEASUREMENT_ID);
+  url.searchParams.set("api_secret", process.env.GA4_API_SECRET);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: context.client_id,
+      non_personalized_ads: false,
+      events: [
+        {
+          name: "purchase",
+          params: {
+            transaction_id: marketingPaymentId(payment),
+            value: Number(payment.amount || MONTHLY_AMOUNT),
+            currency: "BRL",
+            payment_type: payment.provider || "",
+            event_id: eventId,
+            items: [{ item_id: "studiosbook-monthly", item_name: "StudiosBook mensal", price: Number(payment.amount || MONTHLY_AMOUNT), quantity: 1 }],
+          },
+        },
+      ],
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) throw new Error(`GA4 Measurement Protocol respondeu ${response.status}.`);
+  return { target: "ga4", status: "sent" };
+}
+
+async function reportFirstPurchase(uid, payment = {}) {
+  if (String(payment.status || "").toLowerCase() !== "approved") return { firstPayment: false };
+  if (Number(payment.amount || 0) < MONTHLY_AMOUNT - 0.01) return { firstPayment: false, reason: "zero_or_partial_amount" };
+  const claim = await claimFirstPurchase(uid, payment);
+  if (!claim.firstPayment) return claim;
+
+  const account = await ensureBillingAccount(uid, payment.user_email || "");
+  const context = normalizeMarketingContext(account.subscription?.marketing_context || {});
+  const conversionRef = adminDb.collection("MarketingAcquisition").doc(uid);
+  const paymentRef = paymentCollection(uid).doc(marketingPaymentId(payment));
+  let status = "pending_configuration";
+  let deliveries = [];
+
+  if (!context) {
+    status = "skipped_no_consent";
+  } else if (String(payment.user_email || account.subscription?.user_email || "").toLowerCase() === MASTER_ADMIN_EMAIL) {
+    status = "excluded_internal_account";
+  } else if (payment.live_mode !== true) {
+    status = "excluded_test_payment";
+  } else {
+    const results = await Promise.allSettled([
+      sendMetaPurchase(context, payment, claim.eventId),
+      sendGa4Purchase(context, payment, claim.eventId),
+    ]);
+    deliveries = results.map((result, index) =>
+      result.status === "fulfilled"
+        ? result.value
+        : { target: index === 0 ? "meta" : "ga4", status: "failed", error: safeMarketingString(result.reason?.message, 180) }
+    );
+    const sent = deliveries.filter((delivery) => delivery.status === "sent").length;
+    const failed = deliveries.filter((delivery) => delivery.status === "failed").length;
+    status = sent > 0 && failed === 0 ? "sent" : failed > 0 ? "partial_or_failed" : "pending_configuration";
+  }
+
+  const update = {
+    status,
+    deliveries,
+    consent: Boolean(context),
+    updated_date: new Date().toISOString(),
+  };
+  await Promise.all([
+    conversionRef.set(update, { merge: true }),
+    paymentRef.set(
+      {
+        marketing_first_payment: true,
+        marketing_event_id: claim.eventId,
+        marketing_delivery_status: status,
+        updated_date: new Date().toISOString(),
+      },
+      { merge: true }
+    ),
+  ]);
+  return { ...claim, status, deliveries };
 }
 
 async function persistBillingState(uid, patch, options = {}) {
@@ -1037,7 +1244,23 @@ async function applyStripeInvoice(uid, invoice, forcedStatus = "", validatedSubs
   const billing = await persistBillingState(uid, patch, {
     email: account.subscription?.user_email || record.user_email,
   });
-  return { ...billing, payment: { id: invoice.id, ...record } };
+  let marketing = { firstPayment: false };
+  if (status === "approved") {
+    marketing = await reportFirstPurchase(uid, { id: invoice.id, ...record }).catch((error) => {
+      console.error("First purchase tracking error", { provider: "stripe", paymentId: invoice.id, message: error?.message });
+      return { firstPayment: false, status: "failed" };
+    });
+  }
+  return {
+    ...billing,
+    payment: {
+      id: invoice.id,
+      ...record,
+      ...(marketing.firstPayment
+        ? { marketing_first_payment: true, marketing_event_id: marketing.eventId, marketing_delivery_status: marketing.status }
+        : {}),
+    },
+  };
 }
 
 async function applyStripeChargeRefund(uid, charge, options = {}) {
@@ -1355,7 +1578,7 @@ async function applyMercadoPagoPixPayment(uid, payment, options = {}) {
 
   const current = await currentSubscription(uid);
   const userRef = adminDb.collection("users").doc(uid);
-  return adminDb.runTransaction(async (transaction) => {
+  const result = await adminDb.runTransaction(async (transaction) => {
     const [subscriptionSnapshot, paymentSnapshot] = await Promise.all([
       transaction.get(current.ref),
       transaction.get(paymentRef),
@@ -1438,6 +1661,19 @@ async function applyMercadoPagoPixPayment(uid, payment, options = {}) {
       payment: { id: paymentDocId, ...storedRecord },
     };
   });
+  const marketing = await reportFirstPurchase(uid, result.payment).catch((error) => {
+    console.error("First purchase tracking error", { provider: "mercado_pago", paymentId, message: error?.message });
+    return { firstPayment: false, status: "failed" };
+  });
+  if (marketing.firstPayment) {
+    result.payment = {
+      ...result.payment,
+      marketing_first_payment: true,
+      marketing_event_id: marketing.eventId,
+      marketing_delivery_status: marketing.status,
+    };
+  }
+  return result;
 }
 
 async function findStripeSubscription(uid, customerId, preferredId = "") {
@@ -1730,6 +1966,7 @@ app.post(
         return res.status(503).json({ error: "Cobrança Stripe temporariamente indisponível." });
       }
       const account = await ensureBillingAccount(req.user.uid, req.user.email);
+      const marketing = normalizeMarketingContext(req.body?.marketing);
       const existing = await findStripeSubscription(
         req.user.uid,
         account.subscription?.stripe_customer_id,
@@ -1756,6 +1993,7 @@ app.post(
         studiosbook_uid: req.user.uid,
         product: PRODUCT_NAME,
         billing_flow: useSetupCheckout ? "subscription_setup" : "subscription",
+        ...(marketing?.checkout_event_id ? { marketing_checkout_event_id: marketing.checkout_event_id } : {}),
         ...(hasRemainingTrial ? { trial_end: String(trialEndSeconds) } : {}),
       };
       const common = {
@@ -1797,6 +2035,7 @@ app.post(
           last_payment_status: hasRemainingTrial ? "pending" : "not_started",
           last_sync_date: new Date().toISOString(),
           notes: "Checkout seguro criado na Stripe.",
+          ...(marketing ? { marketing_context: marketing } : {}),
         },
         { email: req.user.email }
       );
@@ -1846,13 +2085,18 @@ app.post("/functions/create-pix-payment", requireFirebaseUser, billingPaymentRat
       });
     }
     const account = await ensureBillingAccount(req.user.uid, req.user.email);
+    const marketing = normalizeMarketingContext(req.body?.marketing);
     const attemptId = randomUUID();
     const externalReference = `studiosbook:${req.user.uid}:${attemptId}`;
     const metadata = {
       studiosbook_uid: req.user.uid,
       product: PRODUCT_NAME,
       billing_flow: "pix",
+      ...(marketing?.checkout_event_id ? { marketing_checkout_event_id: marketing.checkout_event_id } : {}),
     };
+    if (marketing) {
+      await persistBillingState(req.user.uid, { marketing_context: marketing }, { email: req.user.email });
+    }
     const payment = await mercadoPagoRequest("/v1/payments", {
       method: "POST",
       idempotencyKey: `studiosbook-pix-${req.user.uid}-${attemptId}`,
@@ -2180,6 +2424,7 @@ app.post("/functions/admin-payment-diagnostics", requirePlatformAdmin, adminRate
       mercado_pago_webhook_events: mercadoPagoEventRows.length,
       mercado_pago_webhook_processed: mercadoPagoEventRows.filter((event) => event.status === "processed").length,
       mercado_pago_webhook_failed: mercadoPagoEventRows.filter((event) => event.status === "failed").length,
+      marketing_measurement: marketingConfiguration(),
       checked_at: new Date().toISOString(),
     });
   } catch (error) {

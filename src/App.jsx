@@ -9,7 +9,14 @@ import {
 } from "@/lib/serviceCatalog";
 import { toCsv } from "@/lib/csv";
 import { billingAccessFromRoot, hasBillingAccessNow, shouldForceBillingTab } from "@/lib/billingAccess";
-import { initializeMarketingTracking, marketingTrackingConfigured, trackEvent } from "@/lib/tracking";
+import {
+  createCheckoutMarketingContext,
+  initializeMarketingTracking,
+  marketingTrackingConfigured,
+  trackConfirmedPurchase,
+  trackEvent,
+  trackMarketingEvent,
+} from "@/lib/tracking";
 import {
   Activity,
   AlertTriangle,
@@ -1000,6 +1007,7 @@ export default function App() {
     setPixPayment(result?.payment || result?.latest_payment || null);
     setBillingCapabilities(result?.payment_capabilities || { card_recurring: true, pix: false });
     setBillingClock(Date.now());
+    trackConfirmedPurchase(result?.payment || result?.latest_payment || {}, marketingConsent === "accepted");
   };
 
   const syncBillingBootstrap = async ({ silent = true } = {}) => {
@@ -1073,7 +1081,15 @@ export default function App() {
   useEffect(() => {
     document.title = profile?.business_name
       ? `${profile.business_name} | ${PRODUCT_NAME}`
-      : PRODUCT_NAME;
+      : window.location.pathname === "/gestao-para-studios"
+        ? "StudiosBook | Gestão para profissionais da beleza"
+        : PRODUCT_NAME;
+    const canonical = document.querySelector('link[rel="canonical"]');
+    if (canonical && !profile?.business_name) {
+      canonical.href = window.location.pathname === "/gestao-para-studios"
+        ? `${OFFICIAL_APP_URL}/gestao-para-studios`
+        : `${OFFICIAL_APP_URL}/`;
+    }
   }, [profile?.business_name]);
 
   useEffect(() => {
@@ -1188,10 +1204,7 @@ export default function App() {
       base44.functions
         .invoke("sync-billing-status", { session_id: sessionId })
         .then((result) => {
-          setBillingSubscription(result?.subscription || null);
-          setBillingAccess(result?.access || null);
-          setPixPayment(result?.payment || result?.latest_payment || null);
-          setBillingCapabilities(result?.payment_capabilities || { card_recurring: true, pix: false });
+          applyBillingState(result);
           const status = result?.subscription?.status;
           if (["trialing", "active"].includes(status)) {
             showFeedback("Cobrança confirmada com segurança pela Stripe.");
@@ -1386,6 +1399,13 @@ export default function App() {
       const loggedUser = await base44.auth.loginWithProvider("google", window.location.href);
       if (loggedUser) {
         setUser(loggedUser);
+        if (loggedUser.is_new_user) {
+          const billing = await syncBillingBootstrap({ silent: true });
+          trackMarketingEvent("complete_registration", { method: "google", product: PRODUCT_NAME });
+          if (billing?.subscription?.status === "trialing") {
+            trackMarketingEvent("start_trial", { method: "google", value: 0, currency: "BRL", product: PRODUCT_NAME });
+          }
+        }
         return;
       }
       if (await base44.auth.isAuthenticated()) {
@@ -1406,10 +1426,15 @@ export default function App() {
         ? await base44.auth.registerWithEmail(email, password, fullName)
         : await base44.auth.loginWithEmail(email, password);
       setUser(loggedUser);
-      trackEvent(mode === "register" ? "trial_signup" : "login_email", {
-        method: "email",
-        product: PRODUCT_NAME,
-      });
+      if (mode === "register") {
+        const billing = await syncBillingBootstrap({ silent: true });
+        trackMarketingEvent("complete_registration", { method: "email", product: PRODUCT_NAME });
+        if (billing?.subscription?.status === "trialing") {
+          trackMarketingEvent("start_trial", { method: "email", value: 0, currency: "BRL", product: PRODUCT_NAME });
+        }
+      } else {
+        trackEvent("login_email", { method: "email", product: PRODUCT_NAME });
+      }
       showFeedback(mode === "register" ? "Conta criada. Enviamos a verificação do seu e-mail. Confira também Spam ou Lixo eletrônico." : "Login realizado.");
     } catch (error) {
       console.error(error);
@@ -1605,11 +1630,19 @@ export default function App() {
   };
 
   const startSubscriptionCheckout = async () => {
-    trackEvent("begin_checkout_card", { value: 26.9, currency: "BRL", product: PRODUCT_NAME });
+    const marketing = createCheckoutMarketingContext(marketingConsent === "accepted", "card");
+    trackMarketingEvent("initiate_checkout", {
+      event_id: marketing?.checkout_event_id,
+      value: 26.9,
+      currency: "BRL",
+      payment_type: "card",
+      product: PRODUCT_NAME,
+    });
     setActionLoading("billing-card");
     try {
       const result = await base44.functions.invoke("create-subscription-checkout", {
         app_url: window.location.origin,
+        marketing,
       });
       if (!result?.url) throw new Error("A Stripe não retornou o endereço do checkout.");
       window.location.assign(result.url);
@@ -1628,18 +1661,25 @@ export default function App() {
   };
 
   const createPixPayment = async () => {
-    trackEvent("begin_checkout_pix", { value: 26.9, currency: "BRL", product: PRODUCT_NAME });
+    const marketing = createCheckoutMarketingContext(marketingConsent === "accepted", "pix");
+    trackMarketingEvent("initiate_checkout", {
+      event_id: marketing?.checkout_event_id,
+      value: 26.9,
+      currency: "BRL",
+      payment_type: "pix",
+      product: PRODUCT_NAME,
+    });
     setActionLoading("billing-pix");
     try {
-      const result = await base44.functions.invoke("create-pix-payment", { app_url: window.location.origin });
+      const result = await base44.functions.invoke("create-pix-payment", {
+        app_url: window.location.origin,
+        marketing,
+      });
       const payment = result?.payment || result?.latest_payment;
       if (!payment?.pix_qr_code && !payment?.pix_qr_code_base64 && !payment?.pix_ticket_url) {
         throw new Error("O Mercado Pago não retornou os dados do QR Code Pix.");
       }
-      setBillingSubscription(result?.subscription || billingSubscription);
-      setBillingAccess(result?.access || billingAccess);
-      setPixPayment(payment);
-      setBillingCapabilities(result?.payment_capabilities || billingCapabilities);
+      applyBillingState(result);
       showFeedback("Pix gerado com segurança pelo Mercado Pago.");
       return result;
     } catch (error) {
@@ -1989,6 +2029,10 @@ export default function App() {
           feedback={feedback}
           feedbackType={feedbackType}
           actionLoading={actionLoading}
+          onManageCookies={() => {
+            window.localStorage.removeItem(MARKETING_CONSENT_KEY);
+            setMarketingConsent("unknown");
+          }}
         />
         {installPromptNode}
         {consentNode}
@@ -2758,8 +2802,12 @@ function CatalogServiceDialog({ draft, setDraft, categories, error, onSave, onCl
   );
 }
 
-function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedbackType, actionLoading }) {
-  const [mode, setMode] = useState("login");
+function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedbackType, actionLoading, onManageCookies }) {
+  const [mode, setMode] = useState(() => {
+    if (typeof window === "undefined") return "login";
+    const params = new URLSearchParams(window.location.search);
+    return params.get("cadastro") === "1" || params.get("mode") === "register" ? "register" : "login";
+  });
   const [form, setForm] = useState({ fullName: "", email: "", password: "" });
   const submitEmail = (event) => {
     event.preventDefault();
@@ -2784,6 +2832,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
     ["Como cancelar?", "A assinatura no cartão pode ser gerenciada pelo portal de cobrança da Stripe dentro do próprio app ou pelo suporte. O Pix não renova sozinho."],
     ["Posso exportar meus dados?", "Sim. O StudiosBook possui exportação de clientes, agenda e backup operacional para apoiar segurança e portabilidade."],
   ];
+  const segments = ["Lash designers", "Nail designers", "Design de sobrancelhas", "Cabeleireiras", "Massoterapeutas"];
 
   return (
     <div className="min-h-dvh bg-brand-ivory text-brand-charcoal">
@@ -2870,18 +2919,18 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
 
               <form onSubmit={submitEmail} className="grid min-w-0 gap-3">
                 {mode === "register" && (
-                  <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
+                  <label htmlFor="signup-name" className="grid gap-1.5 text-sm font-bold text-zinc-700">
                     Seu nome
-                    <Input type="text" autoComplete="name" required value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
+                    <Input id="signup-name" type="text" autoComplete="name" required value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
                   </label>
                 )}
-                <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
+                <label htmlFor="account-email" className="grid gap-1.5 text-sm font-bold text-zinc-700">
                   E-mail
-                  <Input type="email" autoComplete="email" required value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
+                  <Input id="account-email" type="email" autoComplete="email" required value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
                 </label>
-                <label className="grid gap-1.5 text-sm font-bold text-zinc-700">
+                <label htmlFor="account-password" className="grid gap-1.5 text-sm font-bold text-zinc-700">
                   Senha
-                  <Input type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={mode === "register" ? 8 : 6} required value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
+                  <Input id="account-password" type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={mode === "register" ? 8 : 6} required value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="h-12 rounded-full bg-white px-5" />
                 </label>
                 <Button type="submit" disabled={actionLoading === "email-auth"} className="mt-1 h-12 rounded-full bg-brand-plum text-white hover:bg-[#573048]">
                   {actionLoading === "email-auth" ? "Validando..." : mode === "register" ? "Criar conta e começar" : "Entrar com e-mail"}
@@ -2913,6 +2962,26 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
               <p className="mt-2 text-sm leading-6 text-zinc-600">{text}</p>
             </article>
           ))}
+        </section>
+
+        <section className="mt-20 grid items-center gap-10 border-y border-rose-100 py-14 lg:grid-cols-[0.75fr_1.25fr] lg:py-20" aria-labelledby="product-demo-title">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase text-[#7f3158]">Demonstração do produto</p>
+            <h2 id="product-demo-title" className="mt-3 break-words text-3xl font-black tracking-normal text-zinc-950 sm:text-4xl">
+              Sua operação visível em poucos toques.
+            </h2>
+            <p className="mt-4 max-w-xl text-base leading-7 text-zinc-600">
+              A interface reúne agenda, clientes, atendimentos, retornos e indicadores em um fluxo pensado para a rotina de profissionais da beleza.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-2" aria-label="Profissões atendidas">
+              {segments.map((segment) => (
+                <span key={segment} className="rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-black text-[#7f3158]">
+                  {segment}
+                </span>
+              ))}
+            </div>
+          </div>
+          <ProductDemoPreview />
         </section>
 
         <section className="mt-16 grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
@@ -2969,6 +3038,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
           <div className="flex flex-wrap gap-3 font-bold">
             <a href="/terms.html" target="_blank" rel="noreferrer">Termos</a>
             <a href="/privacy.html" target="_blank" rel="noreferrer">Privacidade</a>
+            {marketingTrackingConfigured() && <button type="button" onClick={onManageCookies}>Gerenciar cookies</button>}
             <a href={YOUTUBE_CHANNEL_URL} target="_blank" rel="noopener noreferrer">Videoaulas</a>
           </div>
         </div>
@@ -4962,6 +5032,47 @@ function MiniMetric({ label, value }) {
     <div className="min-w-0 rounded-2xl bg-white/10 p-3 sm:p-4">
       <p className="break-words text-xs font-bold text-white/50">{label}</p>
       <p className="mt-1 break-all text-base font-black sm:text-lg">{value}</p>
+    </div>
+  );
+}
+
+function ProductDemoPreview() {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg bg-zinc-950 p-4 text-white shadow-2xl sm:p-6" role="img" aria-label="Demonstração da central de operação do StudiosBook com dados fictícios">
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 pb-4">
+        <BrandLockup size="header" tone="light" subtitle="Dados fictícios de demonstração" />
+        <span className="rounded-full bg-emerald-400/15 px-3 py-1 text-[11px] font-black text-emerald-300">Agenda ativa</span>
+      </div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <DemoMetric label="Hoje" value="4 horários" />
+        <DemoMetric label="Retornos" value="3 próximos" />
+        <DemoMetric label="Clientes" value="28 ativos" />
+      </div>
+      <div className="mt-5 grid gap-2" aria-label="Agenda demonstrativa">
+        {[
+          ["09:00", "Cliente demonstração", "Volume brasileiro"],
+          ["11:30", "Horário bloqueado", "Organização interna"],
+          ["14:00", "Cliente demonstração", "Design natural"],
+        ].map(([time, client, service]) => (
+          <div key={`${time}-${service}`} className="grid min-w-0 grid-cols-[52px_minmax(0,1fr)] gap-3 border-t border-white/10 py-3 first:border-t-0">
+            <span className="text-sm font-black text-rose-200">{time}</span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-black">{client}</p>
+              <p className="mt-1 truncate text-xs text-white/55">{service}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-[11px] leading-5 text-white/45">Interface demonstrativa baseada no produto atual. Nenhum dado real de cliente é exibido.</p>
+    </div>
+  );
+}
+
+function DemoMetric({ label, value }) {
+  return (
+    <div className="min-w-0 border-l-2 border-rose-300 pl-3">
+      <p className="text-[10px] font-black uppercase text-white/45">{label}</p>
+      <p className="mt-1 break-words text-sm font-black text-white">{value}</p>
     </div>
   );
 }

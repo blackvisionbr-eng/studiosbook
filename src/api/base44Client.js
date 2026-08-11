@@ -2,6 +2,7 @@ import { initializeApp } from "firebase/app";
 import {
   browserLocalPersistence,
   createUserWithEmailAndPassword,
+  getAdditionalUserInfo,
   getAuth,
   GoogleAuthProvider,
   inMemoryPersistence,
@@ -87,13 +88,14 @@ async function requireUser() {
   return user;
 }
 
-function toBaseUser(user) {
+function toBaseUser(user, extra = {}) {
   return {
     id: user.uid,
     uid: user.uid,
     email: user.email || "",
     full_name: user.displayName || user.email || "Profissional",
     photo_url: user.photoURL || "",
+    ...extra,
   };
 }
 
@@ -303,7 +305,10 @@ export const base44 = {
         const credential = await signInWithPopup(auth, provider);
         await credential.user.getIdToken(true);
         lastAuthProviderError = null;
-        return toBaseUser(credential.user);
+        return toBaseUser(credential.user, {
+          is_new_user: Boolean(getAdditionalUserInfo(credential)?.isNewUser),
+          auth_method: "google",
+        });
       } catch (error) {
         lastAuthProviderError = error;
         throw error;
@@ -316,7 +321,7 @@ export const base44 = {
         String(password || "")
       );
       await credential.user.getIdToken(true);
-      return toBaseUser(credential.user);
+      return toBaseUser(credential.user, { is_new_user: false, auth_method: "password" });
     },
     async registerWithEmail(email, password, fullName) {
       const credential = await createUserWithEmailAndPassword(
@@ -332,7 +337,7 @@ export const base44 = {
         linkDomain: "studiosbook.com.br",
       }).catch((error) => console.warn("E-mail de verificação não enviado", error?.code || error?.message));
       await credential.user.getIdToken(true);
-      return toBaseUser(credential.user);
+      return toBaseUser(credential.user, { is_new_user: true, auth_method: "password" });
     },
     async sendPasswordReset(email) {
       await sendPasswordResetEmail(auth, String(email || "").trim().toLowerCase(), {
