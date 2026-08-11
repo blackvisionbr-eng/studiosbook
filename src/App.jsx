@@ -2795,15 +2795,15 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
       <main className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
         <section className="grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_440px]">
           <div className="min-w-0">
-            <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-black uppercase text-rose-800 shadow-sm">
+            <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-black uppercase leading-tight text-rose-800 shadow-sm">
               <Sparkles className="h-4 w-4 shrink-0" />
-              7 dias gratuitos para organizar seu studio
+              7 dias gratuitos de acesso ao StudiosBook
             </div>
-            <h1 className="mt-6 max-w-3xl break-words text-5xl font-black leading-[0.95] tracking-normal text-zinc-950 sm:text-6xl lg:text-7xl">
-              Gestão simples para profissionais da beleza venderem mais retorno.
+            <h1 className="mt-6 max-w-3xl break-words text-4xl font-black leading-[1.02] tracking-normal text-zinc-950 sm:text-5xl lg:text-6xl xl:text-7xl">
+              Agenda e clientes organizados para vender mais retornos.
             </h1>
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-zinc-600">
-              Agenda privada, clientes, ficha técnica, catálogo, retornos, relatórios e exportação em uma central leve para lash designers, nail designers, sobrancelhas, cabelo e massoterapia.
+            <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-600 sm:mt-6 sm:text-lg sm:leading-8">
+              O StudiosBook centraliza agenda privada, clientes, ficha técnica, catálogo, retornos, relatórios e exportação para profissionais da beleza.
             </p>
             <div className="mt-7 flex flex-col gap-3 sm:flex-row">
               <Button type="button" onClick={switchToRegister} className="h-12 rounded-full bg-brand-plum px-6 text-white hover:bg-[#573048]">
@@ -2816,9 +2816,9 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
               </a>
             </div>
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              <MiniMetric label="Período gratuito" value="7 dias" />
-              <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
-              <MiniMetric label="Cancelamento" value="Sem fidelidade" />
+              <HeroMetric label="Período gratuito" value="7 dias de acesso" />
+              <HeroMetric label="Mensalidade" value={PRODUCT_PRICE} />
+              <HeroMetric label="Contrato" value="Sem fidelidade" />
             </div>
           </div>
 
@@ -4944,6 +4944,15 @@ function MiniMetric({ label, value }) {
     <div className="min-w-0 rounded-2xl bg-white/10 p-3 sm:p-4">
       <p className="break-words text-xs font-bold text-white/50">{label}</p>
       <p className="mt-1 break-all text-base font-black sm:text-lg">{value}</p>
+    </div>
+  );
+}
+
+function HeroMetric({ label, value }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-rose-100 bg-white p-4 shadow-sm">
+      <p className="break-words text-[11px] font-black uppercase tracking-[0.12em] text-rose-800">{label}</p>
+      <p className="mt-2 break-words text-base font-black leading-tight text-zinc-950 sm:text-lg">{value}</p>
     </div>
   );
 }
