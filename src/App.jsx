@@ -2803,7 +2803,15 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
       </header>
 
       <main className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
-        <section className="grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_440px]">
+        <section className="relative isolate grid min-h-[calc(100dvh-6rem)] items-center gap-8 overflow-hidden rounded-[1.75rem] px-1 py-7 sm:rounded-[2.25rem] sm:px-6 sm:py-10 lg:grid-cols-[minmax(0,1fr)_440px] lg:px-8">
+          <img
+            src="/brand/studiosbook-login-hero.jpg"
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 -z-30 h-full w-full object-cover object-[58%_center] opacity-[0.14] saturate-[0.85] sm:opacity-[0.2] lg:object-center lg:opacity-[0.34]"
+          />
+          <div className="pointer-events-none absolute inset-0 -z-20 bg-gradient-to-r from-brand-ivory via-brand-ivory/92 to-brand-ivory/62" />
+          <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-brand-ivory/80 via-brand-ivory/20 to-brand-ivory" />
           <div className="min-w-0">
             <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-black uppercase leading-tight text-rose-800 shadow-sm">
               <Sparkles className="h-4 w-4 shrink-0" />
