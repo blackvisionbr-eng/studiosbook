@@ -41,7 +41,7 @@ const FIREBASE_WEB_API_KEY =
   process.env.FIREBASE_WEB_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs";
 const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || "https://studiosbook.com.br";
 const PUBLIC_API_URL =
-  process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
+  process.env.PUBLIC_API_URL || "https://studiosbook-api-equipe-blackvision.vercel.app";
 const STRIPE_WEBHOOK_URL =
   process.env.STRIPE_WEBHOOK_URL || `${PUBLIC_API_URL}/functions/stripe-webhook`;
 const MERCADO_PAGO_API_BASE = process.env.MERCADO_PAGO_API_BASE || "https://api.mercadopago.com";
@@ -2684,9 +2684,12 @@ app.use((error, req, res, _next) => {
 });
 
 const port = process.env.PORT || 8080;
-const server = app.listen(port, () => {
-  console.log(`StudiosBook API running on port ${port}`);
-});
+const isVercelRuntime = Boolean(process.env.VERCEL);
+const server = isVercelRuntime
+  ? null
+  : app.listen(port, () => {
+      console.log(`StudiosBook API running on port ${port}`);
+    });
 
 let shuttingDown = false;
 function shutdown(signal) {
@@ -2700,7 +2703,7 @@ function shutdown(signal) {
   }, 12000);
   forceExitTimer.unref();
 
-  server.close((error) => {
+  server?.close((error) => {
     clearTimeout(forceExitTimer);
     if (error) {
       console.error("HTTP server shutdown failed", { message: error.message });
@@ -2710,8 +2713,12 @@ function shutdown(signal) {
     process.exit(0);
   });
 
-  server.closeIdleConnections?.();
+  server?.closeIdleConnections?.();
 }
 
-process.once("SIGTERM", () => shutdown("SIGTERM"));
-process.once("SIGINT", () => shutdown("SIGINT"));
+if (server) {
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  process.once("SIGINT", () => shutdown("SIGINT"));
+}
+
+export default app;

@@ -1,7 +1,7 @@
 import Stripe from "stripe";
 import { stripeKeyMode } from "../src/billing.js";
 
-const apiUrl = process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
+const apiUrl = process.env.PUBLIC_API_URL || "https://studiosbook-api-equipe-blackvision.vercel.app";
 const secretKey = process.env.STRIPE_SECRET_KEY || "";
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
 const priceId = process.env.STRIPE_PRICE_ID || "";
