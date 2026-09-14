@@ -16,6 +16,8 @@ export default defineConfig({
         app: path.resolve(__dirname, "index.html"),
         admin: path.resolve(__dirname, "admin.html"),
         authAction: path.resolve(__dirname, "auth-action.html"),
+        booking: path.resolve(__dirname, "booking.html"),
+        receivables: path.resolve(__dirname, "recebimentos.html"),
       },
       output: {
         entryFileNames: "assets/[name].js",

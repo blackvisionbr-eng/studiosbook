@@ -28,6 +28,7 @@ import {
   validateMercadoPagoPixPayment,
   validatePixPayment,
 } from "./billing.js";
+import { createMarketplaceBookingRouter } from "./marketplaceBooking.js";
 
 const app = express();
 const PRODUCT_NAME = "StudiosBook";
@@ -168,7 +169,11 @@ app.use(
     limit: 300,
     standardHeaders: "draft-7",
     legacyHeaders: false,
-    skip: (req) => ["/functions/stripe-webhook", "/functions/mercado-pago-webhook"].includes(req.path),
+    skip: (req) => [
+      "/functions/stripe-webhook",
+      "/functions/mercado-pago-webhook",
+      "/functions/booking-marketplace-webhook",
+    ].includes(req.path),
     message: { error: "Muitas solicitações. Aguarde alguns minutos." },
   })
 );
@@ -922,8 +927,9 @@ async function loadWorkspace(uid, includeRows = false) {
   const entityRows = {};
   const entityCounts = {};
 
-  await Promise.all(
-    USER_ENTITY_NAMES.map(async (entityName) => {
+  const [rootSnapshot] = await Promise.all([
+    userDoc.get(),
+    ...USER_ENTITY_NAMES.map(async (entityName) => {
       const collectionRef = userDoc.collection(entityName);
       if (includeRows) {
         entityRows[entityName] = await listCollectionAll(collectionRef);
@@ -936,8 +942,8 @@ async function loadWorkspace(uid, includeRows = false) {
       ]);
       entityRows[entityName] = rows;
       entityCounts[entityName] = Number(countSnapshot.data().count || 0);
-    })
-  );
+    }),
+  ]);
 
   const profile = entityRows.StudioProfile?.[0] || null;
   const subscription = sortByLatest(entityRows.BillingSubscription)?.[0] || null;
@@ -946,6 +952,7 @@ async function loadWorkspace(uid, includeRows = false) {
 
   return {
     uid,
+    root: rootSnapshot.data() || {},
     profile,
     subscription,
     payments,
@@ -2314,6 +2321,9 @@ app.post("/functions/admin-overview", requirePlatformAdmin, adminRateLimit, asyn
         creationTime: authUser.creationTime || "",
         lastSignInTime: authUser.lastSignInTime || "",
         providers: authUser.providers || [],
+        receivables_access_allowed: workspace.root?.receivables_access_allowed === true,
+        receivables_access_expires_at: workspace.root?.receivables_access_expires_at || "",
+        receivables_plan_code: workspace.root?.receivables_plan_code || "studiosbook_agenda",
         business_name: workspace.profile?.business_name || "",
         categories: workspace.profile?.categories || [],
         subscription,
@@ -2670,6 +2680,13 @@ app.post("/functions/admin-set-user-access", requirePlatformAdmin, requireRecent
     res.status(500).json({ error: "Erro ao alterar acesso do usuário.", request_id: req.requestId });
   }
 });
+
+app.use(createMarketplaceBookingRouter({
+  getDb: () => adminDb,
+  requireFirebaseUser,
+  requireMasterAdmin,
+  requireRecentAdminAuth,
+}));
 
 app.use((req, res) => {
   res.status(404).json({ error: "Rota não encontrada.", request_id: req.requestId });

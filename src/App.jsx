@@ -2857,6 +2857,8 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
             src="/brand/studiosbook-login-hero.jpg"
             alt=""
             aria-hidden="true"
+                  fetchpriority="high"
+            decoding="async"
             className="pointer-events-none absolute inset-0 -z-30 h-full w-full object-cover object-[58%_center] opacity-[0.14] saturate-[0.85] sm:opacity-[0.2] lg:object-center lg:opacity-[0.34]"
           />
           <div className="pointer-events-none absolute inset-0 -z-20 bg-gradient-to-r from-brand-ivory via-brand-ivory/92 to-brand-ivory/62" />
@@ -3158,6 +3160,7 @@ function DashboardView({
               <QuickAction label="Registrar atendimento" icon={ShieldCheck} onClick={() => setActiveTab("service")} />
               <QuickAction label="Abrir agenda" icon={CalendarDays} onClick={() => setActiveTab("schedule")} />
               <QuickAction label="Retornos" icon={MessageCircle} onClick={() => setActiveTab("returns")} />
+              <QuickAction label="Recebimentos" icon={DollarSign} href="/recebimentos" />
               <QuickAction label="Videoaulas" icon={CirclePlay} href={YOUTUBE_CHANNEL_URL} />
             </div>
           </div>

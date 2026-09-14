@@ -15,6 +15,7 @@ const trackingSource = readFileSync(new URL("../src/lib/tracking.js", import.met
 const viteConfig = readFileSync(new URL("../vite.config.js", import.meta.url), "utf8");
 const appHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const assetRecovery = readFileSync(new URL("../public/asset-recovery.js", import.meta.url), "utf8");
+const marketplaceBackend = readFileSync(new URL("../railway-backend/src/marketplaceBooking.js", import.meta.url), "utf8");
 
 test("hosting does not rewrite every unknown path to the authenticated app", () => {
   const rewrites = firebaseConfig.hosting.rewrites || [];
@@ -136,12 +137,40 @@ test("browser releases recover from stale application assets", () => {
   assert.match(cacheControl, /must-revalidate/);
 });
 
+test("the public hero image is prioritized only when it is rendered", () => {
+  assert.doesNotMatch(appHtml, /rel="preload"[^>]+studiosbook-login-hero/);
+  assert.match(appSource, /src="\/brand\/studiosbook-login-hero\.jpg"[\s\S]*fetchpriority="high"/);
+  assert.match(appSource, /src="\/brand\/studiosbook-login-hero\.jpg"[\s\S]*decoding="async"/);
+});
+
 test("the public campaign landing has an explicit rewrite and CSP", () => {
   const rewrite = firebaseConfig.hosting.rewrites.find((item) => item.source === "/gestao-para-studios");
   assert.equal(rewrite?.destination, "/index.html");
   const headers = firebaseConfig.hosting.headers.find((item) => item.source === "/gestao-para-studios");
   const csp = headers?.headers?.find((header) => header.key === "Content-Security-Policy")?.value || "";
   assert.match(csp, /frame-ancestors 'none'/);
+});
+
+test("online booking and receivables have isolated routes and restrictive headers", () => {
+  const rewrites = firebaseConfig.hosting.rewrites || [];
+  assert.equal(rewrites.find((item) => item.source === "/agendar{,/**}")?.destination, "/booking.html");
+  assert.equal(rewrites.find((item) => item.source === "/recebimentos{,/**}")?.destination, "/recebimentos.html");
+  for (const source of ["/agendar{,/**}", "/recebimentos{,/**}"]) {
+    const headers = firebaseConfig.hosting.headers.find((item) => item.source === source);
+    const csp = headers?.headers?.find((header) => header.key === "Content-Security-Policy")?.value || "";
+    assert.match(csp, /object-src 'none'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+  }
+});
+
+test("marketplace payments are feature-gated and provider-verified", () => {
+  assert.match(marketplaceBackend, /BOOKING_PAYMENTS_ENABLED/);
+  assert.match(marketplaceBackend, /MARKETPLACE_TOKEN_ENCRYPTION_KEY/);
+  assert.match(marketplaceBackend, /validateWebhookSignature/);
+  assert.match(marketplaceBackend, /paymentAccessToken/);
+  assert.match(marketplaceBackend, /requireMasterAdmin/);
+  assert.match(marketplaceBackend, /runTransaction/);
+  assert.match(marketplaceBackend, /lock_conflict/);
 });
 
 test("public sales page discloses billing terms before signup", () => {

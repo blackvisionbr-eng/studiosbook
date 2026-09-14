@@ -347,6 +347,8 @@ export default function AdminApp() {
       setLoading("");
       if (pending.type === "subscription") {
         await updateSubscriptionOverride(pending.account, pending.control, { skipConfirmation: true });
+      } else if (pending.type === "receivables") {
+        await updateReceivablesAccess(pending.account, pending.enabled, { skipConfirmation: true });
       }
     } catch {
       setReauthError("Senha administrativa incorreta. Tente novamente.");
@@ -369,6 +371,28 @@ export default function AdminApp() {
       await loadOverview();
       showNotice(cancelAtPeriodEnd ? "Renovação programada para cancelamento." : "Renovação automática retomada.");
     } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading("");
+    }
+  };
+
+  const updateReceivablesAccess = async (account, enabled, options = {}) => {
+    const action = enabled ? "ativar" : "desativar";
+    if (!options.skipConfirmation && !window.confirm(`Deseja ${action} o StudiosBook Recebimentos para ${account.email || account.uid}?`)) return;
+    setLoading(`receivables-${account.uid}`);
+    setError("");
+    try {
+      const result = await invokeAdmin("admin-set-receivables-plan", { uid: account.uid, enabled });
+      if (result?.enabled !== enabled) throw new Error("O servidor não confirmou a alteração do plano Recebimentos.");
+      await loadOverview();
+      showNotice(enabled ? "StudiosBook Recebimentos ativado." : "StudiosBook Recebimentos desativado.");
+    } catch (requestError) {
+      if (requestError.payload?.code === "recent_auth_required") {
+        setReauthError("");
+        setReauthRequest({ type: "receivables", account, enabled });
+        return;
+      }
       setError(requestError.message);
     } finally {
       setLoading("");
@@ -460,6 +484,7 @@ export default function AdminApp() {
             adminRole={adminRole}
             onSubscriptionOverride={updateSubscriptionOverride}
             onStripeRenewal={updateStripeRenewal}
+            onReceivables={updateReceivablesAccess}
           />
         )}
         {activeTab === "payments" && <Payments rows={data?.recent_payments || []} />}
@@ -603,7 +628,7 @@ function Overview({ data, loading }) {
   );
 }
 
-function Accounts({ users, search, setSearch, loading, onSubscription, onAccess, onPasswordReset, onSessions, adminRole, onSubscriptionOverride, onStripeRenewal }) {
+function Accounts({ users, search, setSearch, loading, onSubscription, onAccess, onPasswordReset, onSessions, adminRole, onSubscriptionOverride, onStripeRenewal, onReceivables }) {
   const [expandedUid, setExpandedUid] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [pageSize, setPageSize] = useState(20);
@@ -684,7 +709,7 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess,
                     <Button type="button" disabled={loading === `password-reset-${account.uid}` || !account.email} onClick={() => onPasswordReset(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3"><Mail className="mr-2 h-4 w-4" />Senha</Button>
                     <Button type="button" disabled={loading === `sessions-${account.uid}`} onClick={() => onSessions(account)} variant="ghost" className="h-10 rounded-lg border bg-white px-3"><LogOut className="mr-2 h-4 w-4" />Sessões</Button>
                   </div>
-                  {adminRole === "master_admin" && <SubscriptionControls account={account} loading={loading} onOverride={onSubscriptionOverride} onStripeRenewal={onStripeRenewal} />}
+                  {adminRole === "master_admin" && <SubscriptionControls account={account} loading={loading} onOverride={onSubscriptionOverride} onStripeRenewal={onStripeRenewal} onReceivables={onReceivables} />}
                 </div>
               )}
             </article>
@@ -706,12 +731,12 @@ function Accounts({ users, search, setSearch, loading, onSubscription, onAccess,
   );
 }
 
-function SubscriptionControls({ account, loading, onOverride, onStripeRenewal }) {
+function SubscriptionControls({ account, loading, onOverride, onStripeRenewal, onReceivables }) {
   const [days, setDays] = useState("30");
   const [reason, setReason] = useState("");
   const hasStripeSubscription = Boolean(account.subscription?.stripe_subscription_id);
   const renewalCancelled = Boolean(account.subscription?.cancel_at_period_end);
-  const busy = loading === `subscription-control-${account.uid}` || loading === `renewal-${account.uid}`;
+  const busy = loading === `subscription-control-${account.uid}` || loading === `renewal-${account.uid}` || loading === `receivables-${account.uid}`;
   const override = String(account.subscription?.admin_access_override || "");
   const appliedStatus = override === "active" ? "manual_access" : override === "suspended" ? "suspended" : "automatic";
   const validDays = Number.isInteger(Number(days)) && Number(days) >= 1 && Number(days) <= 3650;
@@ -737,6 +762,9 @@ function SubscriptionControls({ account, loading, onOverride, onStripeRenewal })
             <CreditCard className="mr-2 h-4 w-4 shrink-0" />{renewalCancelled ? "Retomar renovação" : "Cancelar renovação"}
           </Button>
         )}
+        <Button type="button" disabled={busy} onClick={() => onReceivables(account, !account.receivables_access_allowed)} variant="ghost" className={`h-10 min-w-0 rounded-lg border px-3 text-xs ${account.receivables_access_allowed ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "bg-white"}`}>
+          <QrCode className="mr-2 h-4 w-4 shrink-0" />{account.receivables_access_allowed ? "Desativar Recebimentos" : "Ativar Recebimentos"}
+        </Button>
       </div>
     </div>
   );
