@@ -302,7 +302,12 @@ async function resolveWebhookStudio(db, req) {
   }
 
   const studioId = mappedStudioId || requestedStudioId;
-  if (!studioId) throw Object.assign(new Error("Studio não identificado."), { statusCode: 400 });
+  if (!studioId) {
+    throw Object.assign(new Error("Studio não identificado."), {
+      statusCode: 400,
+      code: "WEBHOOK_STUDIO_UNMAPPED",
+    });
+  }
   return { studioId, mercadoPagoUserId };
 }
 
@@ -1107,6 +1112,14 @@ export function createMarketplaceBookingRouter({ getDb, requireFirebaseUser, req
       await eventRef.set({ status: "processed", updated_at: FieldValue.serverTimestamp() }, { merge: true });
       return res.json({ received: true });
     } catch (error) {
+      if (error?.code === "WEBHOOK_STUDIO_UNMAPPED") {
+        console.warn("Booking payment webhook ignored", {
+          requestId: req.requestId,
+          paymentId: validation.dataId,
+          reason: error.code,
+        });
+        return res.json({ received: true, ignored: true });
+      }
       console.error("Booking payment webhook failed", { requestId: req.requestId, studioId, paymentId: validation.dataId, message: error?.message });
       if (eventRef) await eventRef.set({ status: "failed", error: safeText(error?.message, 240), updated_at: FieldValue.serverTimestamp() }, { merge: true }).catch(() => {});
       return res.status(error?.statusCode || 500).json({ error: error?.statusCode ? error.message : "Falha ao processar o pagamento." });

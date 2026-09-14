@@ -175,6 +175,30 @@ test("rejects a webhook that tries to cross connected studios", async () => {
   );
 });
 
+test("marks a signed webhook from an unmapped seller as safe to acknowledge", async () => {
+  const db = {
+    collection() {
+      return {
+        doc() {
+          return {
+            async get() {
+              return { exists: false, data: () => undefined };
+            },
+          };
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    marketplaceBookingInternals.resolveWebhookStudio(db, {
+      query: {},
+      body: { user_id: 188818353 },
+    }),
+    (error) => error?.code === "WEBHOOK_STUDIO_UNMAPPED" && error?.statusCode === 400
+  );
+});
+
 test("encrypts marketplace credentials before persistence", () => {
   const previous = process.env.MARKETPLACE_TOKEN_ENCRYPTION_KEY;
   process.env.MARKETPLACE_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
