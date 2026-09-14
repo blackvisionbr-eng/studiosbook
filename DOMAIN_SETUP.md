@@ -46,15 +46,15 @@ e.sec.dns.br
 
 ## Backend Railway
 
-Projeto Vercel atual: `studiosbook-api`
+Serviço de produção: `studiosbook-api`
 
 URL pública atual:
 
 ```txt
-https://studiosbook-api-equipe-blackvision.vercel.app
+https://studiosbook-api-production.up.railway.app
 ```
 
-O frontend usa diretamente a URL pública de produção da Vercel. Um domínio customizado para a API pode ser adicionado depois que o DNS correspondente estiver validado.
+O frontend, o painel administrativo e os webhooks usam diretamente a API de produção da Railway. Um domínio customizado para a API pode ser adicionado depois que o DNS correspondente estiver validado.
 No serviço, mantenha:
 
 ```txt

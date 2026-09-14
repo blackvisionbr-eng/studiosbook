@@ -52,7 +52,7 @@ const FIREBASE_WEB_API_KEY =
   process.env.FIREBASE_WEB_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs";
 const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || "https://studiosbook.com.br";
 const PUBLIC_API_URL =
-  process.env.PUBLIC_API_URL || "https://studiosbook-api-equipe-blackvision.vercel.app";
+  process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
 const STRIPE_WEBHOOK_URL =
   process.env.STRIPE_WEBHOOK_URL || `${PUBLIC_API_URL}/functions/stripe-webhook`;
 const MERCADO_PAGO_API_BASE = process.env.MERCADO_PAGO_API_BASE || "https://api.mercadopago.com";

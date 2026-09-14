@@ -4365,50 +4365,8 @@ function BillingView({
         </article>
       </section>
 
-      <section className={`grid min-w-0 gap-4 sm:gap-6 ${pixAvailable ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
+      {pixAvailable && <section className="grid min-w-0 gap-4 sm:gap-6">
         <Panel>
-          <PanelHeader
-            title="Cartão recorrente"
-            subtitle="A Stripe processa R$ 26,90 por mês e trata autenticação bancária com segurança."
-          />
-          <div className="mt-5 grid gap-4">
-            {[
-              ["Período preservado", "Os 7 dias continuam contados desde a criação da conta.", Sparkles],
-              ["Controle completo", "Troque o cartão, consulte faturas ou cancele pelo portal da Stripe.", CreditCard],
-            ].map(([title, text, Icon]) => (
-              <div key={title} className="flex items-start gap-3 rounded-[1.25rem] bg-zinc-50 p-4">
-                <Icon className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" />
-                <div className="min-w-0">
-                  <p className="font-black text-zinc-950">{title}</p>
-                  <p className="mt-1 text-sm leading-6 text-zinc-500">{text}</p>
-                </div>
-              </div>
-            ))}
-            {recurringActive ? (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
-                <p className="font-black">
-                  {recurringPaymentStatus === "approved" ? "Pagamento confirmado" : "Assinatura protegida pela Stripe"}
-                </p>
-                <p className="mt-1 text-emerald-900/75">
-                  A situação financeira é atualizada automaticamente pelos eventos assinados da Stripe.
-                </p>
-              </div>
-            ) : (
-              <Button
-                id="studiosbook-card-form"
-                type="button"
-                onClick={() => onStartSubscription(PLAN_CODES.AGENDA)}
-                disabled={actionLoading === "billing-card"}
-                className="h-12 w-full rounded-full bg-zinc-950 px-4 text-white hover:bg-zinc-800"
-              >
-                <CreditCard className="mr-2 h-4 w-4" />
-                {actionLoading === "billing-card" ? "Abrindo checkout..." : "Continuar para a Stripe"}
-              </Button>
-            )}
-          </div>
-        </Panel>
-
-        {pixAvailable && <Panel>
           <PanelHeader
             title="Pagamento por Pix"
             subtitle="Pagamento avulso de R$ 26,90 via Mercado Pago, sem renovação automática, para liberar 30 dias."
@@ -4480,8 +4438,8 @@ function BillingView({
               {actionLoading === "billing-pix" ? "Gerando Pix..." : hasPendingPix ? "Gerar novo Pix" : "Pagar R$ 26,90 por Pix"}
             </Button>
           </div>
-        </Panel>}
-      </section>
+        </Panel>
+      </section>}
 
       <Panel>
         <PanelHeader

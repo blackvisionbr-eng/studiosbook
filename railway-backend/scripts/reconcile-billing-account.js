@@ -41,7 +41,7 @@ function serviceAccount() {
 }
 
 const projectId = process.env.FIREBASE_PROJECT_ID || "blackvision-27f1c";
-const apiUrl = process.env.PUBLIC_API_URL || "https://studiosbook-api-equipe-blackvision.vercel.app";
+const apiUrl = process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app";
 const apiKey = process.env.FIREBASE_WEB_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs";
 initializeApp({ credential: cert(serviceAccount()), projectId });
 

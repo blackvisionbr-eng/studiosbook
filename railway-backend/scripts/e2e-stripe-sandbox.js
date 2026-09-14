@@ -8,8 +8,12 @@ import Stripe from "stripe";
 
 const command = process.argv[2] || "prepare";
 const stateFile = process.env.STRIPE_E2E_OUTPUT_FILE || "stripe-e2e-state.json";
-const apiUrl = (process.env.PUBLIC_API_URL || "").replace(/\/$/, "");
+const apiUrl = (process.env.STRIPE_E2E_API_URL || process.env.PUBLIC_API_URL || "").replace(/\/$/, "");
 const firebaseApiKey = process.env.FIREBASE_WEB_API_KEY || "AIzaSyDe7rzsoWuw03hN_RBvB7jgyD3CsFy3sqs";
+const planCode = process.env.STRIPE_E2E_PLAN_CODE || "studiosbook_agenda";
+const planPriceId = planCode === "studiosbook_receivables"
+  ? process.env.STRIPE_RECEIVABLES_PRICE_ID
+  : process.env.STRIPE_PRICE_ID;
 
 function normalizePrivateKey(value) {
   const endMarker = "-----END PRIVATE KEY-----";
@@ -66,7 +70,7 @@ async function invoke(idToken, name, data = {}) {
 }
 
 async function prepare() {
-  if (!apiUrl || !process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_PRICE_ID) {
+  if (!apiUrl || !process.env.STRIPE_SECRET_KEY || !planPriceId) {
     throw new Error("Ambiente de homologação Stripe incompleto.");
   }
   const { auth } = initializeAdmin();
@@ -81,6 +85,7 @@ async function prepare() {
   }
   const checkout = await invoke(idToken, "create-subscription-checkout", {
     app_url: "https://studiosbook.com.br",
+    plan_code: planCode,
   });
   if (!checkout.url || !checkout.url.startsWith("https://checkout.stripe.com/")) {
     throw new Error("Checkout Stripe hospedado não foi criado.");
@@ -90,16 +95,15 @@ async function prepare() {
   const sessionId = new URL(checkout.url).pathname.split("/").filter(Boolean).pop();
   const session = await stripe.checkout.sessions.retrieve(sessionId, { expand: ["line_items"] });
   const line = session.line_items?.data?.[0];
-  if (session.mode !== "subscription" || line?.price?.id !== process.env.STRIPE_PRICE_ID) {
-    throw new Error("Checkout não está vinculado ao plano mensal correto.");
-  }
-
   await writeFile(
     stateFile,
-    `${JSON.stringify({ uid: user.uid, email, id_token: idToken, session_id: session.id, session_url: checkout.url }, null, 2)}\n`,
+    `${JSON.stringify({ uid: user.uid, email, id_token: idToken, plan_code: planCode, session_id: session.id, session_url: checkout.url }, null, 2)}\n`,
     { encoding: "utf8", mode: 0o600 }
   );
-  console.log(JSON.stringify({ ok: true, stage: "prepared", checkout_mode: session.mode, trial_status: billing.subscription.status }));
+  if (session.mode !== "subscription" || line?.price?.id !== planPriceId) {
+    throw new Error(`Checkout divergente: mode=${session.mode || "-"}, amount=${line?.amount_total ?? session.amount_total ?? "-"}, lookup_key=${line?.price?.lookup_key || "-"}.`);
+  }
+  console.log(JSON.stringify({ ok: true, stage: "prepared", checkout_mode: session.mode, plan_code: planCode, amount_total: session.amount_total, trial_status: billing.subscription.status }));
 }
 
 async function verify() {
@@ -179,6 +183,7 @@ async function cleanup() {
   const { auth, db } = initializeAdmin();
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { maxNetworkRetries: 2, timeout: 20000 });
   const session = await stripe.checkout.sessions.retrieve(state.session_id).catch(() => null);
+  if (session?.status === "open") await stripe.checkout.sessions.expire(session.id).catch(() => {});
   if (session?.subscription) {
     await stripe.subscriptions.cancel(String(session.subscription)).catch(() => {});
   }

@@ -3,7 +3,7 @@ import { stripeChargeRefundState, stripeInvoicePaymentIntentId } from "../src/bi
 
 const invoiceId = String(process.argv[2] || "").trim();
 const apiUrl = String(
-  process.env.PUBLIC_API_URL || "https://studiosbook-api-equipe-blackvision.vercel.app"
+  process.env.PUBLIC_API_URL || "https://studiosbook-api-production.up.railway.app"
 ).replace(/\/$/, "");
 const secretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
 const webhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();

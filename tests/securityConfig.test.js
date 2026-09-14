@@ -167,14 +167,16 @@ test("online booking and receivables have isolated routes and restrictive header
   }
 });
 
-test("booking payments use the dedicated Railway API without changing the primary Vercel API", () => {
+test("the app, admin and booking payments use the healthy Railway API", () => {
   assert.match(appAuthClient, /VITE_BOOKING_API_BASE_URL/);
   assert.match(appAuthClient, /invokeBooking/);
   assert.match(receivablesSource, /functions\.invokeBooking/);
   assert.doesNotMatch(receivablesSource, /functions\.invoke\("booking-/);
   assert.match(bookingSource, /VITE_BOOKING_API_BASE_URL/);
   assert.match(bookingSource, /studiosbook-api-production\.up\.railway\.app/);
-  assert.match(appAuthClient, /studiosbook-api-equipe-blackvision\.vercel\.app/);
+  assert.match(appAuthClient, /studiosbook-api-production\.up\.railway\.app/);
+  assert.match(adminAuthClient, /studiosbook-api-production\.up\.railway\.app/);
+  assert.doesNotMatch(appAuthClient, /vercel\.app/);
 });
 
 test("marketplace payments are feature-gated and provider-verified", () => {

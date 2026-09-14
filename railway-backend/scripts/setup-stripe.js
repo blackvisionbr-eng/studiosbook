@@ -6,7 +6,7 @@ import { stripeKeyMode } from "../src/billing.js";
 const PRODUCT_NAME = "StudiosBook";
 const PRICE_IN_CENTS = 2690;
 const DEFAULT_WEBHOOK_URL =
-  "https://studiosbook-api-equipe-blackvision.vercel.app/functions/stripe-webhook";
+  "https://studiosbook-api-production.up.railway.app/functions/stripe-webhook";
 const WEBHOOK_EVENTS = [
   "checkout.session.completed",
   "checkout.session.async_payment_succeeded",
