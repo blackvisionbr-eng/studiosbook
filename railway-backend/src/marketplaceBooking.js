@@ -82,9 +82,10 @@ function webhookDataId(req) {
 function validateWebhookSignature(req, secret) {
   const signature = parseSignature(req.headers["x-signature"]);
   const dataId = webhookDataId(req);
+  const signatureDataId = safeText(req.query?.["data.id"], 100).toLowerCase();
   const requestId = safeText(req.headers["x-request-id"], 180);
   if (!secret || !signature.ts || !signature.v1 || !dataId || !requestId) return { valid: false, dataId };
-  const manifest = `id:${dataId};request-id:${requestId};ts:${signature.ts};`;
+  const manifest = `${signatureDataId ? `id:${signatureDataId};` : ""}request-id:${requestId};ts:${signature.ts};`;
   const expected = createHmac("sha256", secret).update(manifest).digest("hex");
   return { valid: safeHexEqual(expected, signature.v1), dataId };
 }

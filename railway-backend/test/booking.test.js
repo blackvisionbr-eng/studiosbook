@@ -90,6 +90,39 @@ test("verifies Mercado Pago webhook signatures with constant-time comparison", (
   assert.equal(marketplaceBookingInternals.validateWebhookSignature(request, "wrong-secret").valid, false);
 });
 
+test("verifies Mercado Pago simulator signatures when data.id exists only in the body", () => {
+  const secret = "webhook-secret";
+  const requestId = "request-simulator";
+  const timestamp = "1789351200";
+  const signature = createHmac("sha256", secret)
+    .update(`request-id:${requestId};ts:${timestamp};`)
+    .digest("hex");
+  const request = {
+    query: {},
+    body: { data: { id: "123456" } },
+    headers: { "x-request-id": requestId, "x-signature": `ts=${timestamp},v1=${signature}` },
+  };
+  const validation = marketplaceBookingInternals.validateWebhookSignature(request, secret);
+  assert.equal(validation.valid, true);
+  assert.equal(validation.dataId, "123456");
+});
+
+test("normalizes alphanumeric query IDs before validating Mercado Pago signatures", () => {
+  const secret = "webhook-secret";
+  const requestId = "request-order";
+  const timestamp = "1789351200";
+  const dataId = "ORD01JQ4S4KY8HWQ6NA5PXB65B3D3";
+  const signature = createHmac("sha256", secret)
+    .update(`id:${dataId.toLowerCase()};request-id:${requestId};ts:${timestamp};`)
+    .digest("hex");
+  const request = {
+    query: { "data.id": dataId },
+    body: {},
+    headers: { "x-request-id": requestId, "x-signature": `ts=${timestamp},v1=${signature}` },
+  };
+  assert.equal(marketplaceBookingInternals.validateWebhookSignature(request, secret).valid, true);
+});
+
 test("resolves a global Mercado Pago webhook to the connected studio", async () => {
   const db = {
     collection(name) {
