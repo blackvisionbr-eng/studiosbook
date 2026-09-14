@@ -9,6 +9,7 @@ import {
 } from "@/lib/serviceCatalog";
 import { toCsv } from "@/lib/csv";
 import { billingAccessFromRoot, hasBillingAccessNow, shouldForceBillingTab } from "@/lib/billingAccess";
+import { PLAN_CODES, PLAN_DETAILS, planDetails } from "@/lib/plans";
 import {
   createCheckoutMarketingContext,
   initializeMarketingTracking,
@@ -78,6 +79,7 @@ const BillingSubscription = base44.entities.BillingSubscription;
 const PRODUCT_NAME = "StudiosBook";
 const PRODUCT_COMPANY = "BlackVision";
 const PRODUCT_PRICE = "R$ 26,90/mês";
+const RECEIVABLES_PRICE = "R$ 59,90/mês";
 const OFFICIAL_APP_URL = "https://studiosbook.com.br";
 const YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@Studiosbook";
 const SUPPORT_EMAIL = "getblackvision.br@gmail.com";
@@ -87,6 +89,22 @@ const SUPPORT_PHONE = "73981068594";
 const WHATSAPP_DEFAULT = "";
 const INSTALL_DISMISS_KEY = "studiosbook_install_dismissed_until";
 const MARKETING_CONSENT_KEY = "studiosbook_marketing_consent";
+const PENDING_PLAN_KEY = "studiosbook_pending_plan";
+
+function readPendingPlan() {
+  if (typeof window === "undefined") return "";
+  const value = window.sessionStorage.getItem(PENDING_PLAN_KEY) || "";
+  return PLAN_DETAILS[value] ? value : "";
+}
+
+function rememberPendingPlan(planCode) {
+  if (typeof window === "undefined" || !PLAN_DETAILS[planCode]) return;
+  window.sessionStorage.setItem(PENDING_PLAN_KEY, planCode);
+}
+
+function clearPendingPlan() {
+  if (typeof window !== "undefined") window.sessionStorage.removeItem(PENDING_PLAN_KEY);
+}
 
 const PROFESSIONAL_CATEGORIES = [
   {
@@ -1164,6 +1182,10 @@ export default function App() {
             status: nextAccess.status,
             current_period_end: root.current_period_end || current?.current_period_end || "",
             trial_end_date: root.trial_end_date || current?.trial_end_date || "",
+            plan_code: root.plan_code || current?.plan_code || PLAN_CODES.AGENDA,
+            plan_name: root.plan_name || current?.plan_name || PLAN_DETAILS[PLAN_CODES.AGENDA].name,
+            receivables_access_allowed: root.receivables_access_allowed === true,
+            receivables_access_expires_at: root.receivables_access_expires_at || "",
             admin_access_override: root.admin_access_override || "",
             admin_override_until: root.admin_override_until || "",
           }));
@@ -1194,6 +1216,27 @@ export default function App() {
       setActiveTab("billing");
       window.history.replaceState({}, "", window.location.pathname);
       showFeedback("Pagamento cancelado. Nenhuma cobrança foi realizada.", "error");
+      return;
+    }
+    if (params.get("billing") === "return") {
+      setActiveTab("billing");
+      window.history.replaceState({}, "", window.location.pathname);
+      setActionLoading("billing-refresh");
+      base44.functions
+        .invoke("sync-billing-status", {})
+        .then((result) => {
+          applyBillingState(result);
+          showFeedback(
+            result?.subscription?.plan_code === PLAN_CODES.RECEIVABLES
+              ? "Plano Recebimentos confirmado e liberado."
+              : "Assinatura sincronizada com a Stripe."
+          );
+        })
+        .catch((error) => {
+          console.error("Billing portal return sync error", error);
+          showFeedback("A alteração ainda está sendo processada. Use Atualizar status em instantes.", "error");
+        })
+        .finally(() => setActionLoading(""));
       return;
     }
     if (params.get("checkout") === "stripe" && params.has("session_id")) {
@@ -1406,6 +1449,8 @@ export default function App() {
             trackMarketingEvent("start_trial", { method: "google", value: 0, currency: "BRL", product: PRODUCT_NAME });
           }
         }
+        const pendingPlan = readPendingPlan();
+        if (pendingPlan) await startSubscriptionCheckout(pendingPlan);
         return;
       }
       if (await base44.auth.isAuthenticated()) {
@@ -1435,6 +1480,8 @@ export default function App() {
       } else {
         trackEvent("login_email", { method: "email", product: PRODUCT_NAME });
       }
+      const pendingPlan = readPendingPlan();
+      if (pendingPlan) await startSubscriptionCheckout(pendingPlan);
       showFeedback(mode === "register" ? "Conta criada. Enviamos a verificação do seu e-mail. Confira também Spam ou Lixo eletrônico." : "Login realizado.");
     } catch (error) {
       console.error(error);
@@ -1629,22 +1676,31 @@ export default function App() {
     }
   };
 
-  const startSubscriptionCheckout = async () => {
+  const startSubscriptionCheckout = async (planCode = PLAN_CODES.AGENDA) => {
+    const selectedPlan = planDetails(planCode);
     const marketing = createCheckoutMarketingContext(marketingConsent === "accepted", "card");
     trackMarketingEvent("initiate_checkout", {
       event_id: marketing?.checkout_event_id,
-      value: 26.9,
+      value: selectedPlan.amount,
       currency: "BRL",
       payment_type: "card",
-      product: PRODUCT_NAME,
+      product: selectedPlan.name,
+      plan_code: selectedPlan.code,
     });
-    setActionLoading("billing-card");
+    const loadingKey = selectedPlan.code === PLAN_CODES.RECEIVABLES ? "billing-receivables" : "billing-card";
+    setActionLoading(loadingKey);
     try {
-      const result = await base44.functions.invoke("create-subscription-checkout", {
+      const invoke = selectedPlan.code === PLAN_CODES.RECEIVABLES
+        ? base44.functions.invokeBooking
+        : base44.functions.invoke;
+      const result = await invoke("create-subscription-checkout", {
         app_url: window.location.origin,
+        return_path: "/",
+        plan_code: selectedPlan.code,
         marketing,
       });
       if (!result?.url) throw new Error("A Stripe não retornou o endereço do checkout.");
+      clearPendingPlan();
       window.location.assign(result.url);
       return result;
     } catch (error) {
@@ -2813,7 +2869,8 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
     event.preventDefault();
     onEmailAuth({ mode, ...form });
   };
-  const switchToRegister = () => {
+  const switchToRegister = (planCode = "") => {
+    if (typeof planCode === "string" && PLAN_DETAILS[planCode]) rememberPendingPlan(planCode);
     setMode("register");
     trackEvent("landing_trial_cta_click", { product: PRODUCT_NAME });
     window.setTimeout(() => document.getElementById("public-signup-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
@@ -2828,7 +2885,8 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
   ];
   const faqs = [
     ["Os 7 dias gratuitos cobram automaticamente?", "Não. Durante os 7 dias gratuitos não há cobrança. Para continuar depois desse período, a profissional escolhe cartão recorrente ou Pix avulso quando disponível."],
-    ["Quanto custa depois dos 7 dias gratuitos?", `${PRODUCT_PRICE} no cartão, em cobrança mensal recorrente pela Stripe. Pix, quando ativo, libera 30 dias sem renovação automática.`],
+    ["Quanto custa depois dos 7 dias gratuitos?", `O StudiosBook Agenda custa ${PRODUCT_PRICE}. O plano recomendado StudiosBook Recebimentos custa ${RECEIVABLES_PRICE}, além de 0,79% por pagamento aprovado, com comissão limitada a R$ 59,90 por mês.`],
+    ["O que o plano Recebimentos acrescenta?", "Inclui tudo do Agenda, página de agendamento on-line, pagamento integral ou sinal por Pix e cartão, confirmação automática e relatório de reservas e recebimentos."],
     ["Como cancelar?", "A assinatura no cartão pode ser gerenciada pelo portal de cobrança da Stripe dentro do próprio app ou pelo suporte. O Pix não renova sozinho."],
     ["Posso exportar meus dados?", "Sim. O StudiosBook possui exportação de clientes, agenda e backup operacional para apoiar segurança e portabilidade."],
   ];
@@ -2886,7 +2944,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
             </div>
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
               <HeroMetric label="Período gratuito" value="7 dias de acesso" />
-              <HeroMetric label="Mensalidade" value={PRODUCT_PRICE} />
+              <HeroMetric label="Mensalidade" value="A partir de R$ 26,90/mês" />
               <HeroMetric label="Contrato" value="Sem fidelidade" />
             </div>
           </div>
@@ -2896,7 +2954,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
               <p className="text-xs font-black uppercase text-rose-200">Acesso ao aplicativo</p>
               <p className="mt-2 text-2xl font-black">Crie sua conta ou entre no seu studio.</p>
               <p className="mt-2 text-sm leading-6 text-white/65">
-                Você tem 7 dias gratuitos. Depois, a assinatura no cartão custa {PRODUCT_PRICE}.
+                Você tem 7 dias gratuitos. Depois, escolha Agenda por {PRODUCT_PRICE} ou Recebimentos, o plano recomendado, por {RECEIVABLES_PRICE}.
               </p>
             </div>
 
@@ -2986,32 +3044,50 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
           <ProductDemoPreview />
         </section>
 
-        <section className="mt-16 grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
-          <div className="rounded-lg bg-zinc-950 p-6 text-white sm:p-8">
-            <p className="text-xs font-black uppercase text-rose-200">Plano StudiosBook</p>
-            <h2 className="mt-3 text-4xl font-black tracking-normal">{PRODUCT_PRICE}</h2>
-            <p className="mt-4 text-sm leading-6 text-white/70">
-              7 dias gratuitos. Depois, cobrança mensal recorrente no cartão pela Stripe. Sem fidelidade.
+        <section className="mt-16" aria-labelledby="public-plans-title">
+          <div className="max-w-2xl">
+            <p className="text-xs font-black uppercase text-[#7f3158]">Planos StudiosBook</p>
+            <h2 id="public-plans-title" className="mt-2 break-words text-3xl font-black tracking-normal text-zinc-950 sm:text-4xl">
+              Escolha o nível de operação do seu studio.
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-zinc-600 sm:text-base">
+              Os dois planos têm 7 dias gratuitos desde o cadastro, cobrança mensal pela Stripe e cancelamento sem fidelidade.
             </p>
-            <Button type="button" onClick={switchToRegister} className="mt-6 h-12 rounded-full bg-white px-6 text-zinc-950 hover:bg-rose-50">
-              Começar agora
-            </Button>
           </div>
-          <div className="grid gap-3 rounded-lg border border-white bg-white p-5 shadow-sm sm:p-6">
-            {[
-              ["Cartão", "Após os 7 dias gratuitos, assinatura mensal recorrente de R$ 26,90 processada pela Stripe."],
-              ["Pix", "Quando disponível, pagamento avulso via Mercado Pago libera 30 dias e não renova automaticamente."],
-              ["Cancelamento", "A profissional pode cancelar pelo portal de cobrança no app ou solicitar suporte."],
-              ["Arrependimento", "Contratações online seguem o prazo legal de 7 dias para solicitação, quando aplicável."],
-            ].map(([title, text]) => (
-              <div key={title} className="flex gap-3 rounded-lg bg-rose-50 p-4">
-                <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[#7f3158]" />
-                <div className="min-w-0">
-                  <h3 className="font-black text-zinc-950">{title}</h3>
-                  <p className="mt-1 text-sm leading-6 text-zinc-600">{text}</p>
-                </div>
-              </div>
-            ))}
+          <div className="mt-7 grid items-stretch gap-5 lg:grid-cols-2">
+            <article className="flex min-w-0 flex-col rounded-lg border border-zinc-200 bg-white p-5 shadow-sm sm:p-7">
+              <p className="text-xs font-black uppercase text-zinc-500">Gestão essencial</p>
+              <h3 className="mt-3 text-2xl font-black text-zinc-950">StudiosBook Agenda</h3>
+              <p className="mt-2 text-sm leading-6 text-zinc-600">{PLAN_DETAILS[PLAN_CODES.AGENDA].description}</p>
+              <p className="mt-6 text-4xl font-black text-zinc-950">R$ 26,90<span className="text-base text-zinc-500">/mês</span></p>
+              <ul className="mt-6 grid gap-3 text-sm text-zinc-700">
+                {PLAN_DETAILS[PLAN_CODES.AGENDA].features.map((feature) => (
+                  <li key={feature} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" /><span>{feature}</span></li>
+                ))}
+              </ul>
+              <Button type="button" onClick={() => switchToRegister(PLAN_CODES.AGENDA)} className="mt-7 h-12 w-full rounded-full bg-white text-zinc-950 ring-1 ring-zinc-300 hover:bg-zinc-50">
+                Começar com Agenda
+              </Button>
+            </article>
+
+            <article className="relative flex min-w-0 flex-col overflow-hidden rounded-lg bg-zinc-950 p-5 text-white shadow-2xl sm:p-7">
+              <div className="absolute right-0 top-0 rounded-bl-lg bg-rose-500 px-4 py-2 text-xs font-black uppercase text-white">Recomendado</div>
+              <p className="pr-28 text-xs font-black uppercase text-rose-200">Operação completa</p>
+              <h3 className="mt-3 break-words text-2xl font-black">StudiosBook Recebimentos</h3>
+              <p className="mt-2 text-sm leading-6 text-white/70">{PLAN_DETAILS[PLAN_CODES.RECEIVABLES].description}</p>
+              <p className="mt-6 text-4xl font-black">R$ 59,90<span className="text-base text-white/55">/mês</span></p>
+              <p className="mt-2 text-xs leading-5 text-white/60">0,79% por pagamento aprovado, com comissão limitada a R$ 59,90 por mês.</p>
+              <ul className="mt-6 grid gap-3 text-sm text-white/85">
+                {PLAN_DETAILS[PLAN_CODES.RECEIVABLES].features.map((feature) => (
+                  <li key={feature} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-rose-300" /><span>{feature}</span></li>
+                ))}
+              </ul>
+              <Button type="button" onClick={() => switchToRegister(PLAN_CODES.RECEIVABLES)} className="mt-7 h-12 w-full rounded-full bg-rose-500 text-white hover:bg-rose-600">
+                Assinar Recebimentos
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+              <p className="mt-3 text-center text-xs leading-5 text-white/55">Após entrar ou criar a conta, você continuará no checkout seguro da Stripe.</p>
+            </article>
           </div>
         </section>
 
@@ -4150,6 +4226,9 @@ function BillingView({
   };
   const manualAccessActive = billingAccess?.allowed === true && billingAccess?.reason === "admin_override";
   const manualAccessUntil = billingAccess?.expiresAt || billingSubscription?.admin_override_until;
+  const currentPlanCode = billingSubscription?.plan_code || PLAN_CODES.AGENDA;
+  const currentPlan = planDetails(currentPlanCode);
+  const receivablesActive = currentPlanCode === PLAN_CODES.RECEIVABLES && billingAccess?.allowed === true;
 
   return (
     <div className="grid gap-6">
@@ -4161,7 +4240,7 @@ function BillingView({
               Assinatura StudiosBook
             </p>
             <h2 className="mt-5 max-w-3xl break-words text-3xl font-black leading-tight tracking-normal sm:text-5xl">
-              7 dias gratuitos desde o cadastro. Depois {PRODUCT_PRICE}.
+              Gestão e recebimentos no plano certo para o seu momento.
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
               {pixAvailable
@@ -4172,7 +4251,7 @@ function BillingView({
               {!recurringActive && (
                 <Button
                   type="button"
-                  onClick={onStartSubscription}
+                  onClick={() => onStartSubscription(PLAN_CODES.AGENDA)}
                   disabled={actionLoading === "billing-card"}
                   className="h-12 w-full rounded-full bg-rose-500 px-4 text-white hover:bg-rose-600 sm:w-auto sm:px-6"
                 >
@@ -4221,15 +4300,69 @@ function BillingView({
             </div>
             <div className="mt-5 grid gap-3">
               <MiniMetric label="Profissional" value={user?.email || "-"} />
-              <MiniMetric label="Plano" value={billingSubscription?.plan_name || "StudiosBook Profissional"} />
+              <MiniMetric label="Plano" value={billingSubscription?.plan_name || currentPlan.name} />
               <MiniMetric label="Acesso ao aplicativo" value={billingStatusLabel(status)} />
               <MiniMetric label="Cobrança recorrente Stripe" value={billingStatusLabel(providerSubscriptionStatus)} />
               <MiniMetric label="Último pagamento" value={billingStatusLabel(recurringPaymentStatus)} />
               <MiniMetric label="Período gratuito" value={trialEnd ? `${trialDaysLeft} dia(s) restantes` : "7 dias desde o cadastro"} />
-              <MiniMetric label="Mensalidade" value={PRODUCT_PRICE} />
+              <MiniMetric label="Mensalidade" value={currentPlan.price} />
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="grid min-w-0 gap-4 lg:grid-cols-2" aria-label="Planos disponíveis">
+        <article className="flex min-w-0 flex-col rounded-lg border border-zinc-200 bg-white p-5 shadow-sm sm:p-6">
+          <p className="text-xs font-black uppercase text-zinc-500">Gestão essencial</p>
+          <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0"><h3 className="break-words text-xl font-black text-zinc-950">StudiosBook Agenda</h3><p className="mt-1 text-sm text-zinc-600">R$ 26,90 por mês</p></div>
+            {currentPlanCode === PLAN_CODES.AGENDA && <Badge tone="green">Plano atual</Badge>}
+          </div>
+          <ul className="mt-5 grid gap-3 text-sm text-zinc-700">
+            {PLAN_DETAILS[PLAN_CODES.AGENDA].features.map((feature) => (
+              <li key={feature} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" /><span>{feature}</span></li>
+            ))}
+          </ul>
+          <Button
+            type="button"
+            onClick={() => onStartSubscription(PLAN_CODES.AGENDA)}
+            disabled={(currentPlanCode === PLAN_CODES.AGENDA && recurringActive) || actionLoading === "billing-card"}
+            className="mt-6 h-12 w-full rounded-full bg-white text-zinc-950 ring-1 ring-zinc-300 hover:bg-zinc-50 disabled:opacity-60"
+          >
+            {currentPlanCode === PLAN_CODES.AGENDA && recurringActive ? "Plano Agenda ativo" : "Assinar Agenda"}
+          </Button>
+        </article>
+
+        <article className="relative flex min-w-0 flex-col overflow-hidden rounded-lg bg-[#35152c] p-5 text-white shadow-xl sm:p-6">
+          <div className="absolute right-0 top-0 rounded-bl-lg bg-rose-500 px-4 py-2 text-xs font-black uppercase">Recomendado</div>
+          <p className="pr-28 text-xs font-black uppercase text-rose-200">Mais completo</p>
+          <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0"><h3 className="break-words text-xl font-black">StudiosBook Recebimentos</h3><p className="mt-1 text-sm text-white/70">R$ 59,90 por mês</p></div>
+            {receivablesActive && <Badge tone="green">Plano atual</Badge>}
+          </div>
+          <p className="mt-3 text-xs leading-5 text-white/60">0,79% por pagamento aprovado, com comissão limitada a R$ 59,90 por mês.</p>
+          <ul className="mt-5 grid gap-3 text-sm text-white/85">
+            {PLAN_DETAILS[PLAN_CODES.RECEIVABLES].features.map((feature) => (
+              <li key={feature} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-rose-300" /><span>{feature}</span></li>
+            ))}
+          </ul>
+          {receivablesActive ? (
+            <a href="/recebimentos" className="mt-6 inline-flex h-12 w-full items-center justify-center rounded-full bg-white px-5 text-sm font-black text-[#35152c] transition hover:bg-rose-50">
+              Abrir Recebimentos
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </a>
+          ) : (
+            <Button
+              type="button"
+              onClick={() => onStartSubscription(PLAN_CODES.RECEIVABLES)}
+              disabled={actionLoading === "billing-receivables"}
+              className="mt-6 h-12 w-full rounded-full bg-rose-500 text-white hover:bg-rose-600"
+            >
+              <CreditCard className="mr-2 h-4 w-4" />
+              {actionLoading === "billing-receivables" ? "Abrindo Stripe..." : recurringActive ? "Fazer upgrade na Stripe" : "Assinar Recebimentos"}
+            </Button>
+          )}
+        </article>
       </section>
 
       <section className={`grid min-w-0 gap-4 sm:gap-6 ${pixAvailable ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
@@ -4264,7 +4397,7 @@ function BillingView({
               <Button
                 id="studiosbook-card-form"
                 type="button"
-                onClick={onStartSubscription}
+                onClick={() => onStartSubscription(PLAN_CODES.AGENDA)}
                 disabled={actionLoading === "billing-card"}
                 className="h-12 w-full rounded-full bg-zinc-950 px-4 text-white hover:bg-zinc-800"
               >

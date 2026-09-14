@@ -5,7 +5,8 @@
 Data da revisão: 11/08/2026.
 
 - Produto: StudiosBook, produto BlackVision para profissionais da beleza.
-- Oferta: 7 dias de uso gratuito, sem cobrança automática durante o período; depois, R$ 26,90/mês no cartão, sem fidelidade.
+- Oferta Agenda: 7 dias de uso gratuito; depois, R$ 26,90/mês no cartão, sem fidelidade.
+- Oferta recomendada Recebimentos: R$ 59,90/mês, mais 0,79% por pagamento aprovado, com comissão limitada a R$ 59,90 por mês. Inclui tudo do Agenda, agendamento on-line, Pix, cartão, sinal configurável e confirmação automática.
 - Pix: comunicar somente depois de um pagamento real aprovado e de a conciliação por webhook estar validada em produção.
 - Campanhas: planejamento concluído; criação externa e veiculação bloqueadas até orçamento, permissões de mensuração e criativos aprovados.
 - Regra de segurança: toda campanha deve permanecer em rascunho ou pausada. Nenhuma verba pode ser consumida sem aprovação expressa.
@@ -108,6 +109,7 @@ Estrutura recomendada, sempre inicialmente pausada:
 - Meta prospecção por profissão e dor operacional.
 - Meta remarketing somente após audiência elegível e consentida.
 - Meta vídeo somente com material aprovado sem dados pessoais.
+- Google e Meta para o plano Recebimentos, com criativos centrados em faltas, cobrança de sinal e confirmação automática.
 
 ## 7. Palavras-chave
 

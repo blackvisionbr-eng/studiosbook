@@ -29,11 +29,21 @@ import {
   validatePixPayment,
 } from "./billing.js";
 import { createMarketplaceBookingRouter } from "./marketplaceBooking.js";
+import {
+  PLAN_CATALOG,
+  PLAN_CODES,
+  normalizePlanCode,
+  planDefinition,
+  planFromStripePrice,
+  planGrantsReceivables,
+  validateStripePriceForPlan,
+} from "./plans.js";
 
 const app = express();
 const PRODUCT_NAME = "StudiosBook";
-const PLAN_NAME = "StudiosBook Intermediário";
-const MONTHLY_AMOUNT = 26.9;
+const AGENDA_PLAN = PLAN_CATALOG[PLAN_CODES.AGENDA];
+const RECEIVABLES_PLAN = PLAN_CATALOG[PLAN_CODES.RECEIVABLES];
+const MONTHLY_AMOUNT = AGENDA_PLAN.amount;
 const MASTER_ADMIN_EMAIL = String(process.env.MASTER_ADMIN_EMAIL || "getblackvision.br@gmail.com")
   .trim()
   .toLowerCase();
@@ -223,6 +233,12 @@ function safeMarketingString(value, maxLength = 180) {
   return String(value || "").trim().slice(0, maxLength);
 }
 
+function alphabeticIdentifierSuffix(value) {
+  return [...createHash("sha256").update(String(value)).digest().subarray(0, 8)]
+    .map((byte) => String.fromCharCode(97 + (byte % 26)))
+    .join("");
+}
+
 function normalizeMarketingContext(value = {}) {
   if (!value || value.consent !== true) return null;
   const attributionKeys = [
@@ -274,6 +290,15 @@ function stripePriceId() {
   return process.env.STRIPE_PRICE_ID || "";
 }
 
+function safeReturnPath(value) {
+  const path = String(value || "/").trim();
+  return ["/", "/recebimentos"].includes(path) ? path : "/";
+}
+
+function stripeReceivablesPriceId() {
+  return process.env.STRIPE_RECEIVABLES_PRICE_ID || "";
+}
+
 function stripePortalConfigurationId() {
   return process.env.STRIPE_PORTAL_CONFIGURATION_ID || "";
 }
@@ -292,6 +317,7 @@ function stripeMode() {
 
 let stripeInstance = null;
 let stripeCapabilitiesCache = { expiresAt: 0, value: null };
+const stripePlanPriceCache = new Map();
 function stripeClient() {
   const secret = stripeSecretKey();
   if (!secret) {
@@ -303,12 +329,54 @@ function stripeClient() {
   return stripeInstance;
 }
 
+async function resolveStripePlanPrice(planCode) {
+  const plan = planDefinition(planCode);
+  const cached = stripePlanPriceCache.get(plan.code);
+  if (cached?.expiresAt > Date.now()) return cached.price;
+
+  const configuredId = plan.code === PLAN_CODES.RECEIVABLES
+    ? stripeReceivablesPriceId()
+    : stripePriceId();
+  let price = configuredId
+    ? await stripeClient().prices.retrieve(configuredId)
+    : null;
+  if (!price && plan.lookupKey) {
+    const listed = await stripeClient().prices.list({
+      active: true,
+      lookup_keys: [plan.lookupKey],
+      limit: 1,
+    });
+    price = listed.data[0] || null;
+  }
+  if (!price) throw Object.assign(new Error(`Preço do plano ${plan.name} não configurado.`), { statusCode: 503 });
+
+  const validation = validateStripePriceForPlan(price, plan.code);
+  if (!validation.valid) {
+    throw Object.assign(new Error(`Preço Stripe inválido para ${plan.name}: ${validation.reason}.`), { statusCode: 503 });
+  }
+  stripePlanPriceCache.set(plan.code, { price, expiresAt: Date.now() + 5 * 60 * 1000 });
+  return price;
+}
+
+async function resolveStripePlanPriceId(planCode) {
+  return (await resolveStripePlanPrice(planCode)).id;
+}
+
+async function stripePlanFromSubscription(subscription = {}) {
+  const firstPrice = subscription?.items?.data?.[0]?.price;
+  let plan = planFromStripePrice(firstPrice);
+  if (plan || !stripeResourceId(firstPrice)) return plan;
+  const price = await stripeClient().prices.retrieve(stripeResourceId(firstPrice));
+  return planFromStripePrice(price);
+}
+
 async function stripePaymentCapabilities(force = false) {
   if (!force && stripeCapabilitiesCache.value && stripeCapabilitiesCache.expiresAt > Date.now()) {
     return stripeCapabilitiesCache.value;
   }
   const value = {
     card_recurring: Boolean(stripeSecretKey() && stripePriceId()),
+    receivables_recurring: Boolean(stripeSecretKey() && (stripeReceivablesPriceId() || await resolveStripePlanPriceId(PLAN_CODES.RECEIVABLES).catch(() => ""))),
     pix: Boolean(mercadoPagoAccessToken()),
     pix_provider: mercadoPagoAccessToken() ? "mercado_pago" : "",
   };
@@ -320,6 +388,7 @@ function adminStatusPayload() {
   return {
     admin_ready: firebaseAdminReady,
     stripe_ready: Boolean(stripeSecretKey() && stripePriceId()),
+    stripe_receivables_ready: Boolean(stripeSecretKey() && stripeReceivablesPriceId()),
     stripe_mode: stripeMode(),
     webhook_ready: Boolean(stripeWebhookSecret()),
     mercado_pago_ready: Boolean(mercadoPagoAccessToken()),
@@ -845,6 +914,11 @@ async function persistBillingState(uid, patch, options = {}) {
     const accessExpiresAt = expiryCandidates.length
       ? new Date(Math.max(...expiryCandidates.map((date) => date.getTime())))
       : new Date(0);
+    const activePlan = planDefinition(merged.plan_code);
+    merged.plan_code = activePlan.code;
+    merged.plan_name = activePlan.name;
+    merged.monthly_amount = activePlan.amount;
+    const receivablesAllowed = access.allowed && planGrantsReceivables(activePlan.code);
 
     transaction.set(current.ref, merged, { merge: true });
     transaction.set(
@@ -860,6 +934,11 @@ async function persistBillingState(uid, patch, options = {}) {
         trial_start_date: merged.trial_start_date || "",
         trial_end_date: merged.trial_end_date || "",
         current_period_end: merged.current_period_end || "",
+        plan_code: activePlan.code,
+        plan_name: activePlan.name,
+        receivables_access_allowed: receivablesAllowed,
+        receivables_access_expires_at: receivablesAllowed ? accessExpiresAt.toISOString() : "",
+        receivables_plan_code: activePlan.code,
         billing_updated_at: now,
       },
       { merge: true }
@@ -878,14 +957,16 @@ async function ensureBillingAccount(uid, email = "") {
   const trial = trialFromAccountCreation(authUser.metadata?.creationTime || new Date());
   const current = await currentSubscription(uid);
   const existing = current.data || {};
+  const existingPlan = planDefinition(existing.plan_code);
   const migratingToStripe = existing.billing_provider !== "stripe";
   const paidPeriodActive = new Date(existing.current_period_end || 0).getTime() > Date.now();
   const result = await persistBillingState(
     uid,
     {
       user_email: accountEmail,
-      plan_name: PLAN_NAME,
-      monthly_amount: MONTHLY_AMOUNT,
+      plan_code: existingPlan.code,
+      plan_name: existingPlan.name,
+      monthly_amount: existingPlan.amount,
       currency_id: "BRL",
       billing_provider: "stripe",
       trial_start_date: trial.start.toISOString(),
@@ -1014,18 +1095,23 @@ function stripePaymentIntentStatus(status) {
   return "rejected";
 }
 
-function stripeSubscriptionUsesConfiguredPlan(subscription) {
+async function stripeSubscriptionUsesConfiguredPlan(subscription) {
   const firstItem = subscription?.items?.data?.[0];
-  return Boolean(stripePriceId() && stripeResourceId(firstItem?.price) === stripePriceId());
+  const priceId = stripeResourceId(firstItem?.price);
+  const plan = await stripePlanFromSubscription(subscription);
+  if (!plan || !priceId) return false;
+  const configuredPriceId = await resolveStripePlanPriceId(plan.code);
+  return priceId === configuredPriceId;
 }
 
-function assertStripeSubscriptionPlan(subscription) {
-  if (!stripeSubscriptionUsesConfiguredPlan(subscription)) {
+async function assertStripeSubscriptionPlan(subscription) {
+  if (!(await stripeSubscriptionUsesConfiguredPlan(subscription))) {
     throw new Error("Assinatura Stripe não pertence ao plano configurado do StudiosBook.");
   }
   if (stripeMode() === "live" && subscription?.livemode !== true) {
     throw new Error("Assinatura de teste não pode liberar acesso em produção.");
   }
+  return stripePlanFromSubscription(subscription);
 }
 
 async function resolveStripeUid(object = {}) {
@@ -1119,7 +1205,7 @@ async function ensureStripeCustomer(uid, email, name = "") {
 async function applyStripeSubscription(uid, subscription) {
   const ownerUid = stripeObjectUid(subscription);
   if (!uid || (ownerUid && ownerUid !== uid)) throw new Error("Assinatura Stripe não pertence à conta informada.");
-  assertStripeSubscriptionPlan(subscription);
+  const plan = await assertStripeSubscriptionPlan(subscription);
 
   const account = await ensureBillingAccount(uid);
   const period = stripeSubscriptionPeriod(subscription);
@@ -1128,6 +1214,9 @@ async function applyStripeSubscription(uid, subscription) {
   const failed = ["past_due", "unpaid", "incomplete", "incomplete_expired"].includes(providerStatus);
   const patch = {
     billing_provider: "stripe",
+    plan_code: plan.code,
+    plan_name: plan.name,
+    monthly_amount: plan.amount,
     stripe_customer_id: stripeResourceId(subscription.customer) || account.subscription?.stripe_customer_id || "",
     stripe_subscription_id: subscription.id || "",
     stripe_price_id: stripeResourceId(firstItem?.price) || stripePriceId(),
@@ -1186,7 +1275,7 @@ async function applyStripeInvoice(uid, invoice, forcedStatus = "", validatedSubs
   if (ownerUid !== uid && !(trustedStoredSubscription && !ownerUid)) {
     throw new Error("Fatura Stripe não pertence à assinatura da conta informada.");
   }
-  assertStripeSubscriptionPlan(subscription);
+  const plan = await assertStripeSubscriptionPlan(subscription);
   const record = {
     user_uid: uid,
     user_email: invoice.customer_email || account.subscription?.user_email || "",
@@ -1210,6 +1299,9 @@ async function applyStripeInvoice(uid, invoice, forcedStatus = "", validatedSubs
 
   const patch = {
     billing_provider: "stripe",
+    plan_code: plan.code,
+    plan_name: plan.name,
+    monthly_amount: plan.amount,
     stripe_customer_id: stripeResourceId(invoice.customer) || account.subscription?.stripe_customer_id || "",
     stripe_subscription_id: subscriptionId || account.subscription?.stripe_subscription_id || "",
     stripe_invoice_id: invoice.id,
@@ -1294,7 +1386,7 @@ async function applyStripeChargeRefund(uid, charge, options = {}) {
     if (ownerUid !== uid && !(trustedStoredSubscription && !ownerUid)) {
       throw new Error("Reembolso Stripe não pertence à assinatura da conta informada.");
     }
-    assertStripeSubscriptionPlan(subscription);
+    await assertStripeSubscriptionPlan(subscription);
   }
 
   if (refund.full && subscriptionId && subscription?.status !== "canceled") {
@@ -1689,7 +1781,7 @@ async function findStripeSubscription(uid, customerId, preferredId = "") {
       const subscription = await stripeClient().subscriptions.retrieve(preferredId, { expand: ["latest_invoice"] });
       const ownerUid = stripeObjectUid(subscription);
       const sameCustomer = !customerId || stripeResourceId(subscription.customer) === customerId;
-      if (sameCustomer && (!ownerUid || ownerUid === uid) && stripeSubscriptionUsesConfiguredPlan(subscription)) {
+      if (sameCustomer && (!ownerUid || ownerUid === uid) && await stripeSubscriptionUsesConfiguredPlan(subscription)) {
         return subscription;
       }
     } catch (error) {
@@ -1698,8 +1790,13 @@ async function findStripeSubscription(uid, customerId, preferredId = "") {
   }
   if (!customerId) return null;
   const subscriptions = await stripeClient().subscriptions.list({ customer: customerId, status: "all", limit: 20 });
-  return subscriptions.data
-    .filter((subscription) => stripeObjectUid(subscription) === uid && stripeSubscriptionUsesConfiguredPlan(subscription))
+  const knownSubscriptions = [];
+  for (const subscription of subscriptions.data) {
+    if (stripeObjectUid(subscription) === uid && await stripeSubscriptionUsesConfiguredPlan(subscription)) {
+      knownSubscriptions.push(subscription);
+    }
+  }
+  return knownSubscriptions
     .sort((left, right) => {
       const statusDifference = stripeSubscriptionScore(right.status) - stripeSubscriptionScore(left.status);
       return statusDifference || Number(right.created || 0) - Number(left.created || 0);
@@ -1772,13 +1869,15 @@ async function createSubscriptionFromSetupSession(session, uid) {
     ? session.setup_intent
     : await stripeClient().setupIntents.retrieve(session.setup_intent);
   const trialEnd = Number(session.metadata?.trial_end || 0);
+  const plan = planDefinition(session.metadata?.plan_code);
+  const planPriceId = await resolveStripePlanPriceId(plan.code);
   const params = {
     customer: stripeResourceId(session.customer),
-    items: [{ price: stripePriceId() }],
+    items: [{ price: planPriceId }],
     default_payment_method: stripeResourceId(setupIntent.payment_method),
     payment_behavior: "default_incomplete",
     payment_settings: { save_default_payment_method: "on_subscription" },
-    metadata: { studiosbook_uid: uid, product: PRODUCT_NAME },
+    metadata: { studiosbook_uid: uid, product: PRODUCT_NAME, plan_code: plan.code },
   };
   if (trialEnd > Math.floor(Date.now() / 1000) + 60) params.trial_end = trialEnd;
   return stripeClient().subscriptions.create(params, {
@@ -1790,10 +1889,14 @@ async function processStripeCheckoutSession(session) {
   const uid = stripeObjectUid(session);
   if (!uid) throw new Error("Checkout Stripe sem vínculo com o StudiosBook.");
   const flow = session.metadata?.billing_flow || "";
+  const requestedPlan = planDefinition(session.metadata?.plan_code);
   await persistBillingState(
     uid,
     {
       billing_provider: "stripe",
+      plan_code: requestedPlan.code,
+      plan_name: requestedPlan.name,
+      monthly_amount: requestedPlan.amount,
       stripe_customer_id: stripeResourceId(session.customer),
       stripe_checkout_session_id: session.id,
       last_sync_date: new Date().toISOString(),
@@ -1969,11 +2072,19 @@ app.post(
   async (req, res) => {
     if (!requireFirebaseAdminSdk(res)) return;
     try {
-      if (!stripeSecretKey() || !stripePriceId()) {
+      if (!stripeSecretKey()) {
         return res.status(503).json({ error: "Cobrança Stripe temporariamente indisponível." });
       }
+      const requestedPlanCode = normalizePlanCode(req.body?.plan_code);
+      if (req.body?.plan_code && requestedPlanCode !== String(req.body.plan_code).trim().toLowerCase()) {
+        return res.status(400).json({ error: "Plano de assinatura inválido." });
+      }
+      const requestedPlan = planDefinition(requestedPlanCode);
+      const requestedPriceId = await resolveStripePlanPriceId(requestedPlan.code);
       const account = await ensureBillingAccount(req.user.uid, req.user.email);
       const marketing = normalizeMarketingContext(req.body?.marketing);
+      const appOrigin = safeOrigin(req.body?.app_url);
+      const returnPath = safeReturnPath(req.body?.return_path);
       const existing = await findStripeSubscription(
         req.user.uid,
         account.subscription?.stripe_customer_id,
@@ -1981,16 +2092,40 @@ app.post(
       );
       if (existing && !["canceled", "incomplete_expired"].includes(existing.status)) {
         const customerId = stripeResourceId(existing.customer);
-        const portal = await stripeClient().billingPortal.sessions.create({
+        const existingPlan = await assertStripeSubscriptionPlan(existing);
+        const existingItem = existing.items?.data?.[0];
+        const portalParams = {
           customer: customerId,
-          return_url: `${safeOrigin(req.body?.app_url)}/?billing=return`,
+          return_url: `${appOrigin}${returnPath}?billing=return`,
           ...(stripePortalConfigurationId() ? { configuration: stripePortalConfigurationId() } : {}),
+        };
+        if (existingPlan.code !== requestedPlan.code) {
+          if (!stripePortalConfigurationId() || !existingItem?.id) {
+            return res.status(503).json({ error: "A troca de plano está temporariamente indisponível." });
+          }
+          portalParams.flow_data = {
+            type: "subscription_update_confirm",
+            after_completion: {
+              type: "redirect",
+              redirect: { return_url: `${appOrigin}${returnPath}?billing=return&plan=${requestedPlan.code}` },
+            },
+            subscription_update_confirm: {
+              subscription: existing.id,
+              items: [{ id: existingItem.id, price: requestedPriceId, quantity: 1 }],
+            },
+          };
+        }
+        const portal = await stripeClient().billingPortal.sessions.create(portalParams);
+        return res.json({
+          success: true,
+          already_exists: existingPlan.code === requestedPlan.code,
+          checkout_mode: existingPlan.code === requestedPlan.code ? "portal" : "plan_change",
+          plan_code: requestedPlan.code,
+          url: portal.url,
         });
-        return res.json({ success: true, already_exists: true, url: portal.url, ...account });
       }
 
       const customer = await ensureStripeCustomer(req.user.uid, req.user.email, req.user.name);
-      const appOrigin = safeOrigin(req.body?.app_url);
       const trialEndSeconds = Math.floor(new Date(account.subscription?.trial_end_date || 0).getTime() / 1000);
       const nowSeconds = Math.floor(Date.now() / 1000);
       const hasRemainingTrial = Number.isFinite(trialEndSeconds) && trialEndSeconds > nowSeconds;
@@ -1999,54 +2134,58 @@ app.post(
       const metadata = {
         studiosbook_uid: req.user.uid,
         product: PRODUCT_NAME,
+        plan_code: requestedPlan.code,
         billing_flow: useSetupCheckout ? "subscription_setup" : "subscription",
         ...(marketing?.checkout_event_id ? { marketing_checkout_event_id: marketing.checkout_event_id } : {}),
         ...(hasRemainingTrial ? { trial_end: String(trialEndSeconds) } : {}),
       };
+      const checkoutWindow = Math.floor(Date.now() / 600000);
       const common = {
         customer: customer.id,
         client_reference_id: req.user.uid,
+        integration_identifier: `studiosbook_${alphabeticIdentifierSuffix(`${req.user.uid}:${requestedPlan.code}:${checkoutWindow}`)}`,
         locale: "pt-BR",
-        success_url: `${appOrigin}/?checkout=stripe&session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${appOrigin}/?checkout=cancelled`,
+        success_url: `${appOrigin}${returnPath}?checkout=stripe&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${appOrigin}${returnPath}?checkout=cancelled`,
         metadata,
       };
       const params = useSetupCheckout
         ? {
             ...common,
             mode: "setup",
-            payment_method_types: ["card"],
             setup_intent_data: { metadata },
           }
         : {
             ...common,
             mode: "subscription",
-            payment_method_types: ["card"],
             payment_method_collection: "always",
-            line_items: [{ price: stripePriceId(), quantity: 1 }],
+            line_items: [{ price: requestedPriceId, quantity: 1 }],
             subscription_data: {
               metadata,
               ...(exactTrialSupported ? { trial_end: trialEndSeconds } : {}),
             },
           };
       const session = await stripeClient().checkout.sessions.create(params, {
-        idempotencyKey: `studiosbook-checkout-${req.user.uid}-${Math.floor(Date.now() / 600000)}`,
+        idempotencyKey: `studiosbook-checkout-${requestedPlan.code}-${req.user.uid}-${checkoutWindow}`,
       });
       await persistBillingState(
         req.user.uid,
         {
           billing_provider: "stripe",
+          plan_code: requestedPlan.code,
+          plan_name: requestedPlan.name,
+          monthly_amount: requestedPlan.amount,
           stripe_customer_id: customer.id,
           stripe_checkout_session_id: session.id,
           checkout_url: session.url,
           last_payment_status: hasRemainingTrial ? "pending" : "not_started",
           last_sync_date: new Date().toISOString(),
-          notes: "Checkout seguro criado na Stripe.",
+          notes: `Checkout seguro do ${requestedPlan.name} criado na Stripe.`,
           ...(marketing ? { marketing_context: marketing } : {}),
         },
         { email: req.user.email }
       );
-      return res.json({ success: true, url: session.url, checkout_mode: params.mode });
+      return res.json({ success: true, url: session.url, checkout_mode: params.mode, plan_code: requestedPlan.code });
     } catch (error) {
       console.error("Stripe checkout error", { requestId: req.requestId, type: error?.type, code: error?.code, message: error?.message });
       return res.status(error?.statusCode && error.statusCode < 500 ? 422 : 500).json({
@@ -2575,7 +2714,7 @@ app.post("/functions/admin-set-stripe-renewal", requireMasterAdmin, requireRecen
     if (ownerUid && ownerUid !== uid) {
       return res.status(409).json({ error: "A assinatura não pertence a esta conta." });
     }
-    assertStripeSubscriptionPlan(existing);
+    await assertStripeSubscriptionPlan(existing);
 
     const updated = await stripeClient().subscriptions.update(subscriptionId, {
       cancel_at_period_end: cancelAtPeriodEnd,

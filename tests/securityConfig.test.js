@@ -55,6 +55,8 @@ test("the app receives billing access changes in real time", () => {
   assert.match(appAuthClient, /subscribeBillingAccess/);
   assert.match(appSource, /base44\.billing\.subscribeAccess/);
   assert.match(appSource, /billingAccessFromRoot/);
+  assert.match(appSource, /plan_code: root\.plan_code/);
+  assert.match(appSource, /receivables_access_allowed: root\.receivables_access_allowed === true/);
   assert.match(appSource, /Acesso liberado pelo painel mestre/);
   assert.match(appSource, /Cobrança recorrente Stripe/);
 });

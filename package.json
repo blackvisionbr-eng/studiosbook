@@ -20,7 +20,9 @@
     "artworks:youtube-channel": "node tools/artworks/generate-artworks.mjs --format channel",
     "artworks:all": "node tools/artworks/generate-artworks.mjs --format all",
     "artworks:validate": "node tools/artworks/validate-artworks.mjs",
-    "content:youtube": "node tools/content/generate-youtube-publication-kit.mjs"
+    "artworks:receivables": "node tools/artworks/generate-receivables-campaign.mjs",
+    "content:youtube": "node tools/content/generate-youtube-publication-kit.mjs",
+    "qa:plans": "node tools/qa/verify-plan-pages.mjs"
   },
   "dependencies": {
     "firebase": "^12.14.0",

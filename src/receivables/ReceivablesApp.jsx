@@ -4,6 +4,7 @@ import {
   Check,
   CircleDollarSign,
   Clipboard,
+  CreditCard,
   ExternalLink,
   Link2,
   LoaderCircle,
@@ -11,10 +12,10 @@ import {
   QrCode,
   Save,
   ShieldCheck,
-  Smartphone,
   WalletCards,
 } from "lucide-react";
 import { base44 } from "@/api/base44Client.js";
+import { PLAN_CODES } from "@/lib/plans.js";
 
 const DAYS = [
   ["1", "Segunda"], ["2", "Terça"], ["3", "Quarta"], ["4", "Quinta"],
@@ -95,6 +96,7 @@ export default function ReceivablesApp() {
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [subscribing, setSubscribing] = useState(false);
   const [publicUrl, setPublicUrl] = useState("");
   const [dashboard, setDashboard] = useState(null);
 
@@ -105,6 +107,16 @@ export default function ReceivablesApp() {
       if (!(await base44.auth.isAuthenticated())) {
         setUser(null);
         return;
+      }
+      const params = new URLSearchParams(window.location.search);
+      const checkoutSessionId = params.get("session_id");
+      if ((params.get("checkout") === "stripe" && checkoutSessionId) || params.get("billing") === "return") {
+        await base44.functions.invokeBooking("sync-billing-status", checkoutSessionId ? { session_id: checkoutSessionId } : {});
+        setNotice("Plano Recebimentos sincronizado com a Stripe.");
+        window.history.replaceState({}, "", "/recebimentos");
+      } else if (params.get("checkout") === "cancelled") {
+        setNotice("Checkout cancelado. Nenhuma cobrança foi realizada.");
+        window.history.replaceState({}, "", "/recebimentos");
       }
       const [me, profiles, currentStatus] = await Promise.all([
         base44.auth.me(),
@@ -196,6 +208,23 @@ export default function ReceivablesApp() {
     }
   }
 
+  async function subscribeReceivables() {
+    setSubscribing(true);
+    setError("");
+    try {
+      const result = await base44.functions.invokeBooking("create-subscription-checkout", {
+        app_url: window.location.origin,
+        return_path: "/recebimentos",
+        plan_code: PLAN_CODES.RECEIVABLES,
+      });
+      if (!result?.url) throw new Error("A Stripe não retornou o endereço do checkout.");
+      window.location.assign(result.url);
+    } catch (checkoutError) {
+      setError(checkoutError.message || "Não foi possível abrir o checkout da Stripe.");
+      setSubscribing(false);
+    }
+  }
+
   async function copyLink() {
     await navigator.clipboard.writeText(publicUrl);
     setNotice("Link de agendamento copiado.");
@@ -231,7 +260,8 @@ export default function ReceivablesApp() {
             <div className="border-t-2 border-[#a63d68] pt-4"><CircleDollarSign className="text-[#8e3158]" /><strong className="mt-3 block">0,79% por pagamento</strong><span className="mt-1 block text-sm text-zinc-600">Comissão limitada a R$ 59,90/mês.</span></div>
             <div className="border-t-2 border-[#a63d68] pt-4"><ShieldCheck className="text-[#8e3158]" /><strong className="mt-3 block">Pagamento validado</strong><span className="mt-1 block text-sm text-zinc-600">Confirmação consultada no provedor.</span></div>
           </div>
-          <a href="https://wa.me/5573981068594?text=Oi%2C%20quero%20ativar%20o%20StudiosBook%20Recebimentos." target="_blank" rel="noreferrer" className="mt-9 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-[#35152c] px-6 text-sm font-extrabold text-white transition hover:scale-[1.01] sm:w-auto"><Smartphone size={18} /> Solicitar ativação</a>
+          <button type="button" onClick={subscribeReceivables} disabled={subscribing} className="mt-9 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-[#35152c] px-6 text-sm font-extrabold text-white transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-55 sm:w-auto"><CreditCard size={18} /> {subscribing ? "Abrindo Stripe..." : "Assinar Recebimentos"}</button>
+          <p className="mt-3 max-w-xl text-xs leading-5 text-zinc-500">Checkout seguro da Stripe. O plano é liberado automaticamente após a confirmação da assinatura.</p>
           {error && <p className="mt-5 rounded-md bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">{error}</p>}
         </main>
       </div>
