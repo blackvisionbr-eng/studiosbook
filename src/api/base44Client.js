@@ -50,6 +50,14 @@ const apiBaseUrls = (import.meta.env.VITE_API_BASE_URLS || import.meta.env.VITE_
   .split(",")
   .map((url) => url.trim().replace(/\/$/, ""))
   .filter(Boolean);
+const bookingApiBaseUrls = (
+  import.meta.env.VITE_BOOKING_API_BASE_URLS ||
+  import.meta.env.VITE_BOOKING_API_BASE_URL ||
+  "https://studiosbook-api-production.up.railway.app"
+)
+  .split(",")
+  .map((url) => url.trim().replace(/\/$/, ""))
+  .filter(Boolean);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 auth.languageCode = "pt-BR";
@@ -245,8 +253,8 @@ async function deleteProcedurePhoto(path) {
   await deleteObject(storageRef(storage, path));
 }
 
-async function invokeFunction(name, data = {}) {
-  if (!apiBaseUrls.length) {
+async function invokeFunctionFrom(name, data = {}, baseUrls = apiBaseUrls) {
+  if (!baseUrls.length) {
     throw new Error("Serviço temporariamente indisponível.");
   }
 
@@ -254,7 +262,7 @@ async function invokeFunction(name, data = {}) {
   const token = await user.getIdToken();
 
   let lastError;
-  for (const apiBaseUrl of apiBaseUrls) {
+  for (const apiBaseUrl of baseUrls) {
     try {
       const response = await fetch(`${apiBaseUrl}/functions/${name}`, {
         method: "POST",
@@ -280,6 +288,14 @@ async function invokeFunction(name, data = {}) {
   }
 
   throw lastError || new Error("Serviço temporariamente indisponível.");
+}
+
+function invokeFunction(name, data = {}) {
+  return invokeFunctionFrom(name, data, apiBaseUrls);
+}
+
+function invokeBookingFunction(name, data = {}) {
+  return invokeFunctionFrom(name, data, bookingApiBaseUrls);
 }
 
 export const base44 = {
@@ -362,6 +378,7 @@ export const base44 = {
   },
   functions: {
     invoke: invokeFunction,
+    invokeBooking: invokeBookingFunction,
   },
   billing: {
     subscribeAccess: subscribeBillingAccess,

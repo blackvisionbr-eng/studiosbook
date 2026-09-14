@@ -16,6 +16,8 @@ const viteConfig = readFileSync(new URL("../vite.config.js", import.meta.url), "
 const appHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const assetRecovery = readFileSync(new URL("../public/asset-recovery.js", import.meta.url), "utf8");
 const marketplaceBackend = readFileSync(new URL("../railway-backend/src/marketplaceBooking.js", import.meta.url), "utf8");
+const bookingSource = readFileSync(new URL("../src/booking/BookingApp.jsx", import.meta.url), "utf8");
+const receivablesSource = readFileSync(new URL("../src/receivables/ReceivablesApp.jsx", import.meta.url), "utf8");
 
 test("hosting does not rewrite every unknown path to the authenticated app", () => {
   const rewrites = firebaseConfig.hosting.rewrites || [];
@@ -161,6 +163,16 @@ test("online booking and receivables have isolated routes and restrictive header
     assert.match(csp, /object-src 'none'/);
     assert.match(csp, /frame-ancestors 'none'/);
   }
+});
+
+test("booking payments use the dedicated Railway API without changing the primary Vercel API", () => {
+  assert.match(appAuthClient, /VITE_BOOKING_API_BASE_URL/);
+  assert.match(appAuthClient, /invokeBooking/);
+  assert.match(receivablesSource, /functions\.invokeBooking/);
+  assert.doesNotMatch(receivablesSource, /functions\.invoke\("booking-/);
+  assert.match(bookingSource, /VITE_BOOKING_API_BASE_URL/);
+  assert.match(bookingSource, /studiosbook-api-production\.up\.railway\.app/);
+  assert.match(appAuthClient, /studiosbook-api-equipe-blackvision\.vercel\.app/);
 });
 
 test("marketplace payments are feature-gated and provider-verified", () => {

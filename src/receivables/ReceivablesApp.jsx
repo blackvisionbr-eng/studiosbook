@@ -109,14 +109,14 @@ export default function ReceivablesApp() {
       const [me, profiles, currentStatus] = await Promise.all([
         base44.auth.me(),
         base44.entities.StudioProfile.list("-updated_date", 1),
-        base44.functions.invoke("booking-settings-status"),
+        base44.functions.invokeBooking("booking-settings-status"),
       ]);
       const profile = profiles[0] || null;
       setUser(me);
       setStatus(currentStatus);
       setForm(initialForm(profile, currentStatus.settings));
       if (currentStatus.entitled) {
-        setDashboard(await base44.functions.invoke("booking-dashboard"));
+        setDashboard(await base44.functions.invokeBooking("booking-dashboard"));
       } else {
         setDashboard(null);
       }
@@ -168,7 +168,7 @@ export default function ReceivablesApp() {
     setError("");
     setNotice("");
     try {
-      const payload = await base44.functions.invoke("save-booking-settings", {
+      const payload = await base44.functions.invokeBooking("save-booking-settings", {
         ...form,
         slug: slugify(form.slug),
         services: form.services.map((item) => ({ ...item, price_cents: Math.round(Number(item.price_cents) || 0) })),
@@ -188,7 +188,7 @@ export default function ReceivablesApp() {
     setConnecting(true);
     setError("");
     try {
-      const payload = await base44.functions.invoke("booking-payment-connect");
+      const payload = await base44.functions.invokeBooking("booking-payment-connect");
       window.location.assign(payload.url);
     } catch (connectError) {
       setError(connectError.message);

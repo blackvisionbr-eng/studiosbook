@@ -13,7 +13,11 @@ import {
   UserRound,
 } from "lucide-react";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URLS || import.meta.env.VITE_API_BASE_URL || "https://studiosbook-api-production.up.railway.app")
+const API_BASE = (
+  import.meta.env.VITE_BOOKING_API_BASE_URLS ||
+  import.meta.env.VITE_BOOKING_API_BASE_URL ||
+  "https://studiosbook-api-production.up.railway.app"
+)
   .split(",")[0]
   .trim()
   .replace(/\/$/, "");
