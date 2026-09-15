@@ -37,6 +37,7 @@
     min-width: 0;
     max-width: 100%;
     overflow-x: hidden;
+    overflow-x: clip;
   }
 
   html {
@@ -103,6 +104,22 @@
   h4,
   label,
   span {
+    max-width: 100%;
     overflow-wrap: anywhere;
+  }
+
+  pre,
+  code {
+    max-width: 100%;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 1023px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
   }
 }

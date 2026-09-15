@@ -2926,7 +2926,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
               <Sparkles className="h-4 w-4 shrink-0" />
               7 dias gratuitos de acesso ao StudiosBook
             </div>
-            <h1 className="mt-6 max-w-3xl break-words text-4xl font-black leading-[1.02] tracking-normal text-zinc-950 sm:text-5xl lg:text-6xl xl:text-7xl">
+            <h1 className="mt-6 max-w-3xl break-words text-3xl font-black leading-[1.08] tracking-normal text-zinc-950 sm:text-4xl sm:leading-[1.05] lg:text-6xl xl:text-7xl">
               Agenda e clientes organizados para vender mais retornos.
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-600 sm:mt-6 sm:text-lg sm:leading-8">
@@ -2950,9 +2950,9 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
           </div>
 
           <section id="public-signup-card" className="min-w-0 rounded-2xl border border-white bg-white p-4 shadow-2xl sm:rounded-[2rem] sm:p-6">
-            <div className="rounded-2xl bg-zinc-950 p-5 text-white">
+            <div className="rounded-2xl bg-zinc-950 p-4 text-white sm:p-5">
               <p className="text-xs font-black uppercase text-rose-200">Acesso ao aplicativo</p>
-              <p className="mt-2 text-2xl font-black">Crie sua conta ou entre no seu studio.</p>
+              <p className="mt-2 break-words text-xl font-black sm:text-2xl">Crie sua conta ou entre no seu studio.</p>
               <p className="mt-2 text-sm leading-6 text-white/65">
                 Você tem 7 dias gratuitos. Depois, escolha Agenda por {PRODUCT_PRICE} ou Recebimentos, o plano recomendado, por {RECEIVABLES_PRICE}.
               </p>
@@ -3047,7 +3047,7 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
         <section className="mt-16" aria-labelledby="public-plans-title">
           <div className="max-w-2xl">
             <p className="text-xs font-black uppercase text-[#7f3158]">Planos StudiosBook</p>
-            <h2 id="public-plans-title" className="mt-2 break-words text-3xl font-black tracking-normal text-zinc-950 sm:text-4xl">
+            <h2 id="public-plans-title" className="mt-2 break-words text-2xl font-black tracking-normal text-zinc-950 sm:text-3xl lg:text-4xl">
               Escolha o nível de operação do seu studio.
             </h2>
             <p className="mt-3 text-sm leading-6 text-zinc-600 sm:text-base">
@@ -3055,11 +3055,11 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
             </p>
           </div>
           <div className="mt-7 grid items-stretch gap-5 lg:grid-cols-2">
-            <article className="flex min-w-0 flex-col rounded-lg border border-zinc-200 bg-white p-5 shadow-sm sm:p-7">
+            <article className="flex min-w-0 flex-col rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-6 lg:p-7">
               <p className="text-xs font-black uppercase text-zinc-500">Gestão essencial</p>
-              <h3 className="mt-3 text-2xl font-black text-zinc-950">StudiosBook Agenda</h3>
+              <h3 className="mt-3 break-words text-xl font-black text-zinc-950 sm:text-2xl">StudiosBook Agenda</h3>
               <p className="mt-2 text-sm leading-6 text-zinc-600">{PLAN_DETAILS[PLAN_CODES.AGENDA].description}</p>
-              <p className="mt-6 text-4xl font-black text-zinc-950">R$ 26,90<span className="text-base text-zinc-500">/mês</span></p>
+              <p className="mt-6 flex min-w-0 flex-wrap items-baseline gap-x-1 text-zinc-950"><span className="break-words text-3xl font-black sm:text-4xl">R$ 26,90</span><span className="text-sm font-bold text-zinc-500 sm:text-base">/mês</span></p>
               <ul className="mt-6 grid gap-3 text-sm text-zinc-700">
                 {PLAN_DETAILS[PLAN_CODES.AGENDA].features.map((feature) => (
                   <li key={feature} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" /><span>{feature}</span></li>
@@ -3070,12 +3070,14 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
               </Button>
             </article>
 
-            <article className="relative flex min-w-0 flex-col overflow-hidden rounded-lg bg-zinc-950 p-5 text-white shadow-2xl sm:p-7">
-              <div className="absolute right-0 top-0 rounded-bl-lg bg-rose-500 px-4 py-2 text-xs font-black uppercase text-white">Recomendado</div>
-              <p className="pr-28 text-xs font-black uppercase text-rose-200">Operação completa</p>
-              <h3 className="mt-3 break-words text-2xl font-black">StudiosBook Recebimentos</h3>
+            <article className="relative flex min-w-0 flex-col overflow-hidden rounded-lg bg-zinc-950 p-4 text-white shadow-2xl sm:p-6 lg:p-7">
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-black uppercase text-rose-200">Operação completa</p>
+                <span className="inline-flex max-w-full rounded-full bg-rose-500 px-3 py-1.5 text-center text-[11px] font-black uppercase leading-tight text-white">Recomendado</span>
+              </div>
+              <h3 className="mt-3 break-words text-xl font-black sm:text-2xl">StudiosBook Recebimentos</h3>
               <p className="mt-2 text-sm leading-6 text-white/70">{PLAN_DETAILS[PLAN_CODES.RECEIVABLES].description}</p>
-              <p className="mt-6 text-4xl font-black">R$ 59,90<span className="text-base text-white/55">/mês</span></p>
+              <p className="mt-6 flex min-w-0 flex-wrap items-baseline gap-x-1"><span className="break-words text-3xl font-black sm:text-4xl">R$ 59,90</span><span className="text-sm font-bold text-white/55 sm:text-base">/mês</span></p>
               <p className="mt-2 text-xs leading-5 text-white/60">0,79% por pagamento aprovado, com comissão limitada a R$ 59,90 por mês.</p>
               <ul className="mt-6 grid gap-3 text-sm text-white/85">
                 {PLAN_DETAILS[PLAN_CODES.RECEIVABLES].features.map((feature) => (
@@ -4233,13 +4235,13 @@ function BillingView({
   return (
     <div className="grid gap-6">
       <section className="min-w-0 overflow-hidden rounded-2xl bg-zinc-950 text-white shadow-2xl sm:rounded-[2rem]">
-        <div className="relative grid min-w-0 gap-6 p-5 sm:gap-8 sm:p-8 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="relative grid min-w-0 gap-6 p-4 sm:gap-7 sm:p-6 lg:grid-cols-[1.05fr_0.95fr] lg:p-8">
           <div className="min-w-0">
             <p className="inline-flex max-w-full items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-rose-100 sm:px-4 sm:text-xs sm:tracking-[0.2em]">
               <CreditCard className="h-4 w-4 shrink-0" />
               Assinatura StudiosBook
             </p>
-            <h2 className="mt-5 max-w-3xl break-words text-3xl font-black leading-tight tracking-normal sm:text-5xl">
+            <h2 className="mt-5 max-w-3xl break-words text-2xl font-black leading-tight tracking-normal sm:text-4xl lg:text-5xl">
               Gestão e recebimentos no plano certo para o seu momento.
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/70 sm:text-base">
@@ -4312,7 +4314,7 @@ function BillingView({
       </section>
 
       <section className="grid min-w-0 gap-4 lg:grid-cols-2" aria-label="Planos disponíveis">
-        <article className="flex min-w-0 flex-col rounded-lg border border-zinc-200 bg-white p-5 shadow-sm sm:p-6">
+        <article className="flex min-w-0 flex-col rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
           <p className="text-xs font-black uppercase text-zinc-500">Gestão essencial</p>
           <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0"><h3 className="break-words text-xl font-black text-zinc-950">StudiosBook Agenda</h3><p className="mt-1 text-sm text-zinc-600">R$ 26,90 por mês</p></div>
@@ -4333,9 +4335,11 @@ function BillingView({
           </Button>
         </article>
 
-        <article className="relative flex min-w-0 flex-col overflow-hidden rounded-lg bg-[#35152c] p-5 text-white shadow-xl sm:p-6">
-          <div className="absolute right-0 top-0 rounded-bl-lg bg-rose-500 px-4 py-2 text-xs font-black uppercase">Recomendado</div>
-          <p className="pr-28 text-xs font-black uppercase text-rose-200">Mais completo</p>
+        <article className="relative flex min-w-0 flex-col overflow-hidden rounded-lg bg-[#35152c] p-4 text-white shadow-xl sm:p-5 lg:p-6">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-black uppercase text-rose-200">Mais completo</p>
+            <span className="inline-flex max-w-full rounded-full bg-rose-500 px-3 py-1.5 text-center text-[11px] font-black uppercase leading-tight">Recomendado</span>
+          </div>
           <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0"><h3 className="break-words text-xl font-black">StudiosBook Recebimentos</h3><p className="mt-1 text-sm text-white/70">R$ 59,90 por mês</p></div>
             {receivablesActive && <Badge tone="green">Plano atual</Badge>}
