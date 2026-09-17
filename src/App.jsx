@@ -3007,9 +3007,9 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
             </div>
             <p className="mt-4 text-xs leading-5 text-zinc-500">
               Ao entrar, você declara que leu a{" "}
-              <a href="/privacy.html" target="_blank" rel="noreferrer" className="font-bold text-[#7f3158] underline underline-offset-4">Política de Privacidade</a>
+              <a href="/politica-de-privacidade" target="_blank" rel="noreferrer" className="font-bold text-[#7f3158] underline underline-offset-4">Política de Privacidade</a>
               {" "}e os{" "}
-              <a href="/terms.html" target="_blank" rel="noreferrer" className="font-bold text-[#7f3158] underline underline-offset-4">Termos de Uso e Assinatura</a>.
+              <a href="/termos-de-uso" target="_blank" rel="noreferrer" className="font-bold text-[#7f3158] underline underline-offset-4">Termos de Uso e Assinatura</a>.
             </p>
           </section>
         </section>
@@ -3116,8 +3116,9 @@ function LoginScreen({ onLogin, onEmailAuth, onPasswordReset, feedback, feedback
             <p className="mt-1">Suporte: <a className="font-bold text-[#7f3158]" href={`mailto:${PUBLIC_SUPPORT_EMAIL}`}>{PUBLIC_SUPPORT_EMAIL}</a> | WhatsApp <a className="font-bold text-[#7f3158]" href={supportWhatsAppLink("Olá, preciso de suporte sobre o StudiosBook.")}>+55 73 98106-8594</a></p>
           </div>
           <div className="flex flex-wrap gap-3 font-bold">
-            <a href="/terms.html" target="_blank" rel="noreferrer">Termos</a>
-            <a href="/privacy.html" target="_blank" rel="noreferrer">Privacidade</a>
+            <a href="/termos-de-uso" target="_blank" rel="noreferrer">Termos</a>
+            <a href="/politica-de-privacidade" target="_blank" rel="noreferrer">Privacidade</a>
+            <a href="/contato" target="_blank" rel="noreferrer">Contato</a>
             {marketingTrackingConfigured() && <button type="button" onClick={onManageCookies}>Gerenciar cookies</button>}
             <a href={YOUTUBE_CHANNEL_URL} target="_blank" rel="noopener noreferrer">Videoaulas</a>
           </div>

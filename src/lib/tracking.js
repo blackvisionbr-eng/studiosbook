@@ -1,6 +1,8 @@
 const GTM_ID = String(import.meta.env.VITE_GTM_ID || "").trim();
 const GA4_ID = String(import.meta.env.VITE_GA4_ID || "").trim();
-const META_PIXEL_ID = String(import.meta.env.VITE_META_PIXEL_ID || "").trim();
+// Pixel IDs are public identifiers. Keeping the production dataset as a safe
+// fallback prevents a missing build variable from silently disabling consent UI.
+const META_PIXEL_ID = String(import.meta.env.VITE_META_PIXEL_ID || "2163953667421721").trim();
 
 const ATTRIBUTION_KEY = "studiosbook_marketing_attribution";
 const CLIENT_ID_KEY = "studiosbook_marketing_client_id";

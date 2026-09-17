@@ -233,6 +233,11 @@ function safeMarketingString(value, maxLength = 180) {
   return String(value || "").trim().slice(0, maxLength);
 }
 
+function sha256MarketingValue(value) {
+  const normalized = safeMarketingString(value, 320).trim().toLowerCase();
+  return normalized ? createHash("sha256").update(normalized).digest("hex") : "";
+}
+
 function alphabeticIdentifierSuffix(value) {
   return [...createHash("sha256").update(String(value)).digest().subarray(0, 8)]
     .map((byte) => String.fromCharCode(97 + (byte % 26)))
@@ -768,13 +773,17 @@ async function claimFirstPurchase(uid, payment = {}) {
   });
 }
 
-async function sendMetaPurchase(context, payment, eventId) {
+async function sendMetaPurchase(context, payment, eventId, uid) {
   if (!marketingConfiguration().meta_capi) return { target: "meta", status: "unconfigured" };
   const eventTimestamp = Math.floor(new Date(payment.date_approved || Date.now()).getTime() / 1000);
   const userData = {};
   if (context.client_user_agent) userData.client_user_agent = context.client_user_agent;
   if (context.fbp) userData.fbp = context.fbp;
   if (context.fbc) userData.fbc = context.fbc;
+  const emailHash = sha256MarketingValue(payment.user_email);
+  const externalIdHash = sha256MarketingValue(uid);
+  if (emailHash) userData.em = [emailHash];
+  if (externalIdHash) userData.external_id = [externalIdHash];
   const response = await fetch(
     `https://graph.facebook.com/${encodeURIComponent(META_GRAPH_API_VERSION)}/${encodeURIComponent(process.env.META_PIXEL_ID)}/events?access_token=${encodeURIComponent(process.env.META_CAPI_ACCESS_TOKEN)}`,
     {
@@ -858,7 +867,7 @@ async function reportFirstPurchase(uid, payment = {}) {
     status = "excluded_test_payment";
   } else {
     const results = await Promise.allSettled([
-      sendMetaPurchase(context, payment, claim.eventId),
+      sendMetaPurchase(context, payment, claim.eventId, uid),
       sendGa4Purchase(context, payment, claim.eventId),
     ]);
     deliveries = results.map((result, index) =>
@@ -2030,7 +2039,11 @@ app.get("/", (_req, res) => {
 
 app.get("/health", (_req, res) => {
   const ready = firebaseAdminReady && Boolean(stripeSecretKey() && stripePriceId()) && Boolean(stripeWebhookSecret());
-  res.status(ready ? 200 : 503).json({ ok: ready, service: "StudiosBook API" });
+  res.status(ready ? 200 : 503).json({
+    ok: ready,
+    service: "StudiosBook API",
+    marketing_measurement: marketingConfiguration(),
+  });
 });
 
 app.post("/functions/ensure-billing-account", requireFirebaseUser, async (req, res) => {

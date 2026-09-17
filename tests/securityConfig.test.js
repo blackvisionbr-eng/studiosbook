@@ -11,6 +11,8 @@ const adminSource = readFileSync(new URL("../src/admin/AdminApp.jsx", import.met
 const adminAuthClient = readFileSync(new URL("../src/admin/firebaseAdminClient.js", import.meta.url), "utf8");
 const publicPrivacy = readFileSync(new URL("../public/privacy.html", import.meta.url), "utf8");
 const publicTerms = readFileSync(new URL("../public/terms.html", import.meta.url), "utf8");
+const publicContact = readFileSync(new URL("../public/contact.html", import.meta.url), "utf8");
+const publicSitemap = readFileSync(new URL("../public/sitemap.xml", import.meta.url), "utf8");
 const trackingSource = readFileSync(new URL("../src/lib/tracking.js", import.meta.url), "utf8");
 const viteConfig = readFileSync(new URL("../vite.config.js", import.meta.url), "utf8");
 const appHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
@@ -207,10 +209,33 @@ test("public legal pages cover subscription and payment processors", () => {
   assert.match(publicPrivacy, /privacidade@studiosbook\.com\.br/);
 });
 
+test("public compliance routes are friendly, protected and discoverable", () => {
+  const expectedRoutes = [
+    ["/politica-de-privacidade", "/privacy.html"],
+    ["/termos-de-uso", "/terms.html"],
+    ["/contato", "/contact.html"],
+  ];
+  for (const [source, destination] of expectedRoutes) {
+    assert.equal(firebaseConfig.hosting.rewrites.find((item) => item.source === source)?.destination, destination);
+    const headers = firebaseConfig.hosting.headers.find((item) => item.source === source);
+    const csp = headers?.headers?.find((header) => header.key === "Content-Security-Policy")?.value || "";
+    assert.match(csp, /object-src 'none'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+    assert.match(publicSitemap, new RegExp(`https://studiosbook\\.com\\.br${source}`));
+  }
+  assert.match(publicPrivacy, /canonical" href="https:\/\/studiosbook\.com\.br\/politica-de-privacidade"/);
+  assert.match(publicTerms, /canonical" href="https:\/\/studiosbook\.com\.br\/termos-de-uso"/);
+  assert.match(publicContact, /canonical" href="https:\/\/studiosbook\.com\.br\/contato"/);
+  assert.match(publicContact, /suporte@studiosbook\.com\.br/);
+  assert.match(publicContact, /privacidade@studiosbook\.com\.br/);
+  assert.match(publicContact, /5573981068594/);
+});
+
 test("marketing tracking is optional and consent-aware", () => {
   assert.match(trackingSource, /VITE_GTM_ID/);
   assert.match(trackingSource, /VITE_GA4_ID/);
   assert.match(trackingSource, /VITE_META_PIXEL_ID/);
+  assert.match(trackingSource, /2163953667421721/);
   assert.match(trackingSource, /ad_storage: "denied"/);
   assert.match(trackingSource, /marketingTrackingConfigured/);
   assert.match(trackingSource, /CompleteRegistration/);
@@ -226,5 +251,8 @@ test("marketing tracking is optional and consent-aware", () => {
   assert.match(backendServer, /excluded_internal_account/);
   assert.match(backendServer, /excluded_test_payment/);
   assert.match(backendServer, /META_CAPI_ACCESS_TOKEN/);
+  assert.match(backendServer, /sha256MarketingValue/);
+  assert.match(backendServer, /userData\.em = \[emailHash\]/);
+  assert.match(backendServer, /userData\.external_id = \[externalIdHash\]/);
   assert.match(backendServer, /GA4_API_SECRET/);
 });
