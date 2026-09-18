@@ -229,6 +229,8 @@ test("public compliance routes are friendly, protected and discoverable", () => 
   assert.match(publicContact, /suporte@studiosbook\.com\.br/);
   assert.match(publicContact, /privacidade@studiosbook\.com\.br/);
   assert.match(publicContact, /5573981068594/);
+  assert.match(appHtml, /facebook-domain-verification/);
+  assert.match(appHtml, /60q2gw8whjwlcovcdgy5uvh9hj4d94/);
 });
 
 test("marketing tracking is optional and consent-aware", () => {
