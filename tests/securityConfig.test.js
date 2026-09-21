@@ -237,7 +237,8 @@ test("marketing tracking is optional and consent-aware", () => {
   assert.match(trackingSource, /VITE_GTM_ID/);
   assert.match(trackingSource, /VITE_GA4_ID/);
   assert.match(trackingSource, /VITE_META_PIXEL_ID/);
-  assert.match(trackingSource, /2163953667421721/);
+  assert.match(trackingSource, /1123734077006677/);
+  assert.doesNotMatch(trackingSource, /2163953667421721/);
   assert.match(trackingSource, /ad_storage: "denied"/);
   assert.match(trackingSource, /marketingTrackingConfigured/);
   assert.match(trackingSource, /CompleteRegistration/);
