@@ -216,6 +216,8 @@ test("catalog photos are owner-managed, bounded and synchronized to public booki
   assert.match(storageRules, /image\/\(jpeg\|png\|webp\)/);
   assert.doesNotMatch(storageRules, /allow read:\s*if true/);
   assert.match(appSource, /uploadCatalogServicePhoto/);
+  assert.match(appSource, /retainedServiceIds/);
+  assert.match(appSource, /deleteCatalogServicePhoto/);
   assert.match(appSource, /sync-booking-catalog/);
   assert.match(bookingSource, /Foto do serviço/);
   assert.match(marketplaceBackend, /safeCatalogImageUrl/);

@@ -1589,6 +1589,12 @@ export default function App() {
     const uploadedPaths = [];
     try {
       const obsoletePaths = [];
+      const retainedServiceIds = new Set(catalogServices.map((service) => service.id));
+      for (const previousService of profile?.services || []) {
+        if (previousService.image_path && !retainedServiceIds.has(previousService.id)) {
+          obsoletePaths.push(previousService.image_path);
+        }
+      }
       const stagedServices = [];
       for (const currentService of catalogServices) {
         const service = { ...currentService };
