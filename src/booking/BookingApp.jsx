@@ -255,10 +255,19 @@ export default function BookingApp() {
             <h2 className="text-lg font-extrabold">Qual serviço você deseja?</h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {studio.services.map((item) => (
-                <button key={item.id} type="button" onClick={() => setServiceId(item.id)} className={`min-h-24 rounded-lg border p-4 text-left transition hover:scale-[1.01] ${serviceId === item.id ? "border-[#a63d68] bg-[#fff3f7] shadow-sm" : "border-zinc-200 bg-white hover:border-[#d79ab4]"}`}>
-                  <span className="flex items-start justify-between gap-4"><strong className="text-sm leading-5">{item.name}</strong>{serviceId === item.id && <Check size={18} className="shrink-0 text-[#a63d68]" />}</span>
-                  <span className="mt-2 block text-xs text-zinc-500">{item.duration_minutes} min</span>
-                  <span className="mt-1 block text-base font-extrabold">{money(item.price_cents)}</span>
+                <button key={item.id} type="button" onClick={() => setServiceId(item.id)} className={`min-h-24 overflow-hidden rounded-lg border text-left transition hover:scale-[1.01] ${serviceId === item.id ? "border-[#a63d68] bg-[#fff3f7] shadow-sm" : "border-zinc-200 bg-white hover:border-[#d79ab4]"}`}>
+                  {item.image_url ? (
+                    <img src={item.image_url} alt={`Foto do serviço ${item.name}`} className="aspect-[4/3] w-full object-cover" loading="lazy" decoding="async" />
+                  ) : (
+                    <span className="flex aspect-[4/3] w-full items-center justify-center bg-[#faedf2]" aria-hidden="true">
+                      <img src="/brand/studiosbook-mark.svg" alt="" className="h-12 w-12 opacity-40" />
+                    </span>
+                  )}
+                  <span className="block p-4">
+                    <span className="flex items-start justify-between gap-4"><strong className="text-sm leading-5">{item.name}</strong>{serviceId === item.id && <Check size={18} className="shrink-0 text-[#a63d68]" />}</span>
+                    <span className="mt-2 block text-xs text-zinc-500">{item.duration_minutes} min</span>
+                    <span className="mt-1 block text-base font-extrabold">{money(item.price_cents)}</span>
+                  </span>
                 </button>
               ))}
             </div>
@@ -304,6 +313,7 @@ export default function BookingApp() {
           <form className="mt-8" onSubmit={submitBooking}>
             <button type="button" onClick={() => setStep(3)} className="mb-5 flex items-center gap-2 text-sm font-bold text-zinc-600"><ArrowLeft size={17} /> Voltar</button>
             <h2 className="text-lg font-extrabold">Confira antes de confirmar</h2>
+            {service?.image_url && <img src={service.image_url} alt={`Foto do serviço ${service.name}`} className="mt-4 aspect-[16/9] w-full rounded-lg border border-zinc-200 object-cover" />}
             <dl className="mt-4 divide-y divide-zinc-100 rounded-lg border border-zinc-200 bg-white px-4 text-sm">
               <div className="flex justify-between gap-4 py-4"><dt className="text-zinc-500">Serviço</dt><dd className="text-right font-bold">{service?.name}</dd></div>
               <div className="flex justify-between gap-4 py-4"><dt className="text-zinc-500">Profissional</dt><dd className="text-right font-bold">{professional?.name}</dd></div>

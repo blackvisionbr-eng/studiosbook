@@ -187,6 +187,19 @@ function sanitizeWeeklyHours(value = {}) {
   );
 }
 
+function safeCatalogImageUrl(value) {
+  const raw = safeText(value, 2000);
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    const allowedHost = url.hostname === "firebasestorage.googleapis.com"
+      || url.hostname.endsWith(".firebasestorage.app");
+    return url.protocol === "https:" && allowedHost ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
 function sanitizeServices(value = []) {
   return (Array.isArray(value) ? value : [])
     .slice(0, 100)
@@ -199,6 +212,7 @@ function sanitizeServices(value = []) {
       duration_minutes: Math.min(480, Math.max(15, Number(service.duration_minutes) || 60)),
       active: service.active !== false,
       payment_required: service.payment_required !== false,
+      image_url: safeCatalogImageUrl(service.image_url),
     }))
     .filter((service) => service.name && service.price_cents > 0);
 }
@@ -991,6 +1005,32 @@ export function createMarketplaceBookingRouter({ getDb, requireFirebaseUser, req
     }
   });
 
+  router.post("/functions/sync-booking-catalog", requireFirebaseUser, ownerLimiter, async (req, res) => {
+    try {
+      const db = dbOr503(res);
+      if (!db) return;
+      const studioRef = db.collection("PublicBookingStudio").doc(req.user.uid);
+      const studioSnapshot = await studioRef.get();
+      if (!studioSnapshot.exists) {
+        return res.json({ success: true, synced: false, reason: "public_booking_not_configured" });
+      }
+      const current = studioSnapshot.data() || {};
+      const existingById = new Map((current.services || []).map((service) => [service.id, service]));
+      const services = sanitizeServices(req.body?.services).map((service) => ({
+        ...service,
+        payment_required: existingById.get(service.id)?.payment_required !== false,
+      }));
+      if (!services.length) {
+        return res.status(400).json({ error: "Mantenha pelo menos um serviço com preço para a agenda pública." });
+      }
+      await studioRef.set({ services, updated_at: FieldValue.serverTimestamp() }, { merge: true });
+      return res.json({ success: true, synced: true, services });
+    } catch (error) {
+      console.error("Booking catalog sync failed", { requestId: req.requestId, message: error?.message });
+      return res.status(500).json({ error: "Não foi possível atualizar o catálogo público." });
+    }
+  });
+
   router.post("/functions/booking-payment-connect", requireFirebaseUser, ownerLimiter, async (req, res) => {
     try {
       const db = dbOr503(res);
@@ -1157,6 +1197,7 @@ export const marketplaceBookingInternals = {
   decryptSecret,
   marketplaceReady,
   publicStudioPayload,
+  safeCatalogImageUrl,
   sanitizeProfessionals,
   sanitizeServices,
   sanitizeWeeklyHours,

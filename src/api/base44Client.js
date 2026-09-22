@@ -31,6 +31,7 @@ import {
 import {
   deleteObject,
   getBlob,
+  getDownloadURL,
   getStorage,
   ref as storageRef,
   uploadBytes,
@@ -65,6 +66,7 @@ const db = getFirestore(app);
 const storage = getStorage(app);
 
 const MAX_PROCEDURE_PHOTO_BYTES = 8 * 1024 * 1024;
+const MAX_CATALOG_PHOTO_BYTES = 5 * 1024 * 1024;
 const ALLOWED_PROCEDURE_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 let lastAuthProviderError = null;
@@ -253,6 +255,38 @@ async function deleteProcedurePhoto(path) {
   await deleteObject(storageRef(storage, path));
 }
 
+function assertCatalogPhoto(file) {
+  if (!(file instanceof File)) throw new Error("Selecione uma imagem válida.");
+  if (!ALLOWED_PROCEDURE_PHOTO_TYPES.has(file.type)) {
+    throw new Error("Use uma imagem JPG, PNG ou WebP.");
+  }
+  if (file.size > MAX_CATALOG_PHOTO_BYTES) {
+    throw new Error("A foto do serviço deve ter no máximo 5 MB.");
+  }
+}
+
+async function uploadCatalogServicePhoto(serviceId, file) {
+  const user = await requireUser();
+  assertCatalogPhoto(file);
+  const safeServiceId = String(serviceId || "service").replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 100);
+  const extension = photoExtension(file.type);
+  const path = `users/${user.uid}/catalog/${safeServiceId}/cover-${Date.now()}.${extension}`;
+  const target = storageRef(storage, path);
+  await uploadBytes(target, file, {
+    contentType: file.type,
+    cacheControl: "public,max-age=31536000,immutable",
+    customMetadata: { ownerId: user.uid, serviceId: safeServiceId, purpose: "public-catalog" },
+  });
+  return { path, url: await getDownloadURL(target) };
+}
+
+async function deleteCatalogServicePhoto(path) {
+  const user = await requireUser();
+  const expectedPrefix = `users/${user.uid}/catalog/`;
+  if (!String(path || "").startsWith(expectedPrefix)) return;
+  await deleteObject(storageRef(storage, path));
+}
+
 async function invokeFunctionFrom(name, data = {}, baseUrls = apiBaseUrls) {
   if (!baseUrls.length) {
     throw new Error("Serviço temporariamente indisponível.");
@@ -387,6 +421,9 @@ export const base44 = {
     uploadProcedurePhoto,
     getPrivatePhotoObjectUrl,
     deleteProcedurePhoto,
+    uploadCatalogServicePhoto,
+    deleteCatalogServicePhoto,
     maxProcedurePhotoBytes: MAX_PROCEDURE_PHOTO_BYTES,
+    maxCatalogPhotoBytes: MAX_CATALOG_PHOTO_BYTES,
   },
 };

@@ -211,3 +211,22 @@ test("encrypts marketplace credentials before persistence", () => {
     else process.env.MARKETPLACE_TOKEN_ENCRYPTION_KEY = previous;
   }
 });
+
+test("publishes only catalog images hosted by Firebase Storage", () => {
+  const trusted = "https://firebasestorage.googleapis.com/v0/b/project/o/catalog%2Fcover.webp?alt=media&token=test";
+  const [accepted] = marketplaceBookingInternals.sanitizeServices([{
+    id: "service-1",
+    name: "Volume Brasileiro",
+    price_cents: 13000,
+    image_url: trusted,
+  }]);
+  const [rejected] = marketplaceBookingInternals.sanitizeServices([{
+    id: "service-2",
+    name: "Foxy Eyes",
+    price_cents: 15500,
+    image_url: "https://example.invalid/tracking.svg",
+  }]);
+
+  assert.equal(accepted.image_url, trusted);
+  assert.equal(rejected.image_url, "");
+});

@@ -46,6 +46,8 @@ export function normalizeServiceCatalog(services = [], categories = []) {
       duration_minutes: safeNumber(service.duration_minutes, 60, 1),
       maintenance_days: safeNumber(service.maintenance_days, 0),
       active: service.active !== false,
+      image_path: String(service.image_path || "").trim(),
+      image_url: String(service.image_url || "").trim(),
     }];
   });
 }

@@ -58,3 +58,16 @@ test("preserva serviço sem retorno em zero dias", () => {
 
   assert.equal(service.maintenance_days, 0);
 });
+
+test("preserva a foto vinculada ao serviço do catálogo", () => {
+  const [service] = normalizeServiceCatalog([{
+    id: "lash-photo",
+    category: "lash_design",
+    name: "Foxy Eyes",
+    image_path: "users/owner/catalog/lash-photo/cover.webp",
+    image_url: "https://firebasestorage.googleapis.com/v0/b/project/o/catalog%2Fcover.webp?alt=media&token=test",
+  }], ["lash_design"]);
+
+  assert.equal(service.image_path, "users/owner/catalog/lash-photo/cover.webp");
+  assert.match(service.image_url, /^https:\/\/firebasestorage\.googleapis\.com\//);
+});

@@ -1552,6 +1552,10 @@ export default function App() {
             duration_minutes: Number(serviceDraft.duration_minutes || 60),
             maintenance_days: Number(serviceDraft.maintenance_days || 0),
             active: serviceDraft.active !== false,
+            image_path: serviceDraft.image_path || "",
+            image_url: serviceDraft.image_url || "",
+            _image_file: serviceDraft._image_file || null,
+            _remove_image: serviceDraft._remove_image === true,
           },
         ],
       };
@@ -1573,16 +1577,37 @@ export default function App() {
     if (!profileForm.categories?.length) {
       return showFeedback("Escolha pelo menos uma área de atuação.", "error");
     }
-    const services = normalizeServices(profileForm.services, profileForm.categories);
-    if (!services.length) {
+    const catalogServices = profileForm.services || [];
+    if (!normalizeServices(catalogServices, profileForm.categories).length) {
       return showFeedback("Mantenha pelo menos um serviço no catálogo.", "error");
     }
-    if (!services.some((service) => service.active !== false)) {
+    if (!normalizeServices(catalogServices, profileForm.categories).some((service) => service.active !== false)) {
       return showFeedback("Mantenha pelo menos um serviço ativo para registrar atendimentos.", "error");
     }
 
     setActionLoading("profile");
+    const uploadedPaths = [];
     try {
+      const obsoletePaths = [];
+      const stagedServices = [];
+      for (const currentService of catalogServices) {
+        const service = { ...currentService };
+        if (service._image_file instanceof File) {
+          const uploaded = await base44.storage.uploadCatalogServicePhoto(service.id, service._image_file);
+          uploadedPaths.push(uploaded.path);
+          if (service.image_path && service.image_path !== uploaded.path) obsoletePaths.push(service.image_path);
+          service.image_path = uploaded.path;
+          service.image_url = uploaded.url;
+        } else if (service._remove_image === true) {
+          if (service.image_path) obsoletePaths.push(service.image_path);
+          service.image_path = "";
+          service.image_url = "";
+        }
+        delete service._image_file;
+        delete service._remove_image;
+        stagedServices.push(service);
+      }
+      const services = normalizeServices(stagedServices, profileForm.categories);
       const payload = {
         business_name: profileForm.business_name.trim(),
         owner_name: profileForm.owner_name?.trim() || user?.full_name || "",
@@ -1595,11 +1620,31 @@ export default function App() {
       const saved = profile?.id
         ? await StudioProfile.update(profile.id, payload)
         : await StudioProfile.create(payload);
+      let publicCatalogSyncFailed = false;
+      let publicCatalogSynced = false;
+      try {
+        const syncResult = await base44.functions.invokeBooking("sync-booking-catalog", { services });
+        publicCatalogSynced = syncResult?.synced === true;
+        if (publicCatalogSynced || syncResult?.reason === "public_booking_not_configured") {
+          await Promise.allSettled(obsoletePaths.map((path) => base44.storage.deleteCatalogServicePhoto(path)));
+        }
+      } catch (syncError) {
+        publicCatalogSyncFailed = true;
+        console.warn("Public catalog sync failed", syncError);
+      }
       const normalized = normalizeProfile({ ...profile, ...payload, id: saved?.id || profile?.id }, user);
       setProfile(normalized);
       setProfileForm(normalized);
-      showFeedback(`Configuração salva. O ${PRODUCT_NAME} foi ajustado para esse perfil.`);
+      showFeedback(
+        publicCatalogSyncFailed
+          ? "Configuração e fotos salvas. A agenda pública será atualizada ao salvar novamente as configurações de Recebimentos."
+          : publicCatalogSynced
+            ? `Configuração salva. O ${PRODUCT_NAME} e a agenda pública foram atualizados para esse perfil.`
+            : "Configuração e fotos salvas. Elas aparecerão quando a página pública de agendamento for ativada.",
+        publicCatalogSyncFailed ? "error" : "success"
+      );
     } catch (error) {
+      await Promise.allSettled(uploadedPaths.map((path) => base44.storage.deleteCatalogServicePhoto(path)));
       console.error(error);
       showFeedback(`Erro ao salvar configuração: ${getErrorMessage(error)}`, "error");
     } finally {
@@ -2644,6 +2689,10 @@ export function ServiceCatalogEditor({ services, categories, onAdd, onUpdate, on
       duration_minutes: Math.max(1, Number(serviceDraft.duration_minutes || 60)),
       maintenance_days: Math.max(0, Number(serviceDraft.maintenance_days || 0)),
       active: serviceDraft.active !== false,
+      image_path: serviceDraft.image_path || "",
+      image_url: serviceDraft.image_url || "",
+      _image_file: serviceDraft._image_file || null,
+      _remove_image: serviceDraft._remove_image === true,
     };
     if (serviceDraft.id) onUpdate(serviceDraft.id, payload);
     else onAdd(payload);
@@ -2723,13 +2772,24 @@ export function ServiceCatalogEditor({ services, categories, onAdd, onUpdate, on
       ) : (
         filteredServices.map((service) => (
           <div key={service.id} className="grid min-w-0 gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-            <button type="button" onClick={() => openService(service)} className="min-w-0 text-left">
-              <span className="block truncate text-sm font-black text-zinc-950">{service.name}</span>
-              <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
-                <span>{categoryLabel(service.category)}</span>
-                <span>{money(service.price)}</span>
-                <span>{service.duration_minutes} min</span>
-                <span>{service.maintenance_days > 0 ? `Retorno em ${service.maintenance_days} dias` : "Sem retorno"}</span>
+            <button type="button" onClick={() => openService(service)} className="flex min-w-0 items-center gap-3 text-left">
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-rose-50 text-rose-700">
+                {service.image_url ? (
+                  <img src={service.image_url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                ) : (
+                  <Camera className="h-5 w-5" aria-hidden="true" />
+                )}
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-black text-zinc-950">{service.name}</span>
+                <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
+                  <span>{categoryLabel(service.category)}</span>
+                  <span>{money(service.price)}</span>
+                  <span>{service.duration_minutes} min</span>
+                  <span>{service.maintenance_days > 0 ? `Retorno em ${service.maintenance_days} dias` : "Sem retorno"}</span>
+                  {service._image_file && <span className="font-bold text-rose-700">Foto pronta para salvar</span>}
+                  {service._remove_image && <span className="font-bold text-red-700">Foto será removida</span>}
+                </span>
               </span>
             </button>
             <div className="flex items-center justify-between gap-2 sm:justify-end">
@@ -2771,6 +2831,33 @@ export function ServiceCatalogEditor({ services, categories, onAdd, onUpdate, on
 
 function CatalogServiceDialog({ draft, setDraft, categories, error, onSave, onClose, onRemove }) {
   const [removeArmed, setRemoveArmed] = useState(false);
+  const [photoError, setPhotoError] = useState("");
+  const photoInputId = useId();
+  const selectedPhotoUrl = useMemo(
+    () => draft._image_file instanceof File ? URL.createObjectURL(draft._image_file) : "",
+    [draft._image_file]
+  );
+
+  useEffect(() => () => {
+    if (selectedPhotoUrl) URL.revokeObjectURL(selectedPhotoUrl);
+  }, [selectedPhotoUrl]);
+
+  const photoUrl = selectedPhotoUrl || (draft._remove_image ? "" : draft.image_url || "");
+  const selectPhoto = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setPhotoError("Use uma foto JPG, PNG ou WebP.");
+      return;
+    }
+    if (file.size > base44.storage.maxCatalogPhotoBytes) {
+      setPhotoError("A foto deve ter no máximo 5 MB.");
+      return;
+    }
+    setPhotoError("");
+    setDraft({ ...draft, _image_file: file, _remove_image: false });
+  };
 
   return (
     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-zinc-950/55 p-0 sm:items-center sm:p-5" role="presentation">
@@ -2800,6 +2887,34 @@ function CatalogServiceDialog({ draft, setDraft, categories, error, onSave, onCl
         </div>
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <span className="text-sm font-black text-zinc-800">Foto do serviço <span className="font-medium text-zinc-500">(opcional)</span></span>
+            <div className="mt-2 grid min-w-0 gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center">
+              <div className="aspect-[4/3] overflow-hidden rounded-lg bg-white">
+                {photoUrl ? (
+                  <img src={photoUrl} alt={`Prévia de ${draft.name || "serviço"}`} className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-zinc-400"><Camera className="h-7 w-7" aria-hidden="true" /></div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs leading-5 text-zinc-600">Mostre um resultado representativo para ajudar a cliente a escolher. JPG, PNG ou WebP, até 5 MB.</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <label htmlFor={photoInputId} className="inline-flex h-10 cursor-pointer items-center rounded-full bg-zinc-950 px-4 text-xs font-black text-white transition hover:bg-zinc-800">
+                    <Camera className="mr-2 h-4 w-4" aria-hidden="true" />
+                    {photoUrl ? "Trocar foto" : "Adicionar foto"}
+                  </label>
+                  <input id={photoInputId} type="file" accept="image/jpeg,image/png,image/webp" onChange={selectPhoto} className="sr-only" />
+                  {photoUrl && (
+                    <button type="button" onClick={() => { setPhotoError(""); setDraft({ ...draft, _image_file: null, _remove_image: true }); }} className="h-10 rounded-full border border-zinc-200 bg-white px-4 text-xs font-black text-red-700">
+                      Remover foto
+                    </button>
+                  )}
+                </div>
+                {photoError && <p className="mt-2 text-xs font-bold text-red-700">{photoError}</p>}
+              </div>
+            </div>
+          </div>
           <Field label="Nome do serviço" className="sm:col-span-2">
             <Input
               value={draft.name}

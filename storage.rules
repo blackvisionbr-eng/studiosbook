@@ -17,6 +17,14 @@ service firebase.storage {
       allow delete: if ownsUserScope(userId);
     }
 
+    match /users/{userId}/catalog/{serviceId}/{fileName} {
+      allow read: if ownsUserScope(userId);
+      allow create, update: if ownsUserScope(userId)
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if ownsUserScope(userId);
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

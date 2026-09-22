@@ -4,6 +4,7 @@ import test from "node:test";
 
 const firebaseConfig = JSON.parse(readFileSync(new URL("../firebase.json", import.meta.url), "utf8"));
 const firestoreRules = readFileSync(new URL("../firestore.rules", import.meta.url), "utf8");
+const storageRules = readFileSync(new URL("../storage.rules", import.meta.url), "utf8");
 const backendServer = readFileSync(new URL("../railway-backend/src/server.js", import.meta.url), "utf8");
 const appAuthClient = readFileSync(new URL("../src/api/base44Client.js", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
@@ -207,6 +208,17 @@ test("public legal pages cover subscription and payment processors", () => {
   assert.match(publicTerms, /cancelada pelo portal de cobrança/);
   assert.match(publicPrivacy, /Stripe e Mercado Pago/);
   assert.match(publicPrivacy, /privacidade@studiosbook\.com\.br/);
+});
+
+test("catalog photos are owner-managed, bounded and synchronized to public booking", () => {
+  assert.match(storageRules, /users\/\{userId\}\/catalog\/\{serviceId\}\/\{fileName\}/);
+  assert.match(storageRules, /request\.resource\.size <= 5 \* 1024 \* 1024/);
+  assert.match(storageRules, /image\/\(jpeg\|png\|webp\)/);
+  assert.doesNotMatch(storageRules, /allow read:\s*if true/);
+  assert.match(appSource, /uploadCatalogServicePhoto/);
+  assert.match(appSource, /sync-booking-catalog/);
+  assert.match(bookingSource, /Foto do serviço/);
+  assert.match(marketplaceBackend, /safeCatalogImageUrl/);
 });
 
 test("public compliance routes are friendly, protected and discoverable", () => {

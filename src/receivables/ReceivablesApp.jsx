@@ -55,6 +55,7 @@ function initialForm(profile, settings) {
     duration_minutes: Number(item.duration_minutes || 60),
     active: true,
     payment_required: true,
+    image_url: item.image_url || "",
   }));
   return {
     business_name: settings?.business_name || profile?.business_name || "Meu Studio",
@@ -349,7 +350,10 @@ export default function ReceivablesApp() {
             <div className="mt-5 divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 bg-white">
               {form.services.map((item) => (
                 <div key={item.id} className="grid gap-4 p-4 sm:grid-cols-[minmax(0,1fr)_130px_130px_auto] sm:items-center">
-                  <div className="min-w-0"><p className="truncate text-sm font-extrabold">{item.name}</p><p className="mt-1 text-xs text-zinc-500">{item.duration_minutes} minutos</p></div>
+                  <div className="flex min-w-0 items-center gap-3">
+                    {item.image_url && <img src={item.image_url} alt="" className="h-14 w-14 shrink-0 rounded-md object-cover" loading="lazy" />}
+                    <div className="min-w-0"><p className="truncate text-sm font-extrabold">{item.name}</p><p className="mt-1 text-xs text-zinc-500">{item.duration_minutes} minutos</p></div>
+                  </div>
                   <Field label="Preço" id={`price-${item.id}`}><div className="relative mt-2"><span className="absolute left-3 top-3 text-sm text-zinc-500">R$</span><input id={`price-${item.id}`} type="number" min="0" step="0.01" value={(Number(item.price_cents || 0) / 100).toFixed(2)} onChange={(event) => patchService(item.id, "price_cents", Math.round(Number(event.target.value) * 100))} className="min-h-11 w-full rounded-md border border-zinc-300 pl-10 pr-2 text-sm" /></div></Field>
                   <label className="flex items-center justify-between gap-3 text-xs font-bold"><span>Exigir pagamento</span><Toggle checked={item.payment_required !== false} onChange={(value) => patchService(item.id, "payment_required", value)} label={`Exigir pagamento em ${item.name}`} /></label>
                   <label className="flex items-center justify-between gap-3 text-xs font-bold"><span>Publicado</span><Toggle checked={item.active !== false} onChange={(value) => patchService(item.id, "active", value)} label={`Publicar ${item.name}`} /></label>
