@@ -219,6 +219,11 @@ test("catalog photos are owner-managed, bounded and synchronized to public booki
   assert.match(appSource, /sync-booking-catalog/);
   assert.match(bookingSource, /Foto do serviço/);
   assert.match(marketplaceBackend, /safeCatalogImageUrl/);
+  for (const source of ["/", "/index.html", "/agendar{,/**}", "/recebimentos{,/**}"]) {
+    const headers = firebaseConfig.hosting.headers.find((item) => item.source === source);
+    const csp = headers?.headers?.find((header) => header.key === "Content-Security-Policy")?.value || "";
+    assert.match(csp, /img-src[^;]+https:\/\/firebasestorage\.googleapis\.com/);
+  }
 });
 
 test("public compliance routes are friendly, protected and discoverable", () => {
